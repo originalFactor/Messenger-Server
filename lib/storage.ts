@@ -1,8 +1,14 @@
-import { kv } from "@vercel/kv";
 import { put } from "@vercel/blob";
+import { Redis } from "@upstash/redis";
 import type { BackupManifest, MessengerBackupPayload, StoredUser, UserIndexEntry } from "@/lib/types";
+import { env } from "@/lib/env";
 
 const KEY_USERS_INDEX = "messenger:users:index";
+
+const redis = new Redis({
+  url: env.upstashRedisUrl(),
+  token: env.upstashRedisToken(),
+});
 
 function userKey(userId: string) {
   return `messenger:user:${userId}`;
@@ -17,20 +23,20 @@ function backupManifestKey(userId: string) {
 }
 
 export async function getUserByEmail(email: string) {
-  const userId = await kv.get<string>(userByEmailKey(email));
+  const userId = await redis.get<string>(userByEmailKey(email));
   if (!userId) {
     return null;
   }
-  return kv.get<StoredUser>(userKey(userId));
+  return redis.get<StoredUser>(userKey(userId));
 }
 
 export async function getUserById(userId: string) {
-  return kv.get<StoredUser>(userKey(userId));
+  return redis.get<StoredUser>(userKey(userId));
 }
 
 export async function saveUser(user: StoredUser) {
-  await kv.set(userKey(user.id), user);
-  await kv.set(userByEmailKey(user.email), user.id);
+  await redis.set(userKey(user.id), user);
+  await redis.set(userByEmailKey(user.email), user.id);
   await upsertUserIndex({
     id: user.id,
     email: user.email,
@@ -49,7 +55,7 @@ export async function updateUserLastLogin(userId: string, lastLoginAt: number) {
     lastLoginAt,
     updatedAt: lastLoginAt,
   };
-  await kv.set(userKey(userId), updatedUser);
+  await redis.set(userKey(userId), updatedUser);
   await upsertUserIndex({
     id: user.id,
     email: user.email,
@@ -59,7 +65,7 @@ export async function updateUserLastLogin(userId: string, lastLoginAt: number) {
 }
 
 export async function getUsersIndex() {
-  return (await kv.get<UserIndexEntry[]>(KEY_USERS_INDEX)) ?? [];
+  return (await redis.get<UserIndexEntry[]>(KEY_USERS_INDEX)) ?? [];
 }
 
 export async function upsertUserIndex(entry: UserIndexEntry) {
@@ -67,11 +73,11 @@ export async function upsertUserIndex(entry: UserIndexEntry) {
   const next = existing.filter((item) => item.id !== entry.id);
   next.push(entry);
   next.sort((a, b) => b.updatedAt - a.updatedAt);
-  await kv.set(KEY_USERS_INDEX, next);
+  await redis.set(KEY_USERS_INDEX, next);
 }
 
 export async function getBackupManifest(userId: string) {
-  return kv.get<BackupManifest>(backupManifestKey(userId));
+  return redis.get<BackupManifest>(backupManifestKey(userId));
 }
 
 export async function saveLatestBackup(
@@ -108,7 +114,7 @@ export async function saveLatestBackup(
     device: payload.device,
   };
 
-  await kv.set(backupManifestKey(userId), manifest);
+  await redis.set(backupManifestKey(userId), manifest);
 
   const user = await getUserById(userId);
   if (user) {

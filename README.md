@@ -6,7 +6,7 @@
 
 - App account registration and login
 - JWT cookie session for app clients
-- Vercel KV metadata storage
+- Upstash Redis metadata storage
 - Vercel Blob backup payload storage
 - Admin login and dashboard for user and backup visibility
 - App Router + serverless route handlers
@@ -39,7 +39,7 @@ Copy `.env.example` to `.env.local` for local development.
 - `JWT_SECRET`: used to sign user and admin sessions
 - `ADMIN_PASSWORD`: password for `/admin/login`
 - `APP_BASE_URL`: base URL used by admin UI and debugging
-- `KV_REST_API_URL` / `KV_REST_API_TOKEN`: Vercel KV credentials
+- `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`: Upstash Redis credentials
 - `BLOB_READ_WRITE_TOKEN`: Vercel Blob token
 
 ## Local Development
