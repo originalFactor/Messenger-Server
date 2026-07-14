@@ -28,6 +28,15 @@ const agentSchema = z.object({
   updatedAt: z.number().int(),
 });
 
+const modelSchema = z.object({
+  id: z.string().min(1),
+  providerId: z.string().min(1),
+  modelId: z.string().min(1),
+  displayName: z.string(),
+  isEnabled: z.boolean(),
+  createdAt: z.number().int(),
+});
+
 const conversationSchema = z.object({
   id: z.string().min(1),
   title: z.string(),
@@ -66,6 +75,7 @@ export const backupPayloadSchema = z.object({
     deviceName: z.string().optional(),
   }).optional(),
   providers: z.array(providerSchema),
+  models: z.array(modelSchema).default([]),
   agents: z.array(agentSchema),
   conversations: z.array(conversationSchema),
   messages: z.array(messageSchema),

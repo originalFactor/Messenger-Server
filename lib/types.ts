@@ -26,6 +26,15 @@ export interface AgentBackupRecord {
   updatedAt: number;
 }
 
+export interface ModelBackupRecord {
+  id: string;
+  providerId: string;
+  modelId: string;
+  displayName: string;
+  isEnabled: boolean;
+  createdAt: number;
+}
+
 export interface ConversationBackupRecord {
   id: string;
   title: string;
@@ -62,6 +71,7 @@ export interface MessengerBackupPayload {
     deviceName?: string;
   };
   providers: ProviderBackupRecord[];
+  models: ModelBackupRecord[];
   agents: AgentBackupRecord[];
   conversations: ConversationBackupRecord[];
   messages: MessageBackupRecord[];
@@ -95,6 +105,7 @@ export interface BackupManifest {
   checksumSha256: string;
   recordCounts: {
     providers: number;
+    models: number;
     agents: number;
     conversations: number;
     messages: number;

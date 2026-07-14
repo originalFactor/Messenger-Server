@@ -107,6 +107,7 @@ export async function saveLatestBackup(
     checksumSha256,
     recordCounts: {
       providers: payload.providers.length,
+      models: payload.models.length,
       agents: payload.agents.length,
       conversations: payload.conversations.length,
       messages: payload.messages.length,
