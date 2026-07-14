@@ -23,6 +23,7 @@ The mobile app can upload a single backup document shaped around Messenger's cor
     "platform": "android",
     "appVersion": "v20260714"
   },
+  "avatars": [],
   "providers": [],
   "models": [],
   "agents": [],

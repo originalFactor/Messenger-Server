@@ -9,5 +9,10 @@ export async function GET() {
   }
 
   const manifest = await getBackupManifest(session.sub);
-  return jsonOk({ manifest });
+  if (!manifest) {
+    return jsonOk({ manifest: null });
+  }
+
+  const { blobUrl: _blobUrl, ...safeManifest } = manifest;
+  return jsonOk({ manifest: safeManifest });
 }

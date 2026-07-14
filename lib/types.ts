@@ -70,6 +70,12 @@ export interface MessengerBackupPayload {
     appVersion?: string;
     deviceName?: string;
   };
+  avatars: {
+    key: string;
+    data: string;
+    extension: string;
+  }[];
+  userAvatarKey?: string | null;
   providers: ProviderBackupRecord[];
   models: ModelBackupRecord[];
   agents: AgentBackupRecord[];

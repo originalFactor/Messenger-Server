@@ -57,7 +57,7 @@ const messageSchema = z.object({
   role: z.enum(["system", "user", "assistant", "tool"]),
   content: z.string(),
   timestamp: z.number().int(),
-  status: z.enum(["SENDING", "SENT", "ERROR"]),
+  status: z.enum(["SENDING", "SENT", "ERROR", "sending", "sent", "error"]).transform((value) => value.toUpperCase() as "SENDING" | "SENT" | "ERROR"),
   errorMessage: z.string().nullable().optional(),
 });
 
@@ -74,6 +74,12 @@ export const backupPayloadSchema = z.object({
     appVersion: z.string().optional(),
     deviceName: z.string().optional(),
   }).optional(),
+  avatars: z.array(z.object({
+    key: z.string().min(1),
+    data: z.string().min(1),
+    extension: z.string().regex(/^[a-zA-Z0-9]+$/),
+  })).default([]),
+  userAvatarKey: z.string().nullable().optional(),
   providers: z.array(providerSchema),
   models: z.array(modelSchema).default([]),
   agents: z.array(agentSchema),

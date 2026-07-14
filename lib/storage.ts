@@ -1,4 +1,4 @@
-import { put } from "@vercel/blob";
+import { get, put } from "@vercel/blob";
 import { Redis } from "@upstash/redis";
 import type { BackupManifest, MessengerBackupPayload, StoredUser, UserIndexEntry } from "@/lib/types";
 import { env } from "@/lib/env";
@@ -80,6 +80,24 @@ export async function getBackupManifest(userId: string) {
   return redis.get<BackupManifest>(backupManifestKey(userId));
 }
 
+export async function getLatestBackupPayload(userId: string) {
+  const manifest = await getBackupManifest(userId);
+  if (!manifest) {
+    return null;
+  }
+
+  const blob = await get(manifest.blobPath, {
+    access: "private",
+    useCache: false,
+  });
+  if (!blob || blob.statusCode !== 200) {
+    return null;
+  }
+
+  const payload = await new Response(blob.stream).json();
+  return { manifest, payload };
+}
+
 export async function saveLatestBackup(
   userId: string,
   payload: MessengerBackupPayload,
@@ -91,7 +109,7 @@ export async function saveLatestBackup(
   const blobPath = `backups/${userId}/${version}.json`;
   const uploadedAt = Date.now();
   const blob = await put(blobPath, payloadJson, {
-    access: "public",
+    access: "private",
     addRandomSuffix: false,
     contentType: "application/json",
   });
@@ -102,7 +120,7 @@ export async function saveLatestBackup(
     schemaVersion: payload.schemaVersion,
     uploadedAt,
     blobPath,
-    blobUrl: blob.url,
+    blobUrl: blob.downloadUrl,
     sizeBytes: Buffer.byteLength(payloadJson, "utf8"),
     checksumSha256,
     recordCounts: {
