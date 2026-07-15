@@ -1,0 +1,55 @@
+import { Db, MongoClient } from "mongodb";
+import { env } from "@/lib/env";
+
+declare global {
+  var messengerMongoClientPromise: Promise<MongoClient> | undefined;
+  var messengerMongoIndexesPromise: Promise<void> | undefined;
+}
+
+export function getMongoClient(): Promise<MongoClient> {
+  if (!globalThis.messengerMongoClientPromise) {
+    const client = new MongoClient(env.mongoUri(), {
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 5_000,
+    });
+    globalThis.messengerMongoClientPromise = client.connect().catch((error: unknown) => {
+      globalThis.messengerMongoClientPromise = undefined;
+      throw error;
+    });
+  }
+  return globalThis.messengerMongoClientPromise;
+}
+
+async function ensureIndexesFor(database: Db): Promise<void> {
+  if (!globalThis.messengerMongoIndexesPromise) {
+    const indexes = Promise.all([
+      database.collection("users").createIndex({ email: 1 }, { unique: true }),
+      database.collection("agents").createIndex({ userId: 1, version: 1 }),
+      database.collection("agents").createIndex(
+        { userId: 1 },
+        { unique: true, partialFilterExpression: { isDefault: true, deleted: false } },
+      ),
+      database.collection("conversations").createIndex({ userId: 1, version: 1 }),
+      database.collection("conversations").createIndex({ userId: 1, agentId: 1 }),
+      database.collection("providers").createIndex({ userId: 1, version: 1 }),
+      database.collection("avatar_locks").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    ]).then(() => undefined);
+    globalThis.messengerMongoIndexesPromise = indexes.catch((error: unknown) => {
+      globalThis.messengerMongoIndexesPromise = undefined;
+      throw error;
+    });
+  }
+  await globalThis.messengerMongoIndexesPromise;
+}
+
+export async function getDb(): Promise<Db> {
+  const client = await getMongoClient();
+  const database = client.db(env.mongoDbName());
+  await ensureIndexesFor(database);
+  return database;
+}
+
+export async function ensureIndexes(): Promise<void> {
+  const client = await getMongoClient();
+  await ensureIndexesFor(client.db(env.mongoDbName()));
+}

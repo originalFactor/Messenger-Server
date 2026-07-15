@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync, timingSafeEqual, createHash } from "node:crypto";
+import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString("hex");
@@ -14,8 +14,4 @@ export function verifyPassword(password: string, hash: string): boolean {
   const derived = scryptSync(password, salt, 64);
   const storedBuffer = Buffer.from(stored, "hex");
   return derived.length === storedBuffer.length && timingSafeEqual(derived, storedBuffer);
-}
-
-export function sha256Hex(input: string): string {
-  return createHash("sha256").update(input).digest("hex");
 }

@@ -14,7 +14,7 @@ export default async function AdminLoginPage() {
         <section className="panel" style={{ maxWidth: 460, margin: "0 auto" }}>
           <div className="kicker">Admin Backend</div>
           <h1>Sign in</h1>
-          <p className="muted">Authenticate with the server admin password to access the Messenger backup dashboard.</p>
+          <p className="muted">Authenticate with the server admin password to access the Messenger sync dashboard.</p>
           <AdminLoginForm />
         </section>
       </div>

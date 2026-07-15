@@ -1,16 +1,121 @@
-export interface ProviderBackupRecord {
+import type { JWTPayload } from "jose";
+
+export type MessageRole = "system" | "user" | "assistant" | "tool";
+export type MessageStatus = "SENDING" | "SENT" | "ERROR";
+
+export interface StoredUser {
   id: string;
+  email: string;
+  passwordHash: string;
+  avatarUrl?: string | null;
+  syncVersion: number;
+  createdAt: number;
+  updatedAt: number;
+  lastLoginAt?: number;
+}
+
+export interface UserDoc {
+  _id: string;
+  email: string;
+  passwordHash: string;
+  avatarUrl?: string | null;
+  syncVersion: number;
+  createdAt: number;
+  updatedAt: number;
+  lastLoginAt?: number;
+}
+
+export interface AgentDoc {
+  _id: string;
+  userId: string;
+  name: string;
+  avatarUrl?: string | null;
+  systemPrompt: string;
+  defaultModelId?: string | null;
+  temperature: number;
+  topP: number;
+  maxTokens?: number | null;
+  isDefault: boolean;
+  followDefaultSystemPrompt: boolean;
+  followDefaultModel: boolean;
+  followDefaultTemperature: boolean;
+  followDefaultTopP: boolean;
+  followDefaultMaxTokens: boolean;
+  createdAt: number;
+  updatedAt: number;
+  version: number;
+  deleted: boolean;
+}
+
+export interface MessageEmbed {
+  id: string;
+  role: MessageRole;
+  content: string;
+  timestamp: number;
+  status: MessageStatus;
+  errorMessage?: string | null;
+}
+
+export interface ConversationDoc {
+  _id: string;
+  userId: string;
+  agentId: string;
+  title: string;
+  providerId: string;
+  overrideModelId?: string | null;
+  overrideTemperature?: number | null;
+  overrideTopP?: number | null;
+  overrideMaxTokens?: number | null;
+  messages: MessageEmbed[];
+  createdAt: number;
+  updatedAt: number;
+  version: number;
+  deleted: boolean;
+}
+
+export interface ModelEmbed {
+  id: string;
+  modelId: string;
+  displayName: string;
+  isEnabled: boolean;
+  createdAt: number;
+}
+
+export interface ProviderDoc {
+  _id: string;
+  userId: string;
   name: string;
   baseUrl: string;
   apiKey: string;
+  models: ModelEmbed[];
   createdAt: number;
   updatedAt: number;
+  version: number;
+  deleted: boolean;
 }
 
-export interface AgentBackupRecord {
+export interface SyncResponse {
+  agents: AgentDoc[];
+  conversations: ConversationDoc[];
+  providers: ProviderDoc[];
+  latestVersion: number;
+}
+
+export interface UpsertResponse {
+  id: string;
+  version: number;
+}
+
+export interface AvatarUploadResponse {
+  url: string | null;
+  version: number;
+}
+
+export interface AgentUpsertInput {
   id: string;
   name: string;
-  avatar?: string | null;
+  // Avatar URLs are server-managed by the avatar endpoints.
+  avatarUrl?: string | null;
   systemPrompt: string;
   defaultModelId?: string | null;
   temperature: number;
@@ -26,97 +131,52 @@ export interface AgentBackupRecord {
   updatedAt: number;
 }
 
-export interface ModelBackupRecord {
-  id: string;
-  providerId: string;
-  modelId: string;
-  displayName: string;
-  isEnabled: boolean;
-  createdAt: number;
-}
-
-export interface ConversationBackupRecord {
+export interface ConversationUpsertInput {
   id: string;
   title: string;
-  providerId: string;
   agentId: string;
+  providerId: string;
   overrideModelId?: string | null;
   overrideTemperature?: number | null;
   overrideTopP?: number | null;
   overrideMaxTokens?: number | null;
+  messages: MessageEmbed[];
   createdAt: number;
   updatedAt: number;
-  lastMessage?: string | null;
 }
 
-export type BackupMessageRole = "system" | "user" | "assistant" | "tool";
-export type BackupMessageStatus = "SENDING" | "SENT" | "ERROR";
-
-export interface MessageBackupRecord {
+export interface ProviderUpsertInput {
   id: string;
-  conversationId: string;
-  role: BackupMessageRole;
-  content: string;
-  timestamp: number;
-  status: BackupMessageStatus;
-  errorMessage?: string | null;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  models: ModelEmbed[];
+  createdAt: number;
+  updatedAt: number;
 }
 
-export interface MessengerBackupPayload {
-  schemaVersion: number;
-  exportedAt: number;
-  device?: {
-    platform?: string;
-    appVersion?: string;
-    deviceName?: string;
-  };
-  avatars: {
-    key: string;
-    data: string;
-    extension: string;
-  }[];
-  userAvatarKey?: string | null;
-  providers: ProviderBackupRecord[];
-  models: ModelBackupRecord[];
-  agents: AgentBackupRecord[];
-  conversations: ConversationBackupRecord[];
-  messages: MessageBackupRecord[];
+export interface CollectionStats {
+  count: number;
+  latestUpdatedAt: number | null;
 }
 
-export interface StoredUser {
+export interface AdminUserSummary {
   id: string;
   email: string;
-  passwordHash: string;
   createdAt: number;
   updatedAt: number;
   lastLoginAt?: number;
+  syncVersion: number;
 }
 
-export interface UserIndexEntry {
-  id: string;
-  email: string;
-  createdAt: number;
-  updatedAt: number;
-  lastBackupAt?: number;
-}
-
-export interface BackupManifest {
-  userId: string;
-  version: number;
-  schemaVersion: number;
-  uploadedAt: number;
-  blobPath: string;
-  blobUrl: string;
-  sizeBytes: number;
-  checksumSha256: string;
-  recordCounts: {
-    providers: number;
-    models: number;
-    agents: number;
-    conversations: number;
-    messages: number;
+export interface AdminDashboard {
+  users: AdminUserSummary[];
+  stats: {
+    users: CollectionStats;
+    agents: CollectionStats;
+    conversations: CollectionStats;
+    providers: CollectionStats;
   };
-  device?: MessengerBackupPayload["device"];
 }
 
 export interface SessionClaims extends JWTPayload {
@@ -124,4 +184,3 @@ export interface SessionClaims extends JWTPayload {
   email?: string;
   role: "user" | "admin";
 }
-import type { JWTPayload } from "jose";

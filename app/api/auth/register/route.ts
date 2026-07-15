@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createUserSessionToken, setUserSessionCookie } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
 import { hashPassword } from "@/lib/security";
-import { getUserByEmail, saveUser } from "@/lib/storage";
+import { getUserByEmail, isDuplicateKeyError, saveUser } from "@/lib/storage";
 import { credentialsSchema } from "@/lib/validation";
 
 export async function POST(request: Request) {
@@ -22,14 +22,32 @@ export async function POST(request: Request) {
     id: randomUUID(),
     email,
     passwordHash: hashPassword(password),
+    avatarUrl: null,
+    syncVersion: 0,
     createdAt: now,
     updatedAt: now,
     lastLoginAt: now,
   };
 
-  await saveUser(user);
+  let syncVersion: number;
+  try {
+    syncVersion = await saveUser(user);
+  } catch (error) {
+    if (isDuplicateKeyError(error)) {
+      return jsonError("An account with this email already exists.", 409);
+    }
+    throw error;
+  }
   const token = await createUserSessionToken(user.id, user.email);
   await setUserSessionCookie(token);
 
-  return jsonOk({ user: { id: user.id, email: user.email, createdAt: user.createdAt } }, 201);
+  return jsonOk({
+    user: {
+      id: user.id,
+      email: user.email,
+      avatarUrl: null,
+      syncVersion,
+      createdAt: user.createdAt,
+    },
+  }, 201);
 }

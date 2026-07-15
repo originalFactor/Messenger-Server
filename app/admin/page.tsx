@@ -1,7 +1,11 @@
 import { redirect } from "next/navigation";
 import { AdminLogoutButton } from "@/components/admin-logout-button";
 import { requireAdminSession } from "@/lib/auth";
-import { getBackupManifest, getUsersIndex } from "@/lib/storage";
+import { getAdminDashboard } from "@/lib/storage";
+
+function formatTime(timestamp: number | null | undefined) {
+  return timestamp == null ? "None" : new Date(timestamp).toLocaleString();
+}
 
 export default async function AdminDashboardPage() {
   const session = await requireAdminSession();
@@ -9,10 +13,8 @@ export default async function AdminDashboardPage() {
     redirect("/admin/login");
   }
 
-  const users = await getUsersIndex();
-  const manifests = await Promise.all(users.map((user) => getBackupManifest(user.id)));
-  const totalBackups = manifests.filter(Boolean).length;
-  const totalMessages = manifests.reduce((sum, manifest) => sum + (manifest?.recordCounts.messages ?? 0), 0);
+  const dashboard = await getAdminDashboard();
+  const { users, stats } = dashboard;
 
   return (
     <main>
@@ -21,7 +23,7 @@ export default async function AdminDashboardPage() {
           <div>
             <div className="kicker">Admin Dashboard</div>
             <h1 style={{ marginBottom: 6 }}>Messenger account server</h1>
-            <p className="muted">View registered users and the metadata for the latest backup each account uploaded.</p>
+            <p className="muted">View MongoDB-backed account and incremental synchronization activity.</p>
           </div>
           <AdminLogoutButton />
         </section>
@@ -32,12 +34,16 @@ export default async function AdminDashboardPage() {
             <div className="stat-value">{users.length}</div>
           </div>
           <div className="panel">
-            <div className="kicker">Backups</div>
-            <div className="stat-value">{totalBackups}</div>
+            <div className="kicker">Agents</div>
+            <div className="stat-value">{stats.agents.count}</div>
           </div>
           <div className="panel">
-            <div className="kicker">Messages Stored</div>
-            <div className="stat-value">{totalMessages}</div>
+            <div className="kicker">Conversations</div>
+            <div className="stat-value">{stats.conversations.count}</div>
+          </div>
+          <div className="panel">
+            <div className="kicker">Providers</div>
+            <div className="stat-value">{stats.providers.count}</div>
           </div>
         </section>
 
@@ -52,34 +58,53 @@ export default async function AdminDashboardPage() {
                 </div>
               </div>
             ) : (
-              users.map((user, index) => {
-                const manifest = manifests[index];
-                return (
-                  <div key={user.id} className="list-item">
-                    <div>
-                      <strong>{user.email}</strong>
-                      <div className="muted code">{user.id}</div>
-                    </div>
-                    <div>
-                      <div className="muted">Created</div>
-                      <div>{new Date(user.createdAt).toLocaleString()}</div>
-                    </div>
-                    <div>
-                      <div className="muted">Latest Backup</div>
-                      <div>{manifest ? new Date(manifest.uploadedAt).toLocaleString() : "None"}</div>
-                    </div>
-                    <div>
-                      <div className="muted">Counts</div>
-                      <div className="code">
-                        {manifest
-                          ? `P${manifest.recordCounts.providers} A${manifest.recordCounts.agents} C${manifest.recordCounts.conversations} M${manifest.recordCounts.messages}`
-                          : "-"}
-                      </div>
-                    </div>
+              users.map((user) => (
+                <div key={user.id} className="list-item">
+                  <div>
+                    <strong>{user.email}</strong>
+                    <div className="muted code">{user.id}</div>
                   </div>
-                );
-              })
+                  <div>
+                    <div className="muted">Created</div>
+                    <div>{formatTime(user.createdAt)}</div>
+                  </div>
+                  <div>
+                    <div className="muted">Latest Update</div>
+                    <div>{formatTime(user.updatedAt)}</div>
+                  </div>
+                  <div>
+                    <div className="muted">Sync Version</div>
+                    <div className="code">{user.syncVersion}</div>
+                  </div>
+                </div>
+              ))
             )}
+          </div>
+        </section>
+
+        <section className="panel grid">
+          <div className="kicker">Collection Activity</div>
+          <div className="list">
+            <div className="list-item">
+              <strong>Users</strong>
+              <span className="code">{stats.users.count} documents</span>
+              <span className="muted">Latest update: {formatTime(stats.users.latestUpdatedAt)}</span>
+            </div>
+            <div className="list-item">
+              <strong>Agents</strong>
+              <span className="code">{stats.agents.count} documents</span>
+              <span className="muted">Latest update: {formatTime(stats.agents.latestUpdatedAt)}</span>
+            </div>
+            <div className="list-item">
+              <strong>Conversations</strong>
+              <span className="code">{stats.conversations.count} documents</span>
+              <span className="muted">Latest update: {formatTime(stats.conversations.latestUpdatedAt)}</span>
+            </div>
+            <div className="list-item">
+              <strong>Providers</strong>
+              <span className="code">{stats.providers.count} documents</span>
+              <span className="muted">Latest update: {formatTime(stats.providers.latestUpdatedAt)}</span>
+            </div>
           </div>
         </section>
       </div>

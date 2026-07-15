@@ -10,6 +10,6 @@ export const env = {
   jwtSecret: () => requireEnv("JWT_SECRET"),
   adminPassword: () => requireEnv("ADMIN_PASSWORD"),
   appBaseUrl: () => process.env.APP_BASE_URL ?? "http://localhost:3000",
-  upstashRedisUrl: () => requireEnv("UPSTASH_REDIS_REST_URL"),
-  upstashRedisToken: () => requireEnv("UPSTASH_REDIS_REST_TOKEN"),
+  mongoUri: () => requireEnv("MONGODB_URI"),
+  mongoDbName: () => process.env.MONGODB_DB_NAME ?? "messenger",
 };

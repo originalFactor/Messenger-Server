@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Messenger Server",
-  description: "Messenger account and cloud backup service",
+  description: "Messenger account and incremental synchronization service",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

@@ -21,5 +21,13 @@ export async function POST(request: Request) {
   const token = await createUserSessionToken(user.id, user.email);
   await setUserSessionCookie(token);
 
-  return jsonOk({ user: { id: user.id, email: user.email, lastLoginAt: now } });
+  return jsonOk({
+    user: {
+      id: user.id,
+      email: user.email,
+      avatarUrl: user.avatarUrl ?? null,
+      syncVersion: user.syncVersion,
+      lastLoginAt: now,
+    },
+  });
 }

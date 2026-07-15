@@ -3,3 +3,5 @@ node_modules/
 .vercel/
 coverage/
 .env
+.env.*
+!.env.example

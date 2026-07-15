@@ -17,6 +17,8 @@ export async function GET() {
     user: {
       id: user.id,
       email: user.email,
+      avatarUrl: user.avatarUrl ?? null,
+      syncVersion: user.syncVersion,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       lastLoginAt: user.lastLoginAt,
