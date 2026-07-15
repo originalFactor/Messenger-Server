@@ -110,6 +110,49 @@ export async function updateUserLastLogin(userId: string, lastLoginAt: number): 
   );
 }
 
+export async function updateUserPassword(userId: string, passwordHash: string): Promise<void> {
+  const db = await getDb();
+  const result = await db.collection<UserDoc>("users").updateOne(
+    { _id: userId },
+    { $set: { passwordHash, updatedAt: Date.now() } },
+  );
+  if (result.matchedCount !== 1) {
+    throw new NotFoundError("User not found.");
+  }
+}
+
+export async function deleteUserAccount(userId: string): Promise<string[]> {
+  const client = await getMongoClient();
+  const session = client.startSession();
+  let agentIds: string[] = [];
+
+  try {
+    await session.withTransaction(async () => {
+      const db = await getDb();
+      const user = await db.collection<UserDoc>("users").findOne({ _id: userId }, { session });
+      if (!user) {
+        throw new NotFoundError("User not found.");
+      }
+
+      agentIds = (await db.collection<AgentDoc>("agents")
+        .find({ userId }, { projection: { _id: 1 }, session })
+        .toArray()).map((agent) => agent._id);
+
+      await db.collection<AgentDoc>("agents").deleteMany({ userId }, { session });
+      await db.collection<ConversationDoc>("conversations").deleteMany({ userId }, { session });
+      await db.collection<ProviderDoc>("providers").deleteMany({ userId }, { session });
+      await db.collection<{ _id: string }>("avatar_locks").deleteMany({
+        _id: { $in: [`user:${userId}`, ...agentIds.map((agentId) => `agent:${agentId}`)] },
+      }, { session });
+      await db.collection<UserDoc>("users").deleteOne({ _id: userId }, { session });
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  return agentIds;
+}
+
 export async function bumpSyncVersion(userId: string, session?: ClientSession): Promise<number> {
   const db = await getDb();
   const user = await db.collection<UserDoc>("users").findOneAndUpdate(

@@ -69,6 +69,10 @@ All sync, entity, and avatar routes require a valid `messenger_session` cookie. 
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
+- `PUT /api/auth/password`
+- `DELETE /api/auth/account`
+
+`PUT /api/auth/password` requires `currentPassword` and `newPassword`. `DELETE /api/auth/account` requires a JSON body containing `currentPassword` and permanently removes the authenticated user's account, synchronized entities, and avatars.
 
 ### Entity Synchronization
 

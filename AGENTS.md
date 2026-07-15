@@ -15,6 +15,7 @@
 - Messages are embedded in conversations and models are embedded in providers. Deletes are soft deletes so tombstones remain available to `GET /api/sync?since=N`.
 - Avatar routes use Vercel Blob only for avatar files. `lib/avatars.ts` handles prefix snapshots/replacement/rollback, while `lib/avatar-locks.ts` serializes concurrent changes through MongoDB; preserve both protections when changing avatar behavior.
 - User and admin routes use different JWT cookies and guards from `lib/auth.ts`: `messenger_session` for application APIs and `messenger_admin_session` for `/admin`.
+- Account routes include authenticated password changes at `PUT /api/auth/password` and permanent account deletion at `DELETE /api/auth/account`; deletion removes the user's MongoDB entities and avatar blobs before clearing the session cookie.
 
 ## Environment
 

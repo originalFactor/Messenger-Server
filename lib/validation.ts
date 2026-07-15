@@ -10,6 +10,15 @@ export const credentialsSchema = z.object({
   password: z.string().min(8).max(200),
 });
 
+export const passwordChangeSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(8).max(200),
+}).strict();
+
+export const passwordDeleteSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+}).strict();
+
 export const agentSchema = z.object({
   id: entityIdSchema,
   name: z.string().trim().min(1).max(200),

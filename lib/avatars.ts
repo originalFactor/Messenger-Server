@@ -54,7 +54,7 @@ async function snapshotByPrefix(prefix: string, verify?: LockVerifier): Promise<
   const blobs = await listByPrefix(prefix, verify);
   return Promise.all(blobs.map(async (blob) => {
     await verifyLock(verify);
-    const stored = await get(blob.url, { access: "public", useCache: false });
+    const stored = await get(blob.pathname, { access: "public", useCache: false });
     if (!stored || stored.statusCode !== 200 || !stored.stream) {
       throw new Error(`Unable to preserve existing avatar blob: ${blob.pathname}`);
     }
