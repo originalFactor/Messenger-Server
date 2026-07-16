@@ -197,9 +197,19 @@ export async function deleteAgentAvatar(agentId: string, verify?: LockVerifier):
 }
 
 export async function getAvatar(url: string) {
-  const pathname = new URL(url).pathname.slice(1);
-  if (!pathname.startsWith("avatars/")) {
-    throw new Error(`Invalid avatar pathname: ${pathname}`);
+  const parsedUrl = new URL(url);
+  const pathname = parsedUrl.pathname.replace(/^\/+/, "");
+  const storageBase = process.env.VERCEL_BLOB_STORAGE_URL;
+  const storagePath = storageBase
+    ? new URL(storageBase).pathname.replace(/^\/+|\/+$/g, "")
+    : "";
+  const logicalPath = storagePath &&
+      (pathname === storagePath || pathname.startsWith(`${storagePath}/`))
+    ? pathname.slice(storagePath.length).replace(/^\/+/, "")
+    : pathname;
+
+  if (!logicalPath.startsWith("avatars/")) {
+    throw new Error(`Invalid avatar pathname: ${logicalPath}`);
   }
-  return get(pathname, { access: "private", useCache: false });
+  return get(logicalPath, { access: "private", useCache: false });
 }
