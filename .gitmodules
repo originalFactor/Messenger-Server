@@ -1,0 +1,3 @@
+[submodule "vercel-blob-emu"]
+	path = vercel-blob-emu
+	url = https://github.com/ECSDevs/vercel-blob-emu.git
