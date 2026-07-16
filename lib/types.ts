@@ -44,6 +44,9 @@ export interface AgentDoc {
   followDefaultTemperature: boolean;
   followDefaultTopP: boolean;
   followDefaultMaxTokens: boolean;
+  marketAgentId?: string | null;
+  marketAgentVersion?: number | null;
+  marketAgentRole?: "publisher" | "importer" | null;
   createdAt: number;
   updatedAt: number;
   version: number;
@@ -130,8 +133,35 @@ export interface AgentUpsertInput {
   followDefaultTemperature: boolean;
   followDefaultTopP: boolean;
   followDefaultMaxTokens: boolean;
+  marketAgentId?: string | null;
+  marketAgentVersion?: number | null;
+  marketAgentRole?: "publisher" | "importer" | null;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface MarketAgentDoc {
+  _id: string;
+  ownerUserId: string;
+  name: string;
+  avatarUrl?: string | null;
+  avatarVersion?: number | null;
+  systemPrompt: string;
+  temperature: number;
+  topP: number;
+  maxTokens?: number | null;
+  createdAt: number;
+  updatedAt: number;
+  version: number;
+  deleted: boolean;
+}
+
+export interface MarketAgentInput {
+  name: string;
+  systemPrompt: string;
+  temperature: number;
+  topP: number;
+  maxTokens?: number | null;
 }
 
 export interface ConversationUpsertInput {

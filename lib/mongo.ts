@@ -32,6 +32,8 @@ async function ensureIndexesFor(database: Db): Promise<void> {
       database.collection("conversations").createIndex({ userId: 1, version: 1 }),
       database.collection("conversations").createIndex({ userId: 1, agentId: 1 }),
       database.collection("providers").createIndex({ userId: 1, version: 1 }),
+      database.collection("market_agents").createIndex({ deleted: 1, updatedAt: -1, _id: 1 }),
+      database.collection("market_agents").createIndex({ ownerUserId: 1, deleted: 1 }),
       database.collection("avatar_locks").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
     ]).then(() => undefined);
     globalThis.messengerMongoIndexesPromise = indexes.catch((error: unknown) => {

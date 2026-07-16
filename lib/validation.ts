@@ -34,8 +34,19 @@ export const agentSchema = z.object({
   followDefaultTemperature: z.boolean(),
   followDefaultTopP: z.boolean(),
   followDefaultMaxTokens: z.boolean(),
+  marketAgentId: entityIdSchema.nullable().optional(),
+  marketAgentVersion: z.number().int().nonnegative().nullable().optional(),
+  marketAgentRole: z.enum(["publisher", "importer"]).nullable().optional(),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
+}).strict();
+
+export const marketAgentSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  systemPrompt: z.string().max(50_000),
+  temperature: z.number().finite(),
+  topP: z.number().finite(),
+  maxTokens: z.number().int().nullable().optional(),
 }).strict();
 
 export const messageSchema = z.object({

@@ -6,6 +6,8 @@ import type {
   AdminDashboard,
   AgentDoc,
   AgentUpsertInput,
+  MarketAgentDoc,
+  MarketAgentInput,
   CollectionStats,
   ConversationDoc,
   ConversationUpsertInput,
@@ -88,6 +90,9 @@ export async function saveUser(user: StoredUser): Promise<number> {
         followDefaultTemperature: false,
         followDefaultTopP: false,
         followDefaultMaxTokens: false,
+        marketAgentId: null,
+        marketAgentVersion: null,
+        marketAgentRole: null,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
         version: nextVersion,
@@ -124,10 +129,11 @@ export async function updateUserPassword(userId: string, passwordHash: string): 
   }
 }
 
-export async function deleteUserAccount(userId: string): Promise<string[]> {
+export async function deleteUserAccount(userId: string): Promise<{ agentIds: string[]; marketAgentIds: string[] }> {
   const client = await getMongoClient();
   const session = client.startSession();
   let agentIds: string[] = [];
+  let marketAgentIds: string[] = [];
 
   try {
     await session.withTransaction(async () => {
@@ -140,10 +146,14 @@ export async function deleteUserAccount(userId: string): Promise<string[]> {
       agentIds = (await db.collection<AgentDoc>("agents")
         .find({ userId }, { projection: { _id: 1 }, session })
         .toArray()).map((agent) => agent._id);
+      marketAgentIds = (await db.collection<MarketAgentDoc>("market_agents")
+        .find({ ownerUserId: userId }, { projection: { _id: 1 }, session })
+        .toArray()).map((agent) => agent._id);
 
       await db.collection<AgentDoc>("agents").deleteMany({ userId }, { session });
       await db.collection<ConversationDoc>("conversations").deleteMany({ userId }, { session });
       await db.collection<ProviderDoc>("providers").deleteMany({ userId }, { session });
+      await db.collection<MarketAgentDoc>("market_agents").deleteMany({ ownerUserId: userId }, { session });
       await db.collection<{ _id: string }>("avatar_locks").deleteMany({
         _id: { $in: [`user:${userId}`, ...agentIds.map((agentId) => `agent:${agentId}`)] },
       }, { session });
@@ -153,7 +163,7 @@ export async function deleteUserAccount(userId: string): Promise<string[]> {
     await session.endSession();
   }
 
-  return agentIds;
+  return { agentIds, marketAgentIds };
 }
 
 export async function bumpSyncVersion(userId: string, session?: ClientSession): Promise<number> {
@@ -286,6 +296,9 @@ export async function upsertAgent(userId: string, agent: AgentUpsertInput): Prom
           followDefaultTemperature: agent.followDefaultTemperature,
           followDefaultTopP: agent.followDefaultTopP,
           followDefaultMaxTokens: agent.followDefaultMaxTokens,
+          marketAgentId: agent.marketAgentId ?? null,
+          marketAgentVersion: agent.marketAgentVersion ?? null,
+          marketAgentRole: agent.marketAgentRole ?? null,
           createdAt: agent.createdAt,
           updatedAt: agent.updatedAt,
           version,
@@ -295,6 +308,105 @@ export async function upsertAgent(userId: string, agent: AgentUpsertInput): Prom
       { upsert: true, session },
     );
   });
+}
+
+export async function createMarketAgent(userId: string, input: MarketAgentInput): Promise<MarketAgentDoc> {
+  const db = await getDb();
+  const now = Date.now();
+  const agent: MarketAgentDoc = {
+    _id: randomUUID(),
+    ownerUserId: userId,
+    name: input.name,
+    avatarUrl: null,
+    avatarVersion: null,
+    systemPrompt: input.systemPrompt,
+    temperature: input.temperature,
+    topP: input.topP,
+    maxTokens: input.maxTokens ?? null,
+    createdAt: now,
+    updatedAt: now,
+    version: 1,
+    deleted: false,
+  };
+  await db.collection<MarketAgentDoc>("market_agents").insertOne(agent);
+  return agent;
+}
+
+export async function getMarketAgent(id: string): Promise<MarketAgentDoc | null> {
+  const db = await getDb();
+  return db.collection<MarketAgentDoc>("market_agents").findOne({ _id: id, deleted: false });
+}
+
+export async function listMarketAgents(query: string, limit: number, cursor?: string | null): Promise<MarketAgentDoc[]> {
+  const db = await getDb();
+  const filter: Filter<MarketAgentDoc> = {
+    deleted: false,
+    ...(query ? { name: { $regex: escapeRegex(query), $options: "i" } } : {}),
+  };
+  if (cursor) {
+    const cursorAgent = await db.collection<MarketAgentDoc>("market_agents").findOne({ _id: cursor, deleted: false });
+    if (cursorAgent) {
+      filter.$or = [
+        { updatedAt: { $lt: cursorAgent.updatedAt } },
+        { updatedAt: cursorAgent.updatedAt, _id: { $gt: cursorAgent._id } },
+      ];
+    }
+  }
+  return db.collection<MarketAgentDoc>("market_agents")
+    .find(filter)
+    .sort({ updatedAt: -1, _id: 1 })
+    .limit(limit)
+    .toArray();
+}
+
+export async function updateMarketAgent(userId: string, id: string, input: MarketAgentInput): Promise<MarketAgentDoc> {
+  const db = await getDb();
+  const now = Date.now();
+  const result = await db.collection<MarketAgentDoc>("market_agents").findOneAndUpdate(
+    { _id: id, ownerUserId: userId, deleted: false },
+    {
+      $set: {
+        name: input.name,
+        systemPrompt: input.systemPrompt,
+        temperature: input.temperature,
+        topP: input.topP,
+        maxTokens: input.maxTokens ?? null,
+        updatedAt: now,
+      },
+      $inc: { version: 1 },
+    },
+    { returnDocument: "after", includeResultMetadata: false },
+  );
+  if (!result) throw new NotFoundError("Market Agent not found.");
+  return result;
+}
+
+export async function updateMarketAgentAvatar(
+  userId: string,
+  id: string,
+  avatarUrl: string | null,
+): Promise<MarketAgentDoc> {
+  const db = await getDb();
+  const result = await db.collection<MarketAgentDoc>("market_agents").findOneAndUpdate(
+    { _id: id, ownerUserId: userId, deleted: false },
+    { $set: { avatarUrl, avatarVersion: avatarUrl ? Date.now() : null, updatedAt: Date.now() }, $inc: { version: 1 } },
+    { returnDocument: "after", includeResultMetadata: false },
+  );
+  if (!result) throw new NotFoundError("Market Agent not found.");
+  return result;
+}
+
+export async function deleteMarketAgent(userId: string, id: string): Promise<void> {
+  const db = await getDb();
+  const result = await db.collection<MarketAgentDoc>("market_agents").updateOne(
+    { _id: id, ownerUserId: userId, deleted: false },
+    { $set: { deleted: true, updatedAt: Date.now() }, $inc: { version: 1 } },
+  );
+  if (result.matchedCount !== 1) throw new NotFoundError("Market Agent not found.");
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export async function softDeleteAgent(

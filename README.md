@@ -1,6 +1,6 @@
 # Messenger Server
 
-`server/` is the standalone Next.js account and incremental-sync service for Messenger. It is intended for Vercel deployment. MongoDB stores synchronized application entities, while the Vercel Blob-compatible SDK stores only user and agent avatar files.
+`server/` is the standalone Next.js account, incremental-sync, and Agent Market service for Messenger. It is intended for Vercel deployment. MongoDB stores synchronized application entities and market snapshots, while the Vercel Blob-compatible SDK stores only avatar files.
 
 ## Features
 
@@ -11,6 +11,7 @@
 - Embedded messages per conversation and embedded models per provider
 - Vercel Blob avatar lifecycle management
 - Protected admin dashboard with MongoDB activity statistics
+- Authenticated public Agent Market with publish, update, import, and unpublish workflows
 
 ## Environment
 
@@ -35,6 +36,7 @@ All documents use application-generated string IDs as MongoDB `_id` values. Time
 - `agents`: `_id`, `userId`, agent configuration, `avatarUrl`, `version`, and `deleted`.
 - `conversations`: `_id`, `userId`, `agentId`, conversation overrides, one embedded `messages` array, `version`, and `deleted`.
 - `providers`: `_id`, `userId`, provider settings, one embedded `models` array, `version`, and `deleted`.
+- `market_agents`: server-generated `_id`, `ownerUserId`, portable Agent snapshot, avatar metadata, market `version`, and `deleted`. Entries never include provider settings, API keys, model bindings, or follow-default flags.
 
 Messages are stored inside their owning conversation. Models are stored inside their owning provider. A delete sets `deleted: true`; tombstones remain available to delta sync clients.
 
@@ -51,6 +53,7 @@ The server initializes these indexes when it first connects:
 - `conversations`: `{ userId: 1, version: 1 }`
 - `conversations`: `{ userId: 1, agentId: 1 }`
 - `providers`: `{ userId: 1, version: 1 }`
+- `market_agents`: `{ deleted: 1, updatedAt: -1, _id: 1 }` and `{ ownerUserId: 1, deleted: 1 }`
 
 An additional partial unique index protects the one-active-default-agent invariant for each user.
 
@@ -60,6 +63,7 @@ The Vercel Blob-compatible SDK is not used for backup payloads. It stores privat
 
 - User avatars: `avatars/users/{userId}.{ext}`
 - Agent avatars: `avatars/agents/{agentId}.{ext}`
+- Market Agent avatars: `avatars/market_agents/{marketAgentId}.{ext}`
 
 Avatar replacement snapshots the previous file with `get(..., { access: "private" })`, deletes prefix-matched blobs, and restores the prior file if the replacement upload fails. Per-avatar locks and ETag-conditional Blob deletes prevent a stale request from overwriting or deleting a newer avatar. Agent deletion removes its avatar Blob and clears `avatarUrl`. Avatar uploads accept JPEG, PNG, WebP, and GIF files up to 5 MiB.
 
@@ -115,6 +119,19 @@ Each array contains active documents and tombstones with `version > N`. Clients 
 - `DELETE /api/avatars/agents/{agentId}`
 
 Avatar PUT requests use `multipart/form-data`, with a `file` field (the legacy `avatar` field is also accepted). Avatar responses include `{ url, version }`; delete responses set `url` to `null`.
+
+### Agent Market
+
+All market routes require a valid Messenger session. Listing is available to every signed-in user; the server never returns the publisher identity. Only the entry owner may update, upload/remove an avatar, or unpublish an entry.
+
+- `GET /api/market/agents?query=&cursor=&limit=`
+- `POST /api/market/agents`
+- `GET /api/market/agents/{id}`
+- `PUT /api/market/agents/{id}`
+- `DELETE /api/market/agents/{id}`
+- `GET`/`PUT`/`DELETE /api/market/agents/{id}/avatar`
+
+Create and update payloads contain `name`, `systemPrompt`, `temperature`, `topP`, and optional `maxTokens`. Listing is sorted by most recently updated entry and uses the last returned ID as its cursor.
 
 ## Local Development
 

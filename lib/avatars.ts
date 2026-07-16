@@ -32,6 +32,10 @@ export function agentAvatarPath(agentId: string, ext: string): string {
   return `avatars/agents/${agentId}.${ext}`;
 }
 
+export function marketAgentAvatarPath(agentId: string, ext: string): string {
+  return `avatars/market_agents/${agentId}.${ext}`;
+}
+
 async function verifyLock(verify?: LockVerifier): Promise<void> {
   if (verify) {
     await verify();
@@ -194,6 +198,31 @@ export async function revertAgentAvatar(
 
 export async function deleteAgentAvatar(agentId: string, verify?: LockVerifier): Promise<void> {
   await deleteByPrefix(`avatars/agents/${agentId}.`, verify);
+}
+
+export async function snapshotMarketAgentAvatar(agentId: string): Promise<AvatarBlobBackup[]> {
+  return snapshotByPrefix(`avatars/market_agents/${agentId}.`);
+}
+
+export async function uploadMarketAgentAvatar(
+  agentId: string,
+  backups: AvatarBlobBackup[],
+  buffer: Buffer,
+  ext: string,
+  contentType: string,
+): Promise<AvatarReplacement> {
+  return replaceAvatar(backups, marketAgentAvatarPath(agentId, ext), buffer, contentType);
+}
+
+export async function revertMarketAgentAvatar(
+  replacement: AvatarReplacement,
+  backups: AvatarBlobBackup[],
+): Promise<boolean> {
+  return revertReplacement(replacement, backups);
+}
+
+export async function deleteMarketAgentAvatar(agentId: string): Promise<void> {
+  await deleteByPrefix(`avatars/market_agents/${agentId}.`);
 }
 
 export async function getAvatar(url: string) {

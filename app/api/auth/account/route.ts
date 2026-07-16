@@ -1,5 +1,5 @@
 import { clearUserSessionCookie, requireUserSession } from "@/lib/auth";
-import { deleteAgentAvatar, deleteUserAvatar } from "@/lib/avatars";
+import { deleteAgentAvatar, deleteMarketAgentAvatar, deleteUserAvatar } from "@/lib/avatars";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getUserById, deleteUserAccount } from "@/lib/storage";
 import { verifyPassword } from "@/lib/security";
@@ -26,10 +26,11 @@ export async function DELETE(request: Request) {
     return jsonError("The current password is incorrect.", 401);
   }
 
-  const agentIds = await deleteUserAccount(session.sub);
+  const { agentIds, marketAgentIds } = await deleteUserAccount(session.sub);
   const avatarCleanup = await Promise.allSettled([
     deleteUserAvatar(session.sub),
     ...agentIds.map((agentId) => deleteAgentAvatar(agentId)),
+    ...marketAgentIds.map((agentId) => deleteMarketAgentAvatar(agentId)),
   ]);
   for (const result of avatarCleanup) {
     if (result.status === "rejected") {
