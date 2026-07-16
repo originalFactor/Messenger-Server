@@ -85,14 +85,15 @@ export async function PUT(request: Request) {
           avatar.contentType,
           verifyLock,
         );
-        const version = await updateUserAvatar(session.sub, replacement.url, lock);
-        return jsonOk({ url: userAvatarUrl(request), version });
+        const avatarVersion = Date.now();
+        const version = await updateUserAvatar(session.sub, replacement.url, lock, avatarVersion);
+        return jsonOk({ url: userAvatarUrl(request), version, avatarVersion });
       } catch (error) {
         const restored = replacement
           ? await revertUserAvatar(replacement, backups, verifyLock)
           : error instanceof AvatarReplacementError && error.restored;
         if (metadataCleared && restored && canRestorePriorAvatar && user.avatarUrl) {
-          await updateUserAvatar(session.sub, user.avatarUrl, lock);
+          await updateUserAvatar(session.sub, user.avatarUrl, lock, user.avatarVersion);
         }
         throw error;
       }
@@ -116,7 +117,7 @@ export async function DELETE() {
       }
       const version = await updateUserAvatar(session.sub, null, lock);
       await deleteUserAvatar(session.sub, () => renewAvatarLock(lock));
-      return jsonOk({ url: null, version });
+      return jsonOk({ url: null, version, avatarVersion: null });
     });
   } catch (error) {
     return storageErrorResponse(error, "Unable to delete the user avatar.");

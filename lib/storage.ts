@@ -29,6 +29,7 @@ function toStoredUser(doc: UserDoc): StoredUser {
     email: doc.email,
     passwordHash: doc.passwordHash,
     avatarUrl: doc.avatarUrl ?? null,
+    avatarVersion: doc.avatarVersion ?? null,
     syncVersion: doc.syncVersion,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
@@ -62,6 +63,7 @@ export async function saveUser(user: StoredUser): Promise<number> {
         email: user.email,
         passwordHash: user.passwordHash,
         avatarUrl: user.avatarUrl ?? null,
+        avatarVersion: user.avatarVersion ?? null,
         syncVersion: 0,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
@@ -72,8 +74,9 @@ export async function saveUser(user: StoredUser): Promise<number> {
       await db.collection<AgentDoc>("agents").insertOne({
         _id: defaultAgentId,
         userId: user.id,
-        name: "默认 Agent",
-        avatarUrl: null,
+          name: "默认 Agent",
+          avatarUrl: null,
+          avatarVersion: null,
         systemPrompt: "You are a helpful assistant.",
         defaultModelId: null,
         temperature: 0.7,
@@ -271,6 +274,7 @@ export async function upsertAgent(userId: string, agent: AgentUpsertInput): Prom
           userId,
           name: agent.name,
           avatarUrl: existing?.avatarUrl ?? null,
+          avatarVersion: existing?.avatarVersion ?? null,
           systemPrompt: agent.systemPrompt,
           defaultModelId: agent.defaultModelId ?? null,
           temperature: agent.temperature,
@@ -318,7 +322,7 @@ export async function softDeleteAgent(
     const db = await getDb();
     const result = await db.collection<AgentDoc>("agents").updateOne(
       { _id: agentId, userId, deleted: false },
-      { $set: { deleted: true, avatarUrl: null, updatedAt: Date.now(), version } },
+      { $set: { deleted: true, avatarUrl: null, avatarVersion: null, updatedAt: Date.now(), version } },
       { session },
     );
     if (result.matchedCount !== 1) {
@@ -332,7 +336,9 @@ export async function updateAgentAvatar(
   agentId: string,
   avatarUrl: string | null,
   avatarLock?: AvatarLock,
+  avatarVersion?: number | null,
 ): Promise<number> {
+  const nextAvatarVersion = avatarUrl ? (avatarVersion ?? Date.now()) : null;
   return withVersionedWrite(userId, async (version, session) => {
     if (avatarLock) {
       await renewAvatarLock(avatarLock, session);
@@ -345,7 +351,7 @@ export async function updateAgentAvatar(
     const db = await getDb();
     const result = await db.collection<AgentDoc>("agents").updateOne(
       { _id: agentId, userId, deleted: false },
-      { $set: { avatarUrl, updatedAt: Date.now(), version } },
+      { $set: { avatarUrl, avatarVersion: nextAvatarVersion, updatedAt: Date.now(), version } },
       { session },
     );
     if (result.matchedCount !== 1) {
@@ -482,7 +488,9 @@ export async function updateUserAvatar(
   userId: string,
   avatarUrl: string | null,
   avatarLock?: AvatarLock,
+  avatarVersion?: number | null,
 ): Promise<number> {
+  const nextAvatarVersion = avatarUrl ? (avatarVersion ?? Date.now()) : null;
   return withVersionedWrite(userId, async (_version, session) => {
     if (avatarLock) {
       await renewAvatarLock(avatarLock, session);
@@ -490,7 +498,7 @@ export async function updateUserAvatar(
     const db = await getDb();
     const result = await db.collection<UserDoc>("users").updateOne(
       { _id: userId },
-      { $set: { avatarUrl, updatedAt: Date.now() } },
+      { $set: { avatarUrl, avatarVersion: nextAvatarVersion, updatedAt: Date.now() } },
       { session },
     );
     if (result.matchedCount !== 1) {

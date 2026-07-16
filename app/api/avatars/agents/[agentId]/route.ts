@@ -98,17 +98,19 @@ export async function PUT(request: Request, context: RouteContext) {
           avatar.contentType,
           verifyLock,
         );
-        const version = await updateAgentAvatar(session.sub, agentId, replacement.url, lock);
+        const avatarVersion = Date.now();
+        const version = await updateAgentAvatar(session.sub, agentId, replacement.url, lock, avatarVersion);
         return jsonOk({
           url: new URL(`/api/avatars/agents/${agentId}`, request.url).toString(),
           version,
+          avatarVersion,
         });
       } catch (error) {
         const restored = replacement
           ? await revertAgentAvatar(replacement, backups, verifyLock)
           : error instanceof AvatarReplacementError && error.restored;
         if (metadataCleared && restored && canRestorePriorAvatar && agent.avatarUrl) {
-          await updateAgentAvatar(session.sub, agentId, agent.avatarUrl, lock);
+          await updateAgentAvatar(session.sub, agentId, agent.avatarUrl, lock, agent.avatarVersion);
         }
         throw error;
       }
@@ -137,7 +139,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
       }
       const version = await updateAgentAvatar(session.sub, agentId, null, lock);
       await deleteAgentAvatar(agentId, () => renewAvatarLock(lock));
-      return jsonOk({ url: null, version });
+      return jsonOk({ url: null, version, avatarVersion: null });
     });
   } catch (error) {
     return storageErrorResponse(error, "Unable to delete the agent avatar.");

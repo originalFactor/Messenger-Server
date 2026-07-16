@@ -18,6 +18,7 @@ export async function GET(request: Request) {
       id: user.id,
       email: user.email,
       avatarUrl: user.avatarUrl ? new URL("/api/avatars/user", request.url).toString() : null,
+      avatarVersion: user.avatarVersion ?? null,
       syncVersion: user.syncVersion,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,

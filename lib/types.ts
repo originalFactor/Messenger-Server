@@ -8,6 +8,7 @@ export interface StoredUser {
   email: string;
   passwordHash: string;
   avatarUrl?: string | null;
+  avatarVersion?: number | null;
   syncVersion: number;
   createdAt: number;
   updatedAt: number;
@@ -19,6 +20,7 @@ export interface UserDoc {
   email: string;
   passwordHash: string;
   avatarUrl?: string | null;
+  avatarVersion?: number | null;
   syncVersion: number;
   createdAt: number;
   updatedAt: number;
@@ -30,6 +32,7 @@ export interface AgentDoc {
   userId: string;
   name: string;
   avatarUrl?: string | null;
+  avatarVersion?: number | null;
   systemPrompt: string;
   defaultModelId?: string | null;
   temperature: number;
