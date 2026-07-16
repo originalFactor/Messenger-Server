@@ -1,6 +1,7 @@
 import {
   AvatarReplacementError,
   deleteUserAvatar,
+  getAvatar,
   revertUserAvatar,
   snapshotUserAvatar,
   uploadUserAvatar,
@@ -13,6 +14,40 @@ import { getUserById, updateUserAvatar } from "@/lib/storage";
 import { getAvatarUpload } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+function userAvatarUrl(request: Request): string {
+  return new URL("/api/avatars/user", request.url).toString();
+}
+
+export async function GET(request: Request) {
+  const session = await requireUserSession();
+  if (!session) {
+    return jsonError("Unauthorized.", 401);
+  }
+
+  try {
+    const user = await getUserById(session.sub);
+    if (!user?.avatarUrl) {
+      return jsonError("Avatar not found.", 404);
+    }
+
+    const avatar = await getAvatar(user.avatarUrl);
+    if (!avatar || avatar.statusCode !== 200 || !avatar.stream) {
+      return jsonError("Avatar not found.", 404);
+    }
+
+    return new Response(avatar.stream, {
+      headers: {
+        "Cache-Control": "private, no-cache",
+        "Content-Type": avatar.blob.contentType,
+        ETag: avatar.blob.etag,
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  } catch (error) {
+    return storageErrorResponse(error, "Unable to load the user avatar.");
+  }
+}
 
 export async function PUT(request: Request) {
   const session = await requireUserSession();
@@ -51,7 +86,7 @@ export async function PUT(request: Request) {
           verifyLock,
         );
         const version = await updateUserAvatar(session.sub, replacement.url, lock);
-        return jsonOk({ url: replacement.url, version });
+        return jsonOk({ url: userAvatarUrl(request), version });
       } catch (error) {
         const restored = replacement
           ? await revertUserAvatar(replacement, backups, verifyLock)

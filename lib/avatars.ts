@@ -54,7 +54,7 @@ async function snapshotByPrefix(prefix: string, verify?: LockVerifier): Promise<
   const blobs = await listByPrefix(prefix, verify);
   return Promise.all(blobs.map(async (blob) => {
     await verifyLock(verify);
-    const stored = await get(blob.pathname, { access: "public", useCache: false });
+    const stored = await get(blob.pathname, { access: "private", useCache: false });
     if (!stored || stored.statusCode !== 200 || !stored.stream) {
       throw new Error(`Unable to preserve existing avatar blob: ${blob.pathname}`);
     }
@@ -83,7 +83,7 @@ async function restoreBackups(backups: AvatarBlobBackup[], verify?: LockVerifier
     for (const backup of backups) {
       await verifyLock(verify);
       await put(backup.pathname, backup.content, {
-        access: "public",
+        access: "private",
         addRandomSuffix: false,
         contentType: backup.contentType,
         cacheControlMaxAge: 60,
@@ -107,7 +107,7 @@ async function replaceAvatar(
     deleted = await deleteBackups(backups, verify);
     await verifyLock(verify);
     const blob = await put(pathname, buffer, {
-      access: "public",
+      access: "private",
       addRandomSuffix: false,
       contentType,
       cacheControlMaxAge: 60,
@@ -194,4 +194,12 @@ export async function revertAgentAvatar(
 
 export async function deleteAgentAvatar(agentId: string, verify?: LockVerifier): Promise<void> {
   await deleteByPrefix(`avatars/agents/${agentId}.`, verify);
+}
+
+export async function getAvatar(url: string) {
+  const pathname = new URL(url).pathname.slice(1);
+  if (!pathname.startsWith("avatars/")) {
+    throw new Error(`Invalid avatar pathname: ${pathname}`);
+  }
+  return get(pathname, { access: "private", useCache: false });
 }

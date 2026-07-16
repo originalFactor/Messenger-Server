@@ -52,12 +52,14 @@ An additional partial unique index protects the one-active-default-agent invaria
 
 ## Avatar Storage
 
-Vercel Blob is not used for backup payloads. It stores public avatar files at stable pathnames:
+Vercel Blob is not used for backup payloads. It stores private avatar files at stable pathnames:
 
 - User avatars: `avatars/users/{userId}.{ext}`
 - Agent avatars: `avatars/agents/{agentId}.{ext}`
 
-Avatar replacement snapshots the previous file, deletes prefix-matched blobs, and restores the prior file if the replacement upload fails. Per-avatar locks and ETag-conditional Blob deletes prevent a stale request from overwriting or deleting a newer avatar. Agent deletion removes its avatar Blob and clears `avatarUrl`. Avatar uploads accept JPEG, PNG, WebP, and GIF files up to 5 MiB.
+Avatar replacement snapshots the previous file with `get(..., { access: "private" })`, deletes prefix-matched blobs, and restores the prior file if the replacement upload fails. Per-avatar locks and ETag-conditional Blob deletes prevent a stale request from overwriting or deleting a newer avatar. Agent deletion removes its avatar Blob and clears `avatarUrl`. Avatar uploads accept JPEG, PNG, WebP, and GIF files up to 5 MiB.
+
+Private Blob URLs are never returned to clients as directly readable image URLs. Authenticated avatar routes stream the Blob through `get(..., { access: "private" })`, and mobile clients load those routes with the Messenger session cookie.
 
 ## API
 
@@ -102,8 +104,10 @@ Each array contains active documents and tombstones with `version > N`. Clients 
 ### Avatars
 
 - `PUT /api/avatars/user`
+- `GET /api/avatars/user`
 - `DELETE /api/avatars/user`
 - `PUT /api/avatars/agents/{agentId}`
+- `GET /api/avatars/agents/{agentId}`
 - `DELETE /api/avatars/agents/{agentId}`
 
 Avatar PUT requests use `multipart/form-data`, with a `file` field (the legacy `avatar` field is also accepted). Avatar responses include `{ url, version }`; delete responses set `url` to `null`.

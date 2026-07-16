@@ -1,6 +1,7 @@
 import {
   AvatarReplacementError,
   deleteAgentAvatar,
+  getAvatar,
   revertAgentAvatar,
   snapshotAgentAvatar,
   uploadAgentAvatar,
@@ -19,6 +20,41 @@ type RouteContext = { params: Promise<{ agentId: string }> };
 async function getAgentId(context: RouteContext): Promise<string | null> {
   const { agentId } = await context.params;
   return entityIdSchema.safeParse(agentId).success ? agentId : null;
+}
+
+export async function GET(request: Request, context: RouteContext) {
+  const session = await requireUserSession();
+  if (!session) {
+    return jsonError("Unauthorized.", 401);
+  }
+
+  const agentId = await getAgentId(context);
+  if (!agentId) {
+    return jsonError("Invalid agent ID.", 400);
+  }
+
+  try {
+    const agent = await getAgentById(session.sub, agentId);
+    if (!agent || agent.deleted || !agent.avatarUrl) {
+      return jsonError("Avatar not found.", 404);
+    }
+
+    const avatar = await getAvatar(agent.avatarUrl);
+    if (!avatar || avatar.statusCode !== 200 || !avatar.stream) {
+      return jsonError("Avatar not found.", 404);
+    }
+
+    return new Response(avatar.stream, {
+      headers: {
+        "Cache-Control": "private, no-cache",
+        "Content-Type": avatar.blob.contentType,
+        ETag: avatar.blob.etag,
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  } catch (error) {
+    return storageErrorResponse(error, "Unable to load the agent avatar.");
+  }
 }
 
 export async function PUT(request: Request, context: RouteContext) {
@@ -63,7 +99,10 @@ export async function PUT(request: Request, context: RouteContext) {
           verifyLock,
         );
         const version = await updateAgentAvatar(session.sub, agentId, replacement.url, lock);
-        return jsonOk({ url: replacement.url, version });
+        return jsonOk({
+          url: new URL(`/api/avatars/agents/${agentId}`, request.url).toString(),
+          version,
+        });
       } catch (error) {
         const restored = replacement
           ? await revertAgentAvatar(replacement, backups, verifyLock)

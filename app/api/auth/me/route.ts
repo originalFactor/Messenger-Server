@@ -2,7 +2,7 @@ import { requireUserSession } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getUserById } from "@/lib/storage";
 
-export async function GET() {
+export async function GET(request: Request) {
   const session = await requireUserSession();
   if (!session) {
     return jsonError("Unauthorized.", 401);
@@ -17,7 +17,7 @@ export async function GET() {
     user: {
       id: user.id,
       email: user.email,
-      avatarUrl: user.avatarUrl ?? null,
+      avatarUrl: user.avatarUrl ? new URL("/api/avatars/user", request.url).toString() : null,
       syncVersion: user.syncVersion,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,

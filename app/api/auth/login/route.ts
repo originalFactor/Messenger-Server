@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     user: {
       id: user.id,
       email: user.email,
-      avatarUrl: user.avatarUrl ?? null,
+      avatarUrl: user.avatarUrl ? new URL("/api/avatars/user", request.url).toString() : null,
       syncVersion: user.syncVersion,
       lastLoginAt: now,
     },

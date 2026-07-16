@@ -19,7 +19,15 @@ export async function GET(request: Request) {
 
   try {
     const delta = await getDeltaSince(session.sub, since);
-    return jsonOk(delta, 200, { "Cache-Control": "no-store" });
+    return jsonOk({
+      ...delta,
+      agents: delta.agents.map((agent) => ({
+        ...agent,
+        avatarUrl: agent.avatarUrl
+          ? new URL(`/api/avatars/agents/${agent._id}`, request.url).toString()
+          : null,
+      })),
+    }, 200, { "Cache-Control": "no-store" });
   } catch (error) {
     return storageErrorResponse(error, "Unable to load synchronization data.");
   }
