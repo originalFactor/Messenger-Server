@@ -1,4 +1,4 @@
-import { BlobPreconditionFailedError, del, get, list, put } from "@vercel/blob";
+import { BlobPreconditionFailedError, del, get, list, put } from "vercel-blob-nonvercel";
 
 type LockVerifier = () => Promise<void>;
 

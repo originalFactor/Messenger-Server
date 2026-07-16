@@ -1,6 +1,6 @@
 # Messenger Server
 
-`server/` is the standalone Next.js account and incremental-sync service for Messenger. It is intended for Vercel deployment. MongoDB stores synchronized application entities, while Vercel Blob stores only user and agent avatar files.
+`server/` is the standalone Next.js account and incremental-sync service for Messenger. It is intended for Vercel deployment. MongoDB stores synchronized application entities, while the Vercel Blob-compatible SDK stores only user and agent avatar files.
 
 ## Features
 
@@ -21,7 +21,11 @@ Copy `.env.example` to `.env.local` for local development.
 - `APP_BASE_URL`: displayed by the server landing page.
 - `MONGODB_URI`: MongoDB connection string. Use MongoDB Atlas or a replica set because versioned entity writes use transactions.
 - `MONGODB_DB_NAME`: database name; defaults to `messenger`.
-- `BLOB_READ_WRITE_TOKEN`: Vercel Blob token used only for avatar files.
+- `BLOB_READ_WRITE_TOKEN`: Blob store token used only for avatar files.
+- `BLOB_STORE_ID`: Blob store identifier, `local` for the local emulator.
+- `VERCEL_BLOB_API_URL`: Blob control API URL. Use `http://localhost:3100/api/blob` locally.
+- `VERCEL_BLOB_STORAGE_URL`: Blob storage URL. Use `http://localhost:3100/blob` locally.
+- `VERCEL_BLOB_RETRIES`: Set to `0` for local development to avoid retry delays.
 
 ## Data Model
 
@@ -52,7 +56,7 @@ An additional partial unique index protects the one-active-default-agent invaria
 
 ## Avatar Storage
 
-Vercel Blob is not used for backup payloads. It stores private avatar files at stable pathnames:
+The Vercel Blob-compatible SDK is not used for backup payloads. It stores private avatar files at stable pathnames:
 
 - User avatars: `avatars/users/{userId}.{ext}`
 - Agent avatars: `avatars/agents/{agentId}.{ext}`
@@ -121,7 +125,7 @@ pnpm install
 pnpm dev
 ```
 
-Open `http://localhost:3000` for the landing page and `http://localhost:3000/admin/login` for the admin portal.
+Open `http://localhost:3000` for the landing page and `http://localhost:3000/admin/login` for the admin portal. When using [vercel-blob-emu](https://github.com/ECSDevs/vercel-blob-emu), start its emulator on port `3100` and point `VERCEL_BLOB_API_URL` and `VERCEL_BLOB_STORAGE_URL` at that service.
 
 Run validation with:
 

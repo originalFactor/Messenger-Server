@@ -13,14 +13,14 @@
 - `lib/storage.ts` is the persistence boundary for users, agents, conversations, providers, incremental sync watermarks, and tombstones. `lib/mongo.ts` also initializes indexes on first database access.
 - Versioned entity mutations must remain in the MongoDB transaction that increments the user `syncVersion` and stamps the entity `version`; sync reads first capture the waterline and bound collection queries to it.
 - Messages are embedded in conversations and models are embedded in providers. Deletes are soft deletes so tombstones remain available to `GET /api/sync?since=N`.
-- Avatar routes use private Vercel Blob only for avatar files. `lib/avatars.ts` handles prefix snapshots/replacement/rollback, while authenticated avatar GET routes stream private blobs to clients and `lib/avatar-locks.ts` serializes concurrent changes through MongoDB; preserve all protections when changing avatar behavior.
+- Avatar routes use the Vercel Blob-compatible SDK only for avatar files. `lib/avatars.ts` handles prefix snapshots/replacement/rollback, while authenticated avatar GET routes stream private blobs to clients and `lib/avatar-locks.ts` serializes concurrent changes through MongoDB; preserve all protections when changing avatar behavior.
 - User and admin routes use different JWT cookies and guards from `lib/auth.ts`: `messenger_session` for application APIs and `messenger_admin_session` for `/admin`.
 - Account routes include authenticated password changes at `PUT /api/auth/password` and permanent account deletion at `DELETE /api/auth/account`; deletion removes the user's MongoDB entities and avatar blobs before clearing the session cookie.
 
 ## Environment
 
 - Copy `.env.example` to `.env.local`. `JWT_SECRET`, `ADMIN_PASSWORD`, and `MONGODB_URI` are required at runtime; `MONGODB_DB_NAME` defaults to `messenger`, and `APP_BASE_URL` defaults to `http://localhost:3000`.
-- `BLOB_READ_WRITE_TOKEN` is needed for private avatar Blob operations and is not used for database or backup storage.
+- `BLOB_READ_WRITE_TOKEN` is needed for private avatar Blob operations and is not used for database or backup storage. Local development uses `vercel-blob-nonvercel` with `VERCEL_BLOB_API_URL=http://localhost:3100/api/blob` and `VERCEL_BLOB_STORAGE_URL=http://localhost:3100/blob`.
 - Keep secrets out of source control; `.env.*` is ignored except `.env.example`.
 
 ## Conventions
