@@ -7,6 +7,7 @@ import {
   uploadMarketAgentAvatar,
 } from "@/lib/avatars";
 import { requireUserSession } from "@/lib/auth";
+import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { getMarketAgent, updateMarketAgentAvatar } from "@/lib/storage";
@@ -74,7 +75,7 @@ export async function PUT(request: Request, context: RouteContext) {
         avatar.contentType,
       );
       const updated = await updateMarketAgentAvatar(session.sub, id, replacement.url);
-      return jsonOk({ url: new URL(`/api/market/agents/${id}/avatar`, request.url).toString(), version: updated.version, avatarVersion: updated.avatarVersion });
+      return jsonOk({ url: appUrl(`/api/market/agents/${id}/avatar`), version: updated.version, avatarVersion: updated.avatarVersion });
     } catch (error) {
       const restored = replacement
         ? await revertMarketAgentAvatar(replacement, backups)

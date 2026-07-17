@@ -8,6 +8,7 @@ import {
 } from "@/lib/avatars";
 import { renewAvatarLock, withAvatarLock } from "@/lib/avatar-locks";
 import { requireUserSession } from "@/lib/auth";
+import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { getAgentById, updateAgentAvatar } from "@/lib/storage";
@@ -101,7 +102,7 @@ export async function PUT(request: Request, context: RouteContext) {
         const avatarVersion = Date.now();
         const version = await updateAgentAvatar(session.sub, agentId, replacement.url, lock, avatarVersion);
         return jsonOk({
-          url: new URL(`/api/avatars/agents/${agentId}`, request.url).toString(),
+          url: appUrl(`/api/avatars/agents/${agentId}`),
           version,
           avatarVersion,
         });

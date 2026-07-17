@@ -1,4 +1,5 @@
 import { requireUserSession } from "@/lib/auth";
+import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { deleteMarketAgent, getMarketAgent, updateMarketAgent } from "@/lib/storage";
@@ -14,11 +15,11 @@ async function marketAgentId(context: RouteContext): Promise<string | null> {
   return entityIdSchema.safeParse(id).success ? id : null;
 }
 
-function responseAgent(agent: MarketAgentDoc, request: Request) {
+function responseAgent(agent: MarketAgentDoc) {
   return {
     id: agent._id,
     name: agent.name,
-    avatarUrl: agent.avatarUrl ? new URL(`/api/market/agents/${agent._id}/avatar`, request.url).toString() : null,
+    avatarUrl: agent.avatarUrl ? appUrl(`/api/market/agents/${agent._id}/avatar`) : null,
     avatarVersion: agent.avatarVersion ?? null,
     systemPrompt: agent.systemPrompt,
     temperature: agent.temperature,
@@ -39,7 +40,7 @@ export async function GET(request: Request, context: RouteContext) {
   try {
     const agent = await getMarketAgent(id);
     if (!agent) return jsonError("Market Agent not found.", 404);
-    return jsonOk({ agent: responseAgent(agent, request), isOwner: agent.ownerUserId === session.sub });
+    return jsonOk({ agent: responseAgent(agent), isOwner: agent.ownerUserId === session.sub });
   } catch (error) {
     return storageErrorResponse(error, "Unable to load the market agent.");
   }
@@ -55,7 +56,7 @@ export async function PUT(request: Request, context: RouteContext) {
 
   try {
     const agent = await updateMarketAgent(session.sub, id, parsed.data);
-    return jsonOk({ agent: responseAgent(agent, request) });
+    return jsonOk({ agent: responseAgent(agent) });
   } catch (error) {
     return storageErrorResponse(error, "Unable to update the market agent.");
   }

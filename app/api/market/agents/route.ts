@@ -1,4 +1,5 @@
 import { requireUserSession } from "@/lib/auth";
+import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { createMarketAgent, listMarketAgents } from "@/lib/storage";
@@ -8,11 +9,11 @@ import type { MarketAgentDoc } from "@/lib/types";
 const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 50;
 
-function responseAgent(agent: MarketAgentDoc, request: Request) {
+function responseAgent(agent: MarketAgentDoc) {
   return {
     id: agent._id,
     name: agent.name,
-    avatarUrl: agent.avatarUrl ? new URL(`/api/market/agents/${agent._id}/avatar`, request.url).toString() : null,
+    avatarUrl: agent.avatarUrl ? appUrl(`/api/market/agents/${agent._id}/avatar`) : null,
     avatarVersion: agent.avatarVersion ?? null,
     systemPrompt: agent.systemPrompt,
     temperature: agent.temperature,
@@ -41,7 +42,7 @@ export async function GET(request: Request) {
     const hasMore = agents.length > limit;
     const page = hasMore ? agents.slice(0, limit) : agents;
     return jsonOk({
-      agents: page.map((agent) => responseAgent(agent, request)),
+      agents: page.map(responseAgent),
       nextCursor: hasMore ? page.at(-1)?._id ?? null : null,
     });
   } catch (error) {
@@ -58,7 +59,7 @@ export async function POST(request: Request) {
 
   try {
     const agent = await createMarketAgent(session.sub, parsed.data);
-    return jsonOk({ agent: responseAgent(agent, request) }, 201);
+    return jsonOk({ agent: responseAgent(agent) }, 201);
   } catch (error) {
     return storageErrorResponse(error, "Unable to publish the market agent.");
   }

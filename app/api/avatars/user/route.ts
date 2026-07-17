@@ -8,6 +8,7 @@ import {
 } from "@/lib/avatars";
 import { renewAvatarLock, withAvatarLock } from "@/lib/avatar-locks";
 import { requireUserSession } from "@/lib/auth";
+import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { getUserById, updateUserAvatar } from "@/lib/storage";
@@ -15,8 +16,8 @@ import { getAvatarUpload } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
-function userAvatarUrl(request: Request): string {
-  return new URL("/api/avatars/user", request.url).toString();
+function userAvatarUrl(): string {
+  return appUrl("/api/avatars/user");
 }
 
 export async function GET(request: Request) {
@@ -87,7 +88,7 @@ export async function PUT(request: Request) {
         );
         const avatarVersion = Date.now();
         const version = await updateUserAvatar(session.sub, replacement.url, lock, avatarVersion);
-        return jsonOk({ url: userAvatarUrl(request), version, avatarVersion });
+        return jsonOk({ url: userAvatarUrl(), version, avatarVersion });
       } catch (error) {
         const restored = replacement
           ? await revertUserAvatar(replacement, backups, verifyLock)

@@ -1,4 +1,5 @@
 import { requireUserSession } from "@/lib/auth";
+import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { getDeltaSince } from "@/lib/storage";
@@ -23,9 +24,7 @@ export async function GET(request: Request) {
       ...delta,
       agents: delta.agents.map((agent) => ({
         ...agent,
-        avatarUrl: agent.avatarUrl
-          ? new URL(`/api/avatars/agents/${agent._id}`, request.url).toString()
-          : null,
+        avatarUrl: agent.avatarUrl ? appUrl(`/api/avatars/agents/${agent._id}`) : null,
       })),
     }, 200, { "Cache-Control": "no-store" });
   } catch (error) {

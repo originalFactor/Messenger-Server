@@ -1,4 +1,5 @@
 import { createUserSessionToken, setUserSessionCookie } from "@/lib/auth";
+import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
 import { verifyPassword } from "@/lib/security";
 import { getUserByEmail, updateUserLastLogin } from "@/lib/storage";
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
     user: {
       id: user.id,
       email: user.email,
-      avatarUrl: user.avatarUrl ? new URL("/api/avatars/user", request.url).toString() : null,
+      avatarUrl: user.avatarUrl ? appUrl("/api/avatars/user") : null,
       avatarVersion: user.avatarVersion ?? null,
       syncVersion: user.syncVersion,
       lastLoginAt: now,

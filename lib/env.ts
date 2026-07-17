@@ -13,3 +13,7 @@ export const env = {
   mongoUri: () => requireEnv("MONGODB_URI"),
   mongoDbName: () => process.env.MONGODB_DB_NAME ?? "messenger",
 };
+
+export function appUrl(path: string): string {
+  return new URL(path, `${env.appBaseUrl().replace(/\/+$/, "")}/`).toString();
+}
