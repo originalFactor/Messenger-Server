@@ -82,19 +82,29 @@ async function releaseAvatarLock(lock: AvatarLock): Promise<void> {
   await db.collection<AvatarLockDoc>("avatar_locks").deleteOne({ _id: lock.id, token: lock.token });
 }
 
+export type AvatarLockVerifier = () => Promise<void>;
+
 export async function withAvatarLock<T>(
   lockId: string,
-  operation: (lock: AvatarLock) => Promise<T>,
+  operation: (lock: AvatarLock, verify: AvatarLockVerifier) => Promise<T>,
 ): Promise<T> {
   const lock = await acquireAvatarLock(lockId);
+  // 心跳失败时（被别的请求抢锁、网络抖动等），把错误记到 heartbeatError。
+  // verify 在每个 SDK 调用之间被调用，发现 heartbeatError 就立即抛出，
+  // 阻止 operation 继续推进——避免锁失效后还跟另一个请求交错写 blob。
   let heartbeatError: unknown;
   const heartbeat = setInterval(() => {
     void renewAvatarLock(lock).catch((error: unknown) => {
       heartbeatError ??= error;
     });
   }, LOCK_RENEW_INTERVAL_MS);
+  const verify: AvatarLockVerifier = async () => {
+    if (heartbeatError) {
+      throw heartbeatError;
+    }
+  };
   try {
-    const result = await operation(lock);
+    const result = await operation(lock, verify);
     if (heartbeatError) {
       throw heartbeatError;
     }

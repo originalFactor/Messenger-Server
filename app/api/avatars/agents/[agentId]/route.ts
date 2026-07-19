@@ -6,7 +6,7 @@ import {
   snapshotAgentAvatar,
   uploadAgentAvatar,
 } from "@/lib/avatars";
-import { renewAvatarLock, withAvatarLock } from "@/lib/avatar-locks";
+import { withAvatarLock } from "@/lib/avatar-locks";
 import { requireUserSession } from "@/lib/auth";
 import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
@@ -86,13 +86,12 @@ export async function PUT(request: Request, context: RouteContext) {
   }
 
   try {
-    return await withAvatarLock(`agent:${agentId}`, async (lock) => {
+    return await withAvatarLock(`agent:${agentId}`, async (lock, verify) => {
       const agent = await getAgentById(session.sub, agentId);
       if (!agent || agent.deleted) {
         return jsonError("Agent not found.", 404);
       }
-      const verifyLock = () => renewAvatarLock(lock);
-      const backups = await snapshotAgentAvatar(agentId, verifyLock);
+      const backups = await snapshotAgentAvatar(agentId, verify);
       const canRestorePriorAvatar = agent.avatarUrl !== null && backups.some((backup) => backup.url === agent.avatarUrl);
       let metadataCleared = false;
       let replacement: Awaited<ReturnType<typeof uploadAgentAvatar>> | null = null;
@@ -107,7 +106,7 @@ export async function PUT(request: Request, context: RouteContext) {
           Buffer.from(await avatar.file.arrayBuffer()),
           avatar.extension,
           avatar.contentType,
-          verifyLock,
+          verify,
         );
         const avatarVersion = Date.now();
         const version = await updateAgentAvatar(session.sub, agentId, replacement.url, lock, avatarVersion);
@@ -118,7 +117,7 @@ export async function PUT(request: Request, context: RouteContext) {
         });
       } catch (error) {
         const restored = replacement
-          ? await revertAgentAvatar(replacement, backups, verifyLock)
+          ? await revertAgentAvatar(replacement, backups, verify)
           : error instanceof AvatarReplacementError && error.restored;
         if (metadataCleared && restored && canRestorePriorAvatar && agent.avatarUrl) {
           await updateAgentAvatar(session.sub, agentId, agent.avatarUrl, lock, agent.avatarVersion);
@@ -143,13 +142,13 @@ export async function DELETE(_request: Request, context: RouteContext) {
   }
 
   try {
-    return await withAvatarLock(`agent:${agentId}`, async (lock) => {
+    return await withAvatarLock(`agent:${agentId}`, async (lock, verify) => {
       const agent = await getAgentById(session.sub, agentId);
       if (!agent || agent.deleted) {
         return jsonError("Agent not found.", 404);
       }
       const version = await updateAgentAvatar(session.sub, agentId, null, lock);
-      await deleteAgentAvatar(agentId, () => renewAvatarLock(lock));
+      await deleteAgentAvatar(agentId, verify);
       return jsonOk({ url: null, version, avatarVersion: null });
     });
   } catch (error) {

@@ -6,7 +6,7 @@ import {
   snapshotUserAvatar,
   uploadUserAvatar,
 } from "@/lib/avatars";
-import { renewAvatarLock, withAvatarLock } from "@/lib/avatar-locks";
+import { withAvatarLock } from "@/lib/avatar-locks";
 import { requireUserSession } from "@/lib/auth";
 import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
@@ -73,13 +73,12 @@ export async function PUT(request: Request) {
   }
 
   try {
-    return await withAvatarLock(`user:${session.sub}`, async (lock) => {
+    return await withAvatarLock(`user:${session.sub}`, async (lock, verify) => {
       const user = await getUserById(session.sub);
       if (!user) {
         return jsonError("User not found.", 404);
       }
-      const verifyLock = () => renewAvatarLock(lock);
-      const backups = await snapshotUserAvatar(session.sub, verifyLock);
+      const backups = await snapshotUserAvatar(session.sub, verify);
       const canRestorePriorAvatar = user.avatarUrl !== null && backups.some((backup) => backup.url === user.avatarUrl);
       let metadataCleared = false;
       let replacement: Awaited<ReturnType<typeof uploadUserAvatar>> | null = null;
@@ -94,14 +93,14 @@ export async function PUT(request: Request) {
           Buffer.from(await avatar.file.arrayBuffer()),
           avatar.extension,
           avatar.contentType,
-          verifyLock,
+          verify,
         );
         const avatarVersion = Date.now();
         const version = await updateUserAvatar(session.sub, replacement.url, lock, avatarVersion);
         return jsonOk({ url: userAvatarUrl(), version, avatarVersion });
       } catch (error) {
         const restored = replacement
-          ? await revertUserAvatar(replacement, backups, verifyLock)
+          ? await revertUserAvatar(replacement, backups, verify)
           : error instanceof AvatarReplacementError && error.restored;
         if (metadataCleared && restored && canRestorePriorAvatar && user.avatarUrl) {
           await updateUserAvatar(session.sub, user.avatarUrl, lock, user.avatarVersion);
@@ -121,13 +120,13 @@ export async function DELETE() {
   }
 
   try {
-    return await withAvatarLock(`user:${session.sub}`, async (lock) => {
+    return await withAvatarLock(`user:${session.sub}`, async (lock, verify) => {
       const user = await getUserById(session.sub);
       if (!user) {
         return jsonError("User not found.", 404);
       }
       const version = await updateUserAvatar(session.sub, null, lock);
-      await deleteUserAvatar(session.sub, () => renewAvatarLock(lock));
+      await deleteUserAvatar(session.sub, verify);
       return jsonOk({ url: null, version, avatarVersion: null });
     });
   } catch (error) {

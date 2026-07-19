@@ -1,5 +1,5 @@
 import { requireUserSession } from "@/lib/auth";
-import { renewAvatarLock, withAvatarLock } from "@/lib/avatar-locks";
+import { withAvatarLock } from "@/lib/avatar-locks";
 import { jsonError, jsonOk } from "@/lib/http";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { softDeleteAgent, upsertAgent } from "@/lib/storage";
@@ -54,9 +54,9 @@ export async function DELETE(_request: Request, context: RouteContext) {
   }
 
   try {
-    return await withAvatarLock(`agent:${agentId}`, async (lock) => {
+    return await withAvatarLock(`agent:${agentId}`, async (lock, verify) => {
       const version = await softDeleteAgent(session.sub, agentId, lock);
-      await deleteAgentAvatar(agentId, () => renewAvatarLock(lock));
+      await deleteAgentAvatar(agentId, verify);
       return jsonOk({ id: agentId, version });
     });
   } catch (error) {
