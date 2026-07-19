@@ -633,19 +633,58 @@ export async function getDeltaSince(userId: string, since: number): Promise<Sync
 async function getCollectionStats(collectionName: "users" | "agents" | "conversations" | "providers"): Promise<CollectionStats> {
   const db = await getDb();
   const collection = db.collection<{ updatedAt: number }>(collectionName);
+  // estimatedDocumentCount 走集合元数据，O(1)；countDocuments() 走 COLLSCAN，O(N)。
+  // 这里的统计只用于 admin 仪表盘展示，无需精确到并发写入瞬间。
   const [count, latest] = await Promise.all([
-    collection.countDocuments(),
+    collection.estimatedDocumentCount(),
     collection.find({}, { projection: { updatedAt: 1 } }).sort({ updatedAt: -1 }).limit(1).next(),
   ]);
   return { count, latestUpdatedAt: latest?.updatedAt ?? null };
 }
 
-export async function getAdminDashboard(): Promise<AdminDashboard> {
+export const ADMIN_USER_PAGE_SIZE = 50;
+
+export interface AdminDashboardOptions {
+  // 由 (updatedAt, _id) 组成的编码游标；为空表示第一页。
+  cursor?: string | null;
+  limit?: number;
+}
+
+function encodeAdminCursor(updatedAt: number, id: string): string {
+  return Buffer.from(JSON.stringify({ updatedAt, id })).toString("base64url");
+}
+
+function decodeAdminCursor(cursor: string): { updatedAt: number; id: string } | null {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (typeof parsed.updatedAt !== "number" || typeof parsed.id !== "string") {
+      return null;
+    }
+    return { updatedAt: parsed.updatedAt, id: parsed.id };
+  } catch {
+    return null;
+  }
+}
+
+export async function getAdminDashboard(options: AdminDashboardOptions = {}): Promise<AdminDashboard> {
   const db = await getDb();
+  const limit = Math.min(Math.max(options.limit ?? ADMIN_USER_PAGE_SIZE, 1), 200);
+  const filter: Filter<UserDoc> = {};
+  if (options.cursor) {
+    const decoded = decodeAdminCursor(options.cursor);
+    if (decoded) {
+      filter.$or = [
+        { updatedAt: { $lt: decoded.updatedAt } },
+        { updatedAt: decoded.updatedAt, _id: { $gt: decoded.id } },
+      ];
+    }
+  }
+
   const [users, userStats, agents, conversations, providers] = await Promise.all([
     db.collection<UserDoc>("users")
-      .find({}, { projection: { passwordHash: 0 } })
+      .find(filter, { projection: { passwordHash: 0 } })
       .sort({ updatedAt: -1, _id: 1 })
+      .limit(limit + 1)
       .toArray(),
     getCollectionStats("users"),
     getCollectionStats("agents"),
@@ -653,8 +692,15 @@ export async function getAdminDashboard(): Promise<AdminDashboard> {
     getCollectionStats("providers"),
   ]);
 
+  const hasMore = users.length > limit;
+  const page = hasMore ? users.slice(0, limit) : users;
+  const lastUser = page.at(-1);
+  const nextCursor = hasMore && lastUser
+    ? encodeAdminCursor(lastUser.updatedAt, lastUser._id)
+    : null;
+
   return {
-    users: users.map((user) => ({
+    users: page.map((user) => ({
       id: user._id,
       email: user.email,
       createdAt: user.createdAt,
@@ -663,5 +709,7 @@ export async function getAdminDashboard(): Promise<AdminDashboard> {
       syncVersion: user.syncVersion,
     })),
     stats: { users: userStats, agents, conversations, providers },
+    nextCursor,
+    hasMore,
   };
 }

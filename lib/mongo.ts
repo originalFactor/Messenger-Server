@@ -24,6 +24,7 @@ async function ensureIndexesFor(database: Db): Promise<void> {
   if (!globalThis.messengerMongoIndexesPromise) {
     const indexes = Promise.all([
       database.collection("users").createIndex({ email: 1 }, { unique: true }),
+      database.collection("users").createIndex({ updatedAt: -1, _id: 1 }),
       database.collection("agents").createIndex({ userId: 1, version: 1 }),
       database.collection("agents").createIndex(
         { userId: 1 },

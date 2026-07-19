@@ -1,20 +1,26 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AdminLogoutButton } from "@/components/admin-logout-button";
 import { requireAdminSession } from "@/lib/auth";
-import { getAdminDashboard } from "@/lib/storage";
+import { ADMIN_USER_PAGE_SIZE, getAdminDashboard } from "@/lib/storage";
 
 function formatTime(timestamp: number | null | undefined) {
   return timestamp == null ? "None" : new Date(timestamp).toLocaleString();
 }
 
-export default async function AdminDashboardPage() {
+export default async function AdminDashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ cursor?: string }>;
+}) {
   const session = await requireAdminSession();
   if (!session) {
     redirect("/admin/login");
   }
 
-  const dashboard = await getAdminDashboard();
-  const { users, stats } = dashboard;
+  const { cursor } = await searchParams;
+  const dashboard = await getAdminDashboard({ cursor });
+  const { users, stats, nextCursor, hasMore } = dashboard;
 
   return (
     <main>
@@ -31,7 +37,7 @@ export default async function AdminDashboardPage() {
         <section className="stats">
           <div className="panel">
             <div className="kicker">Users</div>
-            <div className="stat-value">{users.length}</div>
+            <div className="stat-value">{stats.users.count}</div>
           </div>
           <div className="panel">
             <div className="kicker">Agents</div>
@@ -48,7 +54,7 @@ export default async function AdminDashboardPage() {
         </section>
 
         <section className="panel grid">
-          <div className="kicker">Accounts</div>
+          <div className="kicker">Accounts (page size {ADMIN_USER_PAGE_SIZE})</div>
           <div className="list">
             {users.length === 0 ? (
               <div className="list-item">
@@ -80,6 +86,13 @@ export default async function AdminDashboardPage() {
               ))
             )}
           </div>
+          {hasMore && nextCursor ? (
+            <div style={{ marginTop: 12 }}>
+              <Link href={`/admin?cursor=${encodeURIComponent(nextCursor)}`} className="muted code">
+                Older →
+              </Link>
+            </div>
+          ) : null}
         </section>
 
         <section className="panel grid">

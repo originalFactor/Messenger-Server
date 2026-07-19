@@ -210,6 +210,8 @@ export interface AdminDashboard {
     conversations: CollectionStats;
     providers: CollectionStats;
   };
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
 export interface SessionClaims extends JWTPayload {
