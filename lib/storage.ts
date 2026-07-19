@@ -362,11 +362,13 @@ export async function listMarketAgents(query: string, limit: number, cursor?: st
     ...(query ? { name: { $regex: escapeRegex(query), $options: "i" } } : {}),
   };
   if (cursor) {
-    const cursorAgent = await db.collection<MarketAgentDoc>("market_agents").findOne({ _id: cursor, deleted: false });
-    if (cursorAgent) {
+    // 游标编码为 base64url(JSON({ updatedAt, id }))，省掉之前每次分页
+    // 都要 findOne(_id: cursor) 拿 updatedAt/_id 的一次额外往返。
+    const decoded = decodeMarketCursor(cursor);
+    if (decoded) {
       filter.$or = [
-        { updatedAt: { $lt: cursorAgent.updatedAt } },
-        { updatedAt: cursorAgent.updatedAt, _id: { $gt: cursorAgent._id } },
+        { updatedAt: { $lt: decoded.updatedAt } },
+        { updatedAt: decoded.updatedAt, _id: { $gt: decoded.id } },
       ];
     }
   }
@@ -375,6 +377,22 @@ export async function listMarketAgents(query: string, limit: number, cursor?: st
     .sort({ updatedAt: -1, _id: 1 })
     .limit(limit)
     .toArray();
+}
+
+export function encodeMarketCursor(updatedAt: number, id: string): string {
+  return Buffer.from(JSON.stringify({ updatedAt, id })).toString("base64url");
+}
+
+export function decodeMarketCursor(cursor: string): { updatedAt: number; id: string } | null {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (typeof parsed.updatedAt !== "number" || typeof parsed.id !== "string") {
+      return null;
+    }
+    return { updatedAt: parsed.updatedAt, id: parsed.id };
+  } catch {
+    return null;
+  }
 }
 
 export async function updateMarketAgent(userId: string, id: string, input: MarketAgentInput): Promise<MarketAgentDoc> {

@@ -2,7 +2,7 @@ import { requireUserSession } from "@/lib/auth";
 import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
 import { storageErrorResponse } from "@/lib/route-errors";
-import { createMarketAgent, listMarketAgents } from "@/lib/storage";
+import { createMarketAgent, encodeMarketCursor, listMarketAgents } from "@/lib/storage";
 import { marketAgentSchema } from "@/lib/validation";
 import type { MarketAgentDoc } from "@/lib/types";
 
@@ -41,9 +41,13 @@ export async function GET(request: Request) {
     const agents = await listMarketAgents(query, limit + 1, cursor);
     const hasMore = agents.length > limit;
     const page = hasMore ? agents.slice(0, limit) : agents;
+    const last = page.at(-1);
+    const nextCursor = hasMore && last
+      ? encodeMarketCursor(last.updatedAt, last._id)
+      : null;
     return jsonOk({
       agents: page.map(responseAgent),
-      nextCursor: hasMore ? page.at(-1)?._id ?? null : null,
+      nextCursor,
     });
   } catch (error) {
     return storageErrorResponse(error, "Unable to list market agents.");
