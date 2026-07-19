@@ -214,6 +214,24 @@ async function getSyncVersion(userId: string): Promise<number> {
   return user.syncVersion;
 }
 
+// 调用方只用到 _id / userId / deleted / version（以及 Agent 的 isDefault /
+// avatarUrl / avatarVersion），完整文档里的 messages（最多 10k 条）和
+// models 数组从不被读，所以统一投影掉，避免每次 upsert/delete 把整篇
+// 大字段从 MongoDB 拉到 serverless 实例。
+const OWNERSHIP_PROJECTIONS: Record<"agents" | "conversations" | "providers", Record<string, 0 | 1>> = {
+  agents: {
+    _id: 1,
+    userId: 1,
+    isDefault: 1,
+    deleted: 1,
+    avatarUrl: 1,
+    avatarVersion: 1,
+    version: 1,
+  },
+  conversations: { _id: 1, userId: 1, deleted: 1, version: 1 },
+  providers: { _id: 1, userId: 1, deleted: 1, version: 1 },
+};
+
 async function assertEntityOwnership<T extends { _id: string; userId: string }>(
   collectionName: "agents" | "conversations" | "providers",
   userId: string,
@@ -223,7 +241,7 @@ async function assertEntityOwnership<T extends { _id: string; userId: string }>(
   const db = await getDb();
   const entity = await db.collection<T>(collectionName).findOne(
     { _id: entityId } as Filter<T>,
-    { session },
+    { session, projection: OWNERSHIP_PROJECTIONS[collectionName] },
   );
   if (entity && entity.userId !== userId) {
     return null;
