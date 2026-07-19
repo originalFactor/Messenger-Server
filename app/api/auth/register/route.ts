@@ -21,7 +21,7 @@ export async function POST(request: Request) {
   const user = {
     id: randomUUID(),
     email,
-    passwordHash: hashPassword(password),
+    passwordHash: await hashPassword(password),
     avatarUrl: null,
     avatarVersion: null,
     syncVersion: 0,

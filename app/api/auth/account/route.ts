@@ -22,7 +22,7 @@ export async function DELETE(request: Request) {
     await clearUserSessionCookie();
     return jsonOk({ success: true });
   }
-  if (!verifyPassword(parsed.data.currentPassword, user.passwordHash)) {
+  if (!(await verifyPassword(parsed.data.currentPassword, user.passwordHash))) {
     return jsonError("The current password is incorrect.", 401);
   }
 

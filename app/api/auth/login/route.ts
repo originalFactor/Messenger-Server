@@ -13,7 +13,7 @@ export async function POST(request: Request) {
 
   const { email, password } = parsed.data;
   const user = await getUserByEmail(email);
-  if (!user || !verifyPassword(password, user.passwordHash)) {
+  if (!user || !(await verifyPassword(password, user.passwordHash))) {
     return jsonError("Invalid email or password.", 401);
   }
 
