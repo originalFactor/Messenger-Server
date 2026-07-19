@@ -56,20 +56,26 @@ async function listByPrefix(prefix: string, verify?: LockVerifier) {
 
 async function snapshotByPrefix(prefix: string, verify?: LockVerifier): Promise<AvatarBlobBackup[]> {
   const blobs = await listByPrefix(prefix, verify);
-  return Promise.all(blobs.map(async (blob) => {
+  // 串行下载并立即 buffer：每个头像最大 5 MiB，并发 Promise.all 会让多个
+  // 头像同时驻留 serverless 实例内存（几个并发请求就能 OOM）。
+  // 串行处理时同一时刻只有一份 buffer 在内存里，并且 verifyLock 在每份
+  // 之间刷新锁，避免锁过期。
+  const backups: AvatarBlobBackup[] = [];
+  for (const blob of blobs) {
     await verifyLock(verify);
     const stored = await get(blob.pathname, { access: "private", useCache: false });
     if (!stored || stored.statusCode !== 200 || !stored.stream) {
       throw new Error(`Unable to preserve existing avatar blob: ${blob.pathname}`);
     }
-    return {
+    backups.push({
       url: blob.url,
       pathname: blob.pathname,
       etag: blob.etag,
       content: Buffer.from(await new Response(stored.stream).arrayBuffer()),
       contentType: stored.blob.contentType,
-    };
-  }));
+    });
+  }
+  return backups;
 }
 
 async function deleteBackups(backups: AvatarBlobBackup[], verify?: LockVerifier): Promise<AvatarBlobBackup[]> {
