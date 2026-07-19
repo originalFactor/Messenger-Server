@@ -231,31 +231,24 @@ export async function deleteMarketAgentAvatar(agentId: string): Promise<void> {
   await deleteByPrefix(`avatars/market_agents/${agentId}.`);
 }
 
-export async function getAvatar(url: string) {
-  const parsedUrl = new URL(url);
-  const pathname = parsedUrl.pathname.replace(/^\/+/, "");
-  const storageBase = process.env.VERCEL_BLOB_STORAGE_URL;
-  const storagePath = storageBase
-    ? new URL(storageBase).pathname.replace(/^\/+|\/+$/g, "")
-    : "";
-  const logicalPath = storagePath &&
-      (pathname === storagePath || pathname.startsWith(`${storagePath}/`))
-    ? pathname.slice(storagePath.length).replace(/^\/+/, "")
-    : pathname;
+// VERCEL_BLOB_STORAGE_URL 在 serverless 部署期注入，单次请求内不会变；
+// lazy 缓存避免每次 avatar GET 都 new URL() 解析一遍。null 表示尚未计算。
+let cachedStoragePath: string | null = null;
 
-  if (!logicalPath.startsWith("avatars/")) {
-    throw new Error(`Invalid avatar pathname: ${logicalPath}`);
+function blobStoragePath(): string {
+  if (cachedStoragePath === null) {
+    const storageBase = process.env.VERCEL_BLOB_STORAGE_URL;
+    cachedStoragePath = storageBase
+      ? new URL(storageBase).pathname.replace(/^\/+|\/+$/g, "")
+      : "";
   }
-  return get(logicalPath, { access: "private", useCache: false });
+  return cachedStoragePath;
 }
 
 function avatarLogicalPathFromUrl(url: string): string {
   const parsedUrl = new URL(url);
   const pathname = parsedUrl.pathname.replace(/^\/+/, "");
-  const storageBase = process.env.VERCEL_BLOB_STORAGE_URL;
-  const storagePath = storageBase
-    ? new URL(storageBase).pathname.replace(/^\/+|\/+$/g, "")
-    : "";
+  const storagePath = blobStoragePath();
   const logicalPath = storagePath &&
       (pathname === storagePath || pathname.startsWith(`${storagePath}/`))
     ? pathname.slice(storagePath.length).replace(/^\/+/, "")
