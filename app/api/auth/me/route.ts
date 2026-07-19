@@ -3,6 +3,8 @@ import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getUserById } from "@/lib/storage";
 
+export const runtime = "nodejs";
+
 export async function GET(request: Request) {
   const session = await requireUserSession();
   if (!session) {

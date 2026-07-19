@@ -5,6 +5,8 @@ import { hashPassword } from "@/lib/security";
 import { getUserByEmail, isDuplicateKeyError, saveUser } from "@/lib/storage";
 import { credentialsSchema } from "@/lib/validation";
 
+export const runtime = "nodejs";
+
 export async function POST(request: Request) {
   const parsed = credentialsSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {

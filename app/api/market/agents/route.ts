@@ -6,6 +6,8 @@ import { createMarketAgent, encodeMarketCursor, listMarketAgents } from "@/lib/s
 import { marketAgentSchema } from "@/lib/validation";
 import type { MarketAgentDoc } from "@/lib/types";
 
+export const runtime = "nodejs";
+
 const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 50;
 
