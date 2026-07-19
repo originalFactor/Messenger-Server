@@ -432,6 +432,7 @@ export async function softDeleteAgent(
   agentId: string,
   avatarLock?: AvatarLock,
 ): Promise<number> {
+  // 已删除早退：避免重复删除触发新的 syncVersion 递增。
   const existing = await getAgentById(userId, agentId);
   if (existing?.deleted) {
     return existing.version;
@@ -441,23 +442,31 @@ export async function softDeleteAgent(
     if (avatarLock) {
       await renewAvatarLock(avatarLock, session);
     }
-    const agent = await assertEntityOwnership<AgentDoc>("agents", userId, agentId, session);
-    if (!agent) {
+    const db = await getDb();
+    // 把 isDefault: false 直接放到 filter 里：默认 Agent 不会被匹配，
+    // 避免先读后写两次往返。matchedCount=0 时再回退到一次 findOne
+    // 给出准确的 404/409 错误。
+    const result = await db.collection<AgentDoc>("agents").updateOne(
+      { _id: agentId, userId, deleted: false, isDefault: false },
+      { $set: { deleted: true, avatarUrl: null, avatarVersion: null, updatedAt: Date.now(), version } },
+      { session },
+    );
+    if (result.matchedCount === 1) {
+      return;
+    }
+    const agent = await db.collection<AgentDoc>("agents").findOne(
+      { _id: agentId },
+      { projection: { userId: 1, isDefault: 1, deleted: 1 }, session },
+    );
+    if (!agent || agent.userId !== userId) {
       throw new NotFoundError("Agent not found.");
     }
     if (agent.isDefault) {
       throw new ConflictError("The default agent cannot be deleted.");
     }
-
-    const db = await getDb();
-    const result = await db.collection<AgentDoc>("agents").updateOne(
-      { _id: agentId, userId, deleted: false },
-      { $set: { deleted: true, avatarUrl: null, avatarVersion: null, updatedAt: Date.now(), version } },
-      { session },
-    );
-    if (result.matchedCount !== 1) {
-      throw new NotFoundError("Agent not found.");
-    }
+    // 此时 agent.deleted 一定为 true：另一个并发请求抢先删除了它。
+    // 仍然抛 NotFound 让客户端走幂等重试，因为它本地游标还会再拉到这条墓碑。
+    throw new NotFoundError("Agent not found.");
   });
 }
 
@@ -527,6 +536,7 @@ export async function upsertConversation(userId: string, conversation: Conversat
 }
 
 export async function softDeleteConversation(userId: string, conversationId: string): Promise<number> {
+  // 已删除早退：避免重复删除触发新的 syncVersion 递增。
   const existing = await assertEntityOwnership<ConversationDoc>("conversations", userId, conversationId);
   if (!existing) {
     throw new NotFoundError("Conversation not found.");
@@ -540,6 +550,8 @@ export async function softDeleteConversation(userId: string, conversationId: str
     // 同时清空 messages 数组：墓碑只需要 _id/version/deleted 元数据，
     // 保留 messages 会让 GET /api/sync 在每次会话被删除后仍然回传完整
     // 历史（单文档最多 10k 条消息），无谓地放大同步响应体积。
+    // 用 deleted: false 作 filter，已删除文档自然不匹配；matchedCount=0
+    // 说明另一个并发请求抢先删除了它 —— 抛 NotFound 让客户端走幂等重试。
     const result = await db.collection<ConversationDoc>("conversations").updateOne(
       { _id: conversationId, userId, deleted: false },
       {
@@ -591,6 +603,7 @@ export async function upsertProvider(userId: string, provider: ProviderUpsertInp
 }
 
 export async function softDeleteProvider(userId: string, providerId: string): Promise<number> {
+  // 已删除早退：避免重复删除触发新的 syncVersion 递增。
   const existing = await assertEntityOwnership<ProviderDoc>("providers", userId, providerId);
   if (!existing) {
     throw new NotFoundError("Provider not found.");
@@ -601,6 +614,8 @@ export async function softDeleteProvider(userId: string, providerId: string): Pr
 
   return withVersionedWrite(userId, async (version, session) => {
     const db = await getDb();
+    // 用 deleted: false 作 filter，已删除文档自然不匹配；matchedCount=0
+    // 说明另一个并发请求抢先删除了它 —— 抛 NotFound 让客户端走幂等重试。
     const result = await db.collection<ProviderDoc>("providers").updateOne(
       { _id: providerId, userId, deleted: false },
       { $set: { deleted: true, updatedAt: Date.now(), version } },
