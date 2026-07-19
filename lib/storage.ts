@@ -519,9 +519,15 @@ export async function softDeleteConversation(userId: string, conversationId: str
 
   return withVersionedWrite(userId, async (version, session) => {
     const db = await getDb();
+    // 同时清空 messages 数组：墓碑只需要 _id/version/deleted 元数据，
+    // 保留 messages 会让 GET /api/sync 在每次会话被删除后仍然回传完整
+    // 历史（单文档最多 10k 条消息），无谓地放大同步响应体积。
     const result = await db.collection<ConversationDoc>("conversations").updateOne(
       { _id: conversationId, userId, deleted: false },
-      { $set: { deleted: true, updatedAt: Date.now(), version } },
+      {
+        $set: { deleted: true, updatedAt: Date.now(), version },
+        $unset: { messages: "" },
+      },
       { session },
     );
     if (result.matchedCount !== 1) {
@@ -628,6 +634,105 @@ export async function getDeltaSince(userId: string, since: number): Promise<Sync
     listProvidersSince(userId, since, latestVersion),
   ]);
   return { agents, conversations, providers, latestVersion };
+}
+
+export type SyncCollection = "agents" | "conversations" | "providers";
+
+export interface SyncPage {
+  // 当前页所属集合；客户端拿到 hasMore=true 时应使用同一 collection + nextCursor 继续翻页。
+  collection: SyncCollection;
+  // 当前页文档（按 version 升序、_id 升序）。已删除的会话在这里只含墓碑字段。
+  documents: AgentDoc[] | ConversationDoc[] | ProviderDoc[];
+  // 当前集合是否还有更多文档可拉。
+  hasMore: boolean;
+  // 下一页游标（base64url 编码的 { version, id }）。hasMore=false 时为 null。
+  nextCursor: string | null;
+  // 当前可见的水位线，客户端应保存为新的 since 游标。
+  latestVersion: number;
+}
+
+function encodeSyncCursor(version: number, id: string): string {
+  return Buffer.from(JSON.stringify({ version, id })).toString("base64url");
+}
+
+function decodeSyncCursor(cursor: string): { version: number; id: string } | null {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (typeof parsed.version !== "number" || typeof parsed.id !== "string") {
+      return null;
+    }
+    return { version: parsed.version, id: parsed.id };
+  } catch {
+    return null;
+  }
+}
+
+export const SYNC_DEFAULT_LIMIT = 100;
+export const SYNC_MAX_LIMIT = 500;
+
+/**
+ * 按集合分页拉取增量。每个集合单独翻页，避免初始同步把全部历史
+ * （含已删除会话的 messages）一次性塞进单个 JSON 响应。
+ *
+ * 客户端协议：
+ *   GET /api/sync?since=N                            -> 旧行为，返回三集合合并响应
+ *   GET /api/sync?since=N&collection=conversations&limit=100
+ *   GET /api/sync?since=N&collection=conversations&cursor=...
+ *
+ * 翻完一个集合后客户端应记下 latestVersion，然后切换到下一个集合，
+ * 最后把 latestVersion 作为新的 since 保存。
+ */
+export async function getDeltaSincePaged(
+  userId: string,
+  since: number,
+  collection: SyncCollection,
+  cursor?: string | null,
+  limit?: number,
+): Promise<SyncPage> {
+  const pageSize = Math.min(
+    Math.max(limit ?? SYNC_DEFAULT_LIMIT, 1),
+    SYNC_MAX_LIMIT,
+  );
+  const latestVersion = await getSyncVersion(userId);
+  const db = await getDb();
+
+  // 翻页时 cursor 接管下界，初始请求用 since 作下界；上界始终是 latestVersion。
+  const decoded = cursor ? decodeSyncCursor(cursor) : null;
+  const filter = decoded
+    ? {
+        userId,
+        version: { $lte: latestVersion },
+        $or: [
+          { version: { $gt: decoded.version } },
+          { version: decoded.version, _id: { $gt: decoded.id } },
+        ],
+      }
+    : { userId, version: { $gt: since, $lte: latestVersion } };
+
+  const cursor_options = { sort: { version: 1, _id: 1 } as const, limit: pageSize + 1 };
+  let docs: AgentDoc[] | ConversationDoc[] | ProviderDoc[];
+  if (collection === "agents") {
+    docs = await db.collection<AgentDoc>("agents").find(filter, cursor_options).toArray();
+  } else if (collection === "conversations") {
+    docs = await db.collection<ConversationDoc>("conversations").find(filter, cursor_options).toArray();
+  } else {
+    docs = await db.collection<ProviderDoc>("providers").find(filter, cursor_options).toArray();
+  }
+
+  const hasMore = docs.length > pageSize;
+  const page = hasMore ? docs.slice(0, pageSize) : docs;
+  const last = page.at(-1) as { _id: string; version: number } | undefined;
+  const nextCursor = hasMore && last
+    ? encodeSyncCursor(last.version, last._id)
+    : null;
+
+  return {
+    collection,
+    documents: page,
+    hasMore,
+    nextCursor,
+    latestVersion,
+  };
 }
 
 async function getCollectionStats(collectionName: "users" | "agents" | "conversations" | "providers"): Promise<CollectionStats> {
