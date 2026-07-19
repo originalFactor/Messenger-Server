@@ -1,7 +1,7 @@
 import {
   AvatarReplacementError,
   deleteUserAvatar,
-  getAvatar,
+  fetchAvatarWithConditional,
   revertUserAvatar,
   snapshotUserAvatar,
   uploadUserAvatar,
@@ -32,16 +32,26 @@ export async function GET(request: Request) {
       return jsonError("Avatar not found.", 404);
     }
 
-    const avatar = await getAvatar(user.avatarUrl);
-    if (!avatar || avatar.statusCode !== 200 || !avatar.stream) {
+    const ifNoneMatch = request.headers.get("if-none-match");
+    const avatar = await fetchAvatarWithConditional(user.avatarUrl, ifNoneMatch);
+    if (avatar.statusCode === 304) {
+      return new Response(null, {
+        status: 304,
+        headers: {
+          ETag: avatar.etag,
+          "Cache-Control": "private, no-cache",
+        },
+      });
+    }
+    if (!avatar.stream) {
       return jsonError("Avatar not found.", 404);
     }
 
     return new Response(avatar.stream, {
       headers: {
         "Cache-Control": "private, no-cache",
-        "Content-Type": avatar.blob.contentType,
-        ETag: avatar.blob.etag,
+        "Content-Type": avatar.contentType ?? "application/octet-stream",
+        ETag: avatar.etag,
         "X-Content-Type-Options": "nosniff",
       },
     });

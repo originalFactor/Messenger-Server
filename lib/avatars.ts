@@ -242,3 +242,60 @@ export async function getAvatar(url: string) {
   }
   return get(logicalPath, { access: "private", useCache: false });
 }
+
+function avatarLogicalPathFromUrl(url: string): string {
+  const parsedUrl = new URL(url);
+  const pathname = parsedUrl.pathname.replace(/^\/+/, "");
+  const storageBase = process.env.VERCEL_BLOB_STORAGE_URL;
+  const storagePath = storageBase
+    ? new URL(storageBase).pathname.replace(/^\/+|\/+$/g, "")
+    : "";
+  const logicalPath = storagePath &&
+      (pathname === storagePath || pathname.startsWith(`${storagePath}/`))
+    ? pathname.slice(storagePath.length).replace(/^\/+/, "")
+    : pathname;
+  if (!logicalPath.startsWith("avatars/")) {
+    throw new Error(`Invalid avatar pathname: ${logicalPath}`);
+  }
+  return logicalPath;
+}
+
+export interface AvatarFetchResult {
+  // HTTP 状态码：200 表示命中内容流，304 表示客户端缓存仍然有效。
+  statusCode: 200 | 304;
+  etag: string;
+  contentType?: string | null;
+  stream?: ReadableStream<Uint8Array> | null;
+}
+
+/**
+ * Avatar GET 的共享逻辑：用 SDK 的 ifNoneMatch 直接做条件 GET，
+ * 命中时 Vercel Blob 只回 304 + 元数据、不回内容流；
+ * 未命中才把完整字节流回传到 serverless 实例。
+ */
+export async function fetchAvatarWithConditional(
+  avatarUrl: string,
+  ifNoneMatch: string | null,
+): Promise<AvatarFetchResult> {
+  const logicalPath = avatarLogicalPathFromUrl(avatarUrl);
+  const avatar = await get(logicalPath, {
+    access: "private",
+    useCache: false,
+    ...(ifNoneMatch ? { ifNoneMatch } : {}),
+  });
+  if (!avatar) {
+    throw new Error("Avatar blob is unavailable.");
+  }
+  if (avatar.statusCode === 304) {
+    return { statusCode: 304, etag: avatar.blob.etag };
+  }
+  if (!avatar.stream) {
+    throw new Error("Avatar blob is unavailable.");
+  }
+  return {
+    statusCode: 200,
+    etag: avatar.blob.etag,
+    contentType: avatar.blob.contentType,
+    stream: avatar.stream,
+  };
+}
