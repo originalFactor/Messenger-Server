@@ -8,8 +8,14 @@ declare global {
 
 export function getMongoClient(): Promise<MongoClient> {
   if (!globalThis.messengerMongoClientPromise) {
+    // Serverless 实例规格小、并发请求数低，10 个连接会让驱动预热一堆
+    // 用不上的连接，还可能在冷实例上拖慢启动。3 个足够覆盖正常并发；
+    // maxIdleTimeMS 让空闲连接尽快归还给 Atlas，避免 Vercel 函数冻结后
+    // 还残留半死的 TCP；connectTimeoutMS 防止冷启动时卡在 DNS/TLS。
     const client = new MongoClient(env.mongoUri(), {
-      maxPoolSize: 10,
+      maxPoolSize: 3,
+      maxIdleTimeMS: 30_000,
+      connectTimeoutMS: 5_000,
       serverSelectionTimeoutMS: 5_000,
     });
     globalThis.messengerMongoClientPromise = client.connect().catch((error: unknown) => {
