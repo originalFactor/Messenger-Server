@@ -57,6 +57,11 @@ export interface MessageEmbed {
   id: string;
   role: MessageRole;
   content: string;
+  /**
+   * JSON-encoded ContentPart array (text / image). Null or absent for
+   * text-only messages and for documents from pre-multimodal clients.
+   */
+  partsJson?: string | null;
   timestamp: number;
   status: MessageStatus;
   errorMessage?: string | null;

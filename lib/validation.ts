@@ -53,6 +53,7 @@ export const messageSchema = z.object({
   id: entityIdSchema,
   role: z.enum(["system", "user", "assistant", "tool"]),
   content: z.string(),
+  partsJson: z.string().nullable().optional(),
   timestamp: z.number().int().nonnegative(),
   status: z.enum(["SENDING", "SENT", "ERROR", "sending", "sent", "error"]).transform((value) => value.toUpperCase() as "SENDING" | "SENT" | "ERROR"),
   errorMessage: z.string().nullable().optional(),
