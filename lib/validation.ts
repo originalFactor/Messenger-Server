@@ -28,12 +28,14 @@ export const agentSchema = z.object({
   temperature: z.number().finite(),
   topP: z.number().finite(),
   maxTokens: z.number().int().nullable().optional(),
+  reasoningEffort: z.string().nullable().optional(),
   isDefault: z.boolean(),
   followDefaultSystemPrompt: z.boolean(),
   followDefaultModel: z.boolean(),
   followDefaultTemperature: z.boolean(),
   followDefaultTopP: z.boolean(),
   followDefaultMaxTokens: z.boolean(),
+  followDefaultReasoningEffort: z.boolean(),
   marketAgentId: entityIdSchema.nullable().optional(),
   marketAgentVersion: z.number().int().nonnegative().nullable().optional(),
   marketAgentRole: z.enum(["publisher", "importer"]).nullable().optional(),
@@ -47,6 +49,7 @@ export const marketAgentSchema = z.object({
   temperature: z.number().finite(),
   topP: z.number().finite(),
   maxTokens: z.number().int().nullable().optional(),
+  reasoningEffort: z.string().nullable().optional(),
 }).strict();
 
 export const messageSchema = z.object({
@@ -69,6 +72,8 @@ export const conversationSchema = z.object({
   overrideTemperature: z.number().finite().nullable().optional(),
   overrideTopP: z.number().finite().nullable().optional(),
   overrideMaxTokens: z.number().int().nullable().optional(),
+  overrideReasoningEffort: z.string().nullable().optional(),
+  reasoningFormat: z.string().nullable().optional(),
   messages: z.array(messageSchema).max(10_000),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),

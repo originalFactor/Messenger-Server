@@ -38,12 +38,14 @@ export interface AgentDoc {
   temperature: number;
   topP: number;
   maxTokens?: number | null;
+  reasoningEffort?: string | null;
   isDefault: boolean;
   followDefaultSystemPrompt: boolean;
   followDefaultModel: boolean;
   followDefaultTemperature: boolean;
   followDefaultTopP: boolean;
   followDefaultMaxTokens: boolean;
+  followDefaultReasoningEffort: boolean;
   marketAgentId?: string | null;
   marketAgentVersion?: number | null;
   marketAgentRole?: "publisher" | "importer" | null;
@@ -77,6 +79,8 @@ export interface ConversationDoc {
   overrideTemperature?: number | null;
   overrideTopP?: number | null;
   overrideMaxTokens?: number | null;
+  overrideReasoningEffort?: string | null;
+  reasoningFormat?: string | null;
   messages: MessageEmbed[];
   createdAt: number;
   updatedAt: number;
@@ -132,12 +136,14 @@ export interface AgentUpsertInput {
   temperature: number;
   topP: number;
   maxTokens?: number | null;
+  reasoningEffort?: string | null;
   isDefault: boolean;
   followDefaultSystemPrompt: boolean;
   followDefaultModel: boolean;
   followDefaultTemperature: boolean;
   followDefaultTopP: boolean;
   followDefaultMaxTokens: boolean;
+  followDefaultReasoningEffort: boolean;
   marketAgentId?: string | null;
   marketAgentVersion?: number | null;
   marketAgentRole?: "publisher" | "importer" | null;
@@ -155,6 +161,7 @@ export interface MarketAgentDoc {
   temperature: number;
   topP: number;
   maxTokens?: number | null;
+  reasoningEffort?: string | null;
   createdAt: number;
   updatedAt: number;
   version: number;
@@ -167,6 +174,7 @@ export interface MarketAgentInput {
   temperature: number;
   topP: number;
   maxTokens?: number | null;
+  reasoningEffort?: string | null;
 }
 
 export interface ConversationUpsertInput {
@@ -178,6 +186,8 @@ export interface ConversationUpsertInput {
   overrideTemperature?: number | null;
   overrideTopP?: number | null;
   overrideMaxTokens?: number | null;
+  overrideReasoningEffort?: string | null;
+  reasoningFormat?: string | null;
   messages: MessageEmbed[];
   createdAt: number;
   updatedAt: number;

@@ -25,6 +25,7 @@ function responseAgent(agent: MarketAgentDoc) {
     temperature: agent.temperature,
     topP: agent.topP,
     maxTokens: agent.maxTokens ?? null,
+    reasoningEffort: agent.reasoningEffort ?? null,
     createdAt: agent.createdAt,
     updatedAt: agent.updatedAt,
     version: agent.version,
