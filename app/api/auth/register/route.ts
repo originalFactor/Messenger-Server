@@ -16,6 +16,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createUserSessionToken, setUserSessionCookie } from "@/lib/auth";
+import { generateAiApiKey } from "@/lib/apikeys";
 import { jsonError, jsonOk } from "@/lib/http";
 import { hashPassword } from "@/lib/security";
 import { getUserByEmail, isDuplicateKeyError, saveUser } from "@/lib/storage";
@@ -40,6 +41,11 @@ export async function POST(request: Request) {
     id: randomUUID(),
     email,
     passwordHash: await hashPassword(password),
+    // role 由 saveUser 事务决定（首个注册用户晋升 admin），此处仅占位。
+    role: "user" as const,
+    aiApiKey: generateAiApiKey(),
+    quotaBalance: 0,
+    quotaExpiresAt: null,
     avatarUrl: null,
     avatarVersion: null,
     syncVersion: 0,
@@ -49,21 +55,25 @@ export async function POST(request: Request) {
   };
 
   let syncVersion: number;
+  let role: "user" | "admin";
   try {
-    syncVersion = await saveUser(user);
+    const saved = await saveUser(user);
+    syncVersion = saved.syncVersion;
+    role = saved.role;
   } catch (error) {
     if (isDuplicateKeyError(error)) {
       return jsonError("An account with this email already exists.", 409);
     }
     throw error;
   }
-  const token = await createUserSessionToken(user.id, user.email);
+  const token = await createUserSessionToken(user.id, user.email, role);
   await setUserSessionCookie(token);
 
   return jsonOk({
     user: {
       id: user.id,
       email: user.email,
+      role,
       avatarUrl: null,
       avatarVersion: null,
       syncVersion,

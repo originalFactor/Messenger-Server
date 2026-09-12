@@ -47,6 +47,7 @@ async function ensureIndexesFor(database: Db): Promise<void> {
     const indexes = Promise.all([
       database.collection("users").createIndex({ email: 1 }, { unique: true }),
       database.collection("users").createIndex({ updatedAt: -1, _id: 1 }),
+      database.collection("users").createIndex({ aiApiKey: 1 }),
       database.collection("agents").createIndex({ userId: 1, version: 1 }),
       database.collection("agents").createIndex(
         { userId: 1 },
@@ -58,13 +59,68 @@ async function ensureIndexesFor(database: Db): Promise<void> {
       database.collection("market_agents").createIndex({ deleted: 1, updatedAt: -1, _id: 1 }),
       database.collection("market_agents").createIndex({ ownerUserId: 1, deleted: 1 }),
       database.collection("avatar_locks").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+      database.collection("card_keys").createIndex({ code: 1 }, { unique: true }),
+      database.collection("card_keys").createIndex({ status: 1, createdAt: -1, _id: 1 }),
+      database.collection("card_keys").createIndex({ planId: 1, status: 1 }),
+      database.collection("redemptions").createIndex({ userId: 1, createdAt: -1, _id: 1 }),
+      database.collection("usage_logs").createIndex({ userId: 1, createdAt: -1, _id: 1 }),
+      database.collection("usage_logs").createIndex({ createdAt: -1, _id: 1 }),
     ]).then(() => undefined);
-    globalThis.messengerMongoIndexesPromise = indexes.catch((error: unknown) => {
-      globalThis.messengerMongoIndexesPromise = undefined;
-      throw error;
-    });
+    globalThis.messengerMongoIndexesPromise = indexes
+      .then(() => ensureAdminBootstrap(database))
+      .catch((error: unknown) => {
+        globalThis.messengerMongoIndexesPromise = undefined;
+        throw error;
+      });
   }
   await globalThis.messengerMongoIndexesPromise;
+}
+
+interface BootstrapUserDoc {
+  _id: string;
+  role?: string;
+  createdAt: number;
+}
+
+interface SystemBootstrapDoc {
+  _id: string;
+  grantedToUserId: string;
+  createdAt: number;
+}
+
+/**
+ * 管理员不变量的惰性迁移：首个注册用户自动晋升 admin。
+ * - 全新部署没有任何用户时直接返回，交给注册事务处理；
+ * - 既有部署（SaaS 改造前注册的用户都没有 role 字段）把最早注册的
+ *   用户提升为 admin，并写入 system_bootstrap 标记防止重复迁移；
+ * - 标记存在但找不到 admin（管理员账号被删）同样跳过，由下一次
+ *   注册事务重新产生管理员。
+ */
+async function ensureAdminBootstrap(database: Db): Promise<void> {
+  try {
+    const users = database.collection<BootstrapUserDoc>("users");
+    const admin = await users.findOne({ role: "admin" }, { projection: { _id: 1 } });
+    if (admin) {
+      return;
+    }
+    const bootstrapCollection = database.collection<SystemBootstrapDoc>("system_bootstrap");
+    const bootstrap = await bootstrapCollection.findOne({ _id: "admin_bootstrap" });
+    if (bootstrap) {
+      return;
+    }
+    const earliest = await users.find({}).sort({ createdAt: 1, _id: 1 }).limit(1).next();
+    if (!earliest) {
+      return;
+    }
+    await users.updateOne({ _id: earliest._id }, { $set: { role: "admin" } });
+    await bootstrapCollection.insertOne({
+      _id: "admin_bootstrap",
+      grantedToUserId: earliest._id,
+      createdAt: Date.now(),
+    });
+  } catch (error) {
+    console.error("Unable to run admin bootstrap migration.", error);
+  }
 }
 
 export async function getDb(): Promise<Db> {

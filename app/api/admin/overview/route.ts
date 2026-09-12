@@ -14,22 +14,18 @@
  * limitations under the License.
  */
 
-"use client";
+import { requireAdminUser } from "@/lib/auth";
+import { jsonError, jsonOk } from "@/lib/http";
+import { getSiteOverview } from "@/lib/storage";
 
-import { useRouter } from "next/navigation";
+export const runtime = "nodejs";
 
-export function AdminLogoutButton() {
-  const router = useRouter();
-
-  async function handleClick() {
-    await fetch("/api/admin/logout", { method: "POST" });
-    router.push("/admin/login");
-    router.refresh();
+export async function GET() {
+  const admin = await requireAdminUser();
+  if (!admin) {
+    return jsonError("Forbidden.", 403);
   }
 
-  return (
-    <button className="button-secondary" type="button" onClick={handleClick}>
-      Sign out
-    </button>
-  );
+  const overview = await getSiteOverview();
+  return jsonOk(overview);
 }

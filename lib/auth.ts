@@ -17,10 +17,10 @@
 import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 import { env } from "@/lib/env";
-import type { SessionClaims } from "@/lib/types";
+import { getUserById } from "@/lib/storage";
+import type { SessionClaims, UserRole } from "@/lib/types";
 
 const USER_COOKIE = "messenger_session";
-const ADMIN_COOKIE = "messenger_admin_session";
 
 function secretKey() {
   return new TextEncoder().encode(env.jwtSecret());
@@ -35,12 +35,8 @@ async function signSession(claims: SessionClaims, expiresIn: string) {
     .sign(secretKey());
 }
 
-export async function createUserSessionToken(userId: string, email: string) {
-  return signSession({ sub: userId, email, role: "user" }, "30d");
-}
-
-export async function createAdminSessionToken() {
-  return signSession({ sub: "admin", role: "admin" }, "12h");
+export async function createUserSessionToken(userId: string, email: string, role: UserRole) {
+  return signSession({ sub: userId, email, role }, "30d");
 }
 
 export async function verifySessionToken(token: string) {
@@ -64,22 +60,11 @@ export async function clearUserSessionCookie() {
   cookieStore.delete(USER_COOKIE);
 }
 
-export async function setAdminSessionCookie(token: string) {
-  const cookieStore = await cookies();
-  cookieStore.set(ADMIN_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 12,
-  });
-}
-
-export async function clearAdminSessionCookie() {
-  const cookieStore = await cookies();
-  cookieStore.delete(ADMIN_COOKIE);
-}
-
+/**
+ * 管理员与普通用户共用同一个会话 Cookie，role 记录在 JWT claims 中。
+ * 任何持有有效会话的用户（含管理员）都通过本函数；管理员专属操作必须
+ * 再走 requireAdminUser()，它以数据库中的 role 为准，避免旧 token 提权。
+ */
 export async function requireUserSession() {
   const cookieStore = await cookies();
   const token = cookieStore.get(USER_COOKIE)?.value;
@@ -88,22 +73,25 @@ export async function requireUserSession() {
   }
   try {
     const claims = await verifySessionToken(token);
-    return claims.role === "user" ? claims : null;
+    return claims.role === "user" || claims.role === "admin" ? claims : null;
   } catch {
     return null;
   }
 }
 
-export async function requireAdminSession() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(ADMIN_COOKIE)?.value;
-  if (!token) {
+export interface AdminSessionContext {
+  claims: SessionClaims;
+  role: UserRole;
+}
+
+export async function requireAdminUser(): Promise<AdminSessionContext | null> {
+  const claims = await requireUserSession();
+  if (!claims) {
     return null;
   }
-  try {
-    const claims = await verifySessionToken(token);
-    return claims.role === "admin" ? claims : null;
-  } catch {
+  const user = await getUserById(claims.sub);
+  if (!user || user.role !== "admin") {
     return null;
   }
+  return { claims, role: user.role };
 }

@@ -14,21 +14,21 @@
  * limitations under the License.
  */
 
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
+import { requireUserSession } from "@/lib/auth";
+import { generateAiApiKey } from "@/lib/apikeys";
+import { jsonError, jsonOk } from "@/lib/http";
+import { updateUserAiApiKey } from "@/lib/storage";
+
+export const runtime = "nodejs";
+
+/** 重置用户的 AI API Key。旧 Key 立即失效。 */
+export async function POST() {
+  const session = await requireUserSession();
+  if (!session) {
+    return jsonError("Unauthorized.", 401);
   }
-  return value;
-}
 
-export const env = {
-  jwtSecret: () => requireEnv("JWT_SECRET"),
-  appBaseUrl: () => process.env.APP_BASE_URL ?? "http://localhost:3000",
-  mongoUri: () => requireEnv("MONGODB_URI"),
-  mongoDbName: () => process.env.MONGODB_DB_NAME ?? "messenger",
-};
-
-export function appUrl(path: string): string {
-  return new URL(path, `${env.appBaseUrl().replace(/\/+$/, "")}/`).toString();
+  const aiApiKey = generateAiApiKey();
+  await updateUserAiApiKey(session.sub, aiApiKey);
+  return jsonOk({ aiApiKey });
 }

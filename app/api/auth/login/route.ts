@@ -37,13 +37,14 @@ export async function POST(request: Request) {
 
   const now = Date.now();
   await updateUserLastLogin(user.id, now);
-  const token = await createUserSessionToken(user.id, user.email);
+  const token = await createUserSessionToken(user.id, user.email, user.role);
   await setUserSessionCookie(token);
 
   return jsonOk({
     user: {
       id: user.id,
       email: user.email,
+      role: user.role,
       avatarUrl: user.avatarUrl ? appUrl("/api/avatars/user") : null,
       avatarVersion: user.avatarVersion ?? null,
       syncVersion: user.syncVersion,

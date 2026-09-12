@@ -14,10 +14,23 @@
  * limitations under the License.
  */
 
-import { clearAdminSessionCookie } from "@/lib/auth";
 import { jsonOk } from "@/lib/http";
+import { listPlans } from "@/lib/storage";
 
-export async function POST() {
-  await clearAdminSessionCookie();
-  return jsonOk({ success: true });
+export const runtime = "nodejs";
+
+/** 公开套餐列表，供官网定价区展示。未登录可访问。 */
+export async function GET() {
+  const plans = await listPlans({ enabledOnly: true });
+  return jsonOk({
+    plans: plans.map((plan) => ({
+      id: plan._id,
+      name: plan.name,
+      description: plan.description ?? null,
+      quotaTokens: plan.quotaTokens,
+      validityDays: plan.validityDays,
+      price: plan.price ?? null,
+      sortOrder: plan.sortOrder,
+    })),
+  });
 }

@@ -14,21 +14,18 @@
  * limitations under the License.
  */
 
-import { createAdminSessionToken, setAdminSessionCookie } from "@/lib/auth";
-import { env } from "@/lib/env";
+import { requireUserSession } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
+import { listRedemptions } from "@/lib/storage";
 
-export async function POST(request: Request) {
-  const body = (await request.json().catch(() => null)) as { password?: string } | null;
-  if (!body?.password) {
-    return jsonError("Password is required.", 400);
+export const runtime = "nodejs";
+
+export async function GET() {
+  const session = await requireUserSession();
+  if (!session) {
+    return jsonError("Unauthorized.", 401);
   }
 
-  if (body.password !== env.adminPassword()) {
-    return jsonError("Invalid admin password.", 401);
-  }
-
-  const token = await createAdminSessionToken();
-  await setAdminSessionCookie(token);
-  return jsonOk({ success: true });
+  const redemptions = await listRedemptions(session.sub, 50);
+  return jsonOk({ redemptions });
 }

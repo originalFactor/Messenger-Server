@@ -113,6 +113,53 @@ export const providerSchema = z.object({
   updatedAt: z.number().int().nonnegative(),
 }).strict();
 
+// ---------------------------------------------------------------------------
+// SaaS：套餐 / 卡密 / 模型倍率 / 上游
+// ---------------------------------------------------------------------------
+
+export const planInputSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  description: z.string().trim().max(500).nullable().optional(),
+  quotaTokens: z.number().int().positive().max(1_000_000_000_000),
+  validityDays: z.number().int().positive().max(36_500),
+  price: z.string().trim().max(100).nullable().optional(),
+  enabled: z.boolean(),
+  sortOrder: z.number().int().min(0).max(10_000),
+}).strict();
+
+export const cardIssueSchema = z.object({
+  planId: entityIdSchema,
+  count: z.number().int().min(1).max(500),
+  note: z.string().trim().max(200).nullable().optional(),
+}).strict();
+
+export const cardPatchSchema = z.object({
+  status: z.literal("disabled"),
+}).strict();
+
+export const redeemSchema = z.object({
+  code: z.string().trim().min(4).max(64),
+}).strict();
+
+export const aiModelImportSchema = z.object({
+  modelIds: z.array(z.string().trim().min(1).max(200)).min(1).max(500),
+}).strict();
+
+export const aiModelPatchSchema = z.object({
+  rate: z.number().finite().positive().max(100_000).optional(),
+  enabled: z.boolean().optional(),
+  displayName: z.string().trim().max(200).nullable().optional(),
+}).strict();
+
+export const upstreamInputSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  baseUrl: z.string().url().max(2_000),
+  apiKey: z.string().max(2_000),
+  models: z.array(z.string().trim().min(1).max(200)).max(1_000),
+  priority: z.number().int().min(0).max(100_000),
+  enabled: z.boolean(),
+}).strict();
+
 export const MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024;
 
 const avatarContentTypes = {
