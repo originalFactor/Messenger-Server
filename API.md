@@ -1,13 +1,13 @@
 # Messenger Server API
 
-Messenger `server/` 是一个独立的 Next.js (App Router) 服务，提供账号、增量同步、头像和 Agent 市场能力，部署目标是 Vercel。所有业务数据存于 MongoDB（需为副本集），头像文件存于 Vercel Blob 兼容存储。
+Messenger `server/` 是一个独立的 Next.js (App Router) SaaS 服务，提供官网、注册登录、网页控制台、账号云同步、卡密套餐计费与内置 AI API（上游模型中转），部署目标是 Vercel。所有业务数据存于 MongoDB（需为副本集），头像文件存于 Vercel Blob 兼容存储。
 
 - **运行时**: Node.js ≥ 20，Next.js 15.4
 - **路由运行时**: 所有触碰 MongoDB 或 Blob 的路由均声明 `export const runtime = "nodejs"`
 - **包管理**: pnpm
 - **基类**: TypeScript + Zod 校验
 
-本文档对应 `app/api/**` 下全部 19 个路由处理器。如需了解部署、环境变量与本地开发，参见 [`README.md`](./README.md) 与 [`AGENTS.md`](./AGENTS.md)。
+本文档对应 `app/api/**` 与 `app/v1/**` 下全部 33 个路由处理器。如需了解部署、环境变量与本地开发，参见 [`README.md`](./README.md) 与 [`AGENTS.md`](./AGENTS.md)。
 
 ---
 
@@ -22,7 +22,10 @@ Messenger `server/` 是一个独立的 Next.js (App Router) 服务，提供账�
 - [端点速查表](#端点速查表)
 - [认证 API](#认证-api)
 - [账户 API](#账户-api)
-- [管理后台 API](#管理后台-api)
+- [控制台 API（用户）](#控制台-api用户)
+- [管理 API（管理员）](#管理-api管理员)
+- [公开 API](#公开-api)
+- [AI API（OpenAI 兼容代理）](#ai-apiopenai-兼容代理)
 - [实体同步 API](#实体同步-api)
 - [增量同步 API](#增量同步-api)
 - [头像 API](#头像-api)
@@ -38,29 +41,31 @@ Messenger `server/` 是一个独立的 Next.js (App Router) 服务，提供账�
 
 由环境变量 `APP_BASE_URL` 决定，默认 `http://localhost:3000`。所有响应中出现的 `avatarUrl`、`url` 字段都会通过 `appUrl()` 重写为完整绝对地址（例如 `http://localhost:3000/api/avatars/user`）。
 
-### 认证与 Cookie
+### 认证与 Cookie / AI API Key
 
-服务端使用两套独立的 JWT 会话，均以 HS256 签名、HttpOnly + SameSite=Lax Cookie 下发：
+管理员与普通用户共用同一套 JWT 会话（HS256、HttpOnly + SameSite=Lax Cookie）：
 
-| 会话 | Cookie 名 | 用途 | 有效期 | 签发者 |
+| 凭据 | 载体 | 用途 | 有效期 | 签发者 |
 | --- | --- | --- | --- | --- |
-| 用户会话 | `messenger_session` | 访问所有 `/api/auth/*`、`/api/agents`、`/api/conversations`、`/api/providers`、`/api/sync`、`/api/avatars/*`、`/api/market/*` | 30 天 | `POST /api/auth/register`、`POST /api/auth/login` |
-| 管理员会话 | `messenger_admin_session` | 访问 `/admin` 仪表盘（页面，非 API） | 12 小时 | `POST /api/admin/login` |
+| 用户会话 | `messenger_session` Cookie | 网页控制台、`/api/auth/*`、`/api/console/*`、实体同步、头像、市场 | 30 天 | `POST /api/auth/register`、`POST /api/auth/login` |
+| AI API Key | `Authorization: Bearer sk-…` | `/v1/models`、`/v1/chat/completions`（OpenAI 兼容代理） | 长期（可重置） | 注册时生成；`POST /api/console/api-key` 重置 |
 
-JWT Claims 结构：
+JWT Claims 结构（管理员与用户的会话格式相同，`role` 区分权限）：
 
 ```ts
 interface SessionClaims {
-  sub: string;       // 用户 ID 或 "admin"
-  email?: string;    // 仅用户会话
+  sub: string;       // 用户 ID
+  email?: string;
   role: "user" | "admin";
 }
 ```
 
 鉴权行为：
 
-- 除 `POST /api/auth/register`、`POST /api/auth/login`、`POST /api/admin/login`、`POST /api/admin/logout`、`POST /api/auth/logout` 外，所有路由都要求有效会话。
-- 缺失/过期/角色不符的会话统一返回 `401 Unauthorized.`。
+- **首个注册用户自动晋升为管理员**（由注册事务保证全局唯一；对改造前的存量部署，服务启动迁移会把最早注册用户提升为 admin 并写入 `system_bootstrap` 标记）。
+- 除注册/登录/登出、`GET /api/plans` 与 `/v1/*`（走 API Key）外，所有 `/api/**` 路由都要求有效会话。
+- `/api/admin/*` 在会话之外**再查数据库校验 `role === "admin"`**（`requireAdminUser()`），旧 token 提权无效；未通过返回 `403 Forbidden.`。
+- 缺失/过期的用户会话统一返回 `401 Unauthorized.`；无效的 AI API Key 返回 OpenAI 格式的 `401` 错误体。
 - `secure` 标志仅在 `NODE_ENV=production` 时启用，本地开发走 HTTP。
 
 ### 请求与响应格式
@@ -106,14 +111,37 @@ interface SessionClaims {
 
 | 方法 | 路径 | 鉴权 | 用途 |
 | --- | --- | --- | --- |
-| POST | `/api/auth/register` | 无 | 注册账号并签发会话 |
+| POST | `/api/auth/register` | 无 | 注册账号（首个用户晋升管理员）并签发会话 |
 | POST | `/api/auth/login` | 无 | 登录并签发会话 |
 | POST | `/api/auth/logout` | 无 | 注销当前用户会话 |
-| GET | `/api/auth/me` | 用户 | 获取当前用户信息 |
+| GET | `/api/auth/me` | 用户 | 获取当前用户信息（含角色/额度/API Key） |
 | PUT | `/api/auth/password` | 用户 | 修改密码 |
 | DELETE | `/api/auth/account` | 用户 | 永久注销账户 |
-| POST | `/api/admin/login` | 无 | 管理员登录 |
-| POST | `/api/admin/logout` | 无 | 管理员注销 |
+| GET | `/api/console/overview` | 用户 | 控制台概览（额度 + 用量） |
+| POST | `/api/console/redeem` | 用户 | 兑换卡密 |
+| GET | `/api/console/redemptions` | 用户 | 历史兑换记录 |
+| POST | `/api/console/api-key` | 用户 | 重置 AI API Key |
+| GET | `/api/admin/overview` | 管理员 | 全站概览统计 |
+| GET | `/api/admin/plans` | 管理员 | 套餐列表 |
+| POST | `/api/admin/plans` | 管理员 | 新建套餐 |
+| PUT | `/api/admin/plans/{id}` | 管理员 | 更新套餐 |
+| DELETE | `/api/admin/plans/{id}` | 管理员 | 删除套餐 |
+| GET | `/api/admin/cards` | 管理员 | 卡密列表（分页/筛选） |
+| POST | `/api/admin/cards` | 管理员 | 批量开卡 |
+| PATCH | `/api/admin/cards/{id}` | 管理员 | 停用未用卡密 |
+| DELETE | `/api/admin/cards/{id}` | 管理员 | 删除未用/停用卡密 |
+| GET | `/api/admin/models` | 管理员 | 模型倍率目录 |
+| POST | `/api/admin/models` | 管理员 | 批量导入模型（默认 1.0 倍率） |
+| PUT | `/api/admin/models/{id}` | 管理员 | 更新模型倍率/启停 |
+| DELETE | `/api/admin/models/{id}` | 管理员 | 删除模型 |
+| GET | `/api/admin/upstreams` | 管理员 | 上游列表 |
+| POST | `/api/admin/upstreams` | 管理员 | 新增上游 |
+| PUT | `/api/admin/upstreams/{id}` | 管理员 | 更新上游 |
+| DELETE | `/api/admin/upstreams/{id}` | 管理员 | 删除上游 |
+| POST | `/api/admin/upstreams/{id}/probe` | 管理员 | 探测上游模型列表 |
+| GET | `/api/plans` | 无 | 公开套餐列表（官网定价） |
+| GET | `/v1/models` | AI API Key | OpenAI 兼容模型列表 |
+| POST | `/v1/chat/completions` | AI API Key | OpenAI 兼容对话（流式/非流式，扣额度） |
 | PUT | `/api/agents/{id}` | 用户 | 新增/更新 Agent |
 | DELETE | `/api/agents/{id}` | 用户 | 软删除 Agent |
 | PUT | `/api/conversations/{id}` | 用户 | 新增/更新会话 |
@@ -136,7 +164,7 @@ interface SessionClaims {
 | PUT | `/api/market/agents/{id}/avatar` | 用户（仅所有者） | 上传/替换市场头像 |
 | DELETE | `/api/market/agents/{id}/avatar` | 用户（仅所有者） | 删除市场头像 |
 
-> 管理员仪表盘 `/admin` 与 `/admin/login` 为服务端渲染页面，不在 API 之列。
+> 网页端：`/` 为官网首页，`/login`、`/register` 为登录注册页，`/console` 为用户与管理员共用的控制台（管理员侧边栏多出「管理功能区」）。
 
 ---
 
@@ -163,6 +191,7 @@ interface SessionClaims {
   "user": {
     "id": "uuid",
     "email": "user@example.com",
+    "role": "user",              // 全站无管理员时为 "admin"（首个注册用户）
     "avatarUrl": null,
     "avatarVersion": null,
     "syncVersion": 1,            // 默认 Agent 的写入把水位线从 0 推到 1
@@ -188,6 +217,7 @@ interface SessionClaims {
   "user": {
     "id": "uuid",
     "email": "user@example.com",
+    "role": "user",
     "avatarUrl": "http://localhost:3000/api/avatars/user",  // 仅在已设头像时
     "avatarVersion": 1700000000000,
     "syncVersion": 42,
@@ -224,6 +254,10 @@ interface SessionClaims {
   "user": {
     "id": "uuid",
     "email": "user@example.com",
+    "role": "user",
+    "aiApiKey": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "quotaBalance": 98000,
+    "quotaExpiresAt": 1702588800000,
     "avatarUrl": "http://localhost:3000/api/avatars/user",
     "avatarVersion": 1700000000000,
     "syncVersion": 42,
@@ -233,6 +267,9 @@ interface SessionClaims {
   }
 }
 ```
+
+- `aiApiKey`：用户级 AI API Key，调用 `/v1/*` 时作为 Bearer Token；`POST /api/console/api-key` 可重置。
+- `quotaBalance` / `quotaExpiresAt`：剩余额度（整数）与有效期；`quotaExpiresAt` 为 `null` 表示从未兑换。
 
 - 错误：`401 Unauthorized.`、`404 User not found.`（账号已被删但 Cookie 未过期）
 
@@ -260,7 +297,7 @@ interface SessionClaims {
 
 ### DELETE /api/auth/account
 
-永久注销账户。在同一存储事务内删除该用户的所有 `agents`、`conversations`、`providers`、`market_agents` 文档，再异步清理三类头像 Blob，最后清除会话 Cookie。
+永久注销账户。在同一存储事务内删除该用户的所有 `agents`、`conversations`、`providers`、`market_agents`、`redemptions`、`usage_logs` 文档，再异步清理三类头像 Blob，最后清除会话 Cookie。
 
 - 鉴权：用户会话
 - 请求体：`passwordDeleteSchema`
@@ -280,30 +317,179 @@ interface SessionClaims {
 
 ---
 
-## 管理后台 API
+## 控制台 API（用户）
 
-管理员后台仅通过服务端渲染页面 `/admin` 暴露。`/api/admin/*` 只提供登录/注销两个端点；仪表盘数据由 `getAdminDashboard()` 在页面内直接读取，不对外暴露 API。
+用户功能区（概览、财务）与 AI API Key 管理端点。鉴权为用户会话 Cookie，管理员同样可用。
 
-### POST /api/admin/login
+### GET /api/console/overview
 
-用配置的 `ADMIN_PASSWORD` 登录，签发管理员会话。
+控制台「概览」页数据。
 
-- 鉴权：无
+- 鉴权：用户会话
+- 响应 `200`：
+
+```jsonc
+{
+  "quota": {
+    "balance": 98000,
+    "expiresAt": 1702588800000,
+    "available": true,
+    "reason": null            // 不可用时为 "no_quota" | "expired"
+  },
+  "usage": {
+    "today": { "requests": 12, "tokens": 45231, "cost": 45231 }  // 近 24 小时
+  },
+  "recentUsage": [ /* UsageLogDoc[]，最近 10 条 */ ]
+}
+```
+
+### POST /api/console/redeem
+
+兑换卡密。原子占卡（`unused → redeemed`）+ 额度累加 + 有效期顺延在同一事务内完成。
+
+- 鉴权：用户会话
 - 请求体：
 
 ```json
-{ "password": "管理员密码" }
+{ "code": "MS-XXXXX-XXXXX-XXXXX" }
 ```
 
-- 响应 `200`：`{ "success": true }`
-- 错误：`400 Password is required.`、`401 Invalid admin password.`
+- 响应 `200`：
 
-### POST /api/admin/logout
+```jsonc
+{
+  "redemption": {
+    "cardCode": "MS-XXXXX-XXXXX-XXXXX",
+    "planName": "入门套餐",
+    "quotaTokens": 100000,
+    "validityDays": 30,
+    "redeemedAt": 1700000000000
+  },
+  "quota": { "balance": 198000, "expiresAt": 1705171200000 }
+}
+```
 
-清除管理员会话 Cookie。幂等。
+- 错误：`400 请输入有效的卡密。`、`404 卡密不存在，请检查输入是否正确。`、`409 该卡密已被使用。` / `该卡密已被停用。`
 
-- 鉴权：无
-- 响应 `200`：`{ "success": true }`
+### GET /api/console/redemptions
+
+- 鉴权：用户会话
+- 响应 `200`：`{ "redemptions": [ /* RedemptionDoc[]，最近 50 条，createdAt 降序 */ ] }`
+
+### POST /api/console/api-key
+
+重置 AI API Key。旧 Key 立即失效。
+
+- 鉴权：用户会话
+- 响应 `200`：`{ "aiApiKey": "sk-…新的 Key…" }`
+
+---
+
+## 管理 API（管理员）
+
+管理员功能区端点。鉴权为用户会话 + 数据库 `role === "admin"` 校验（`requireAdminUser()`），未通过返回 `403 Forbidden.`。
+
+### GET /api/admin/overview
+
+全站概览统计（用户、近 24h/7 天用量、卡密、套餐、上游、最新注册用户与全站近期调用）。
+
+### GET|POST /api/admin/plans、PUT|DELETE /api/admin/plans/{id}
+
+套餐 CRUD。请求体（`planInputSchema`，strict）：
+
+```jsonc
+{
+  "name": "入门套餐",
+  "description": "适合轻度使用",       // 可选
+  "quotaTokens": 100000,               // 兑换后一次性充入的额度
+  "validityDays": 30,                  // 有效期天数
+  "price": "¥9.9",                     // 展示文案，可选
+  "enabled": true,
+  "sortOrder": 0
+}
+```
+
+删除套餐为硬删除；已发出的卡密内嵌套餐快照（名称/额度/天数），仍可正常兑换。
+
+### GET|POST /api/admin/cards、PATCH|DELETE /api/admin/cards/{id}
+
+- `GET`：查询参数 `status`（`unused|redeemed|disabled`，可选）、`planId`（可选）、`cursor`、`limit`（默认 50，上限 200）。响应 `{ cards, hasMore, nextCursor }`。
+- `POST`：批量开卡，请求体 `{ "planId": "…", "count": 10, "note": null }`（count 1–500）；响应 `201` `{ "cards": [CardKeyDoc…] }` —— 卡密明文仅在生成时完整返回/落库，请提示管理员立即保存。
+- `PATCH`：仅未用卡可停用，请求体 `{ "status": "disabled" }`。
+- `DELETE`：仅未用/停用卡可删除；已兑换卡保留作对账凭据。
+
+### GET|POST /api/admin/models、PUT|DELETE /api/admin/models/{id}
+
+模型倍率目录（`ai_models` 集合）。
+
+- `POST`：`{ "modelIds": ["gpt-4o", …] }` 批量导入；已存在的保持原倍率，新模型默认 `rate: 1.0` 且启用。
+- `PUT /{id}`：`{ "rate": 1.5, "enabled": true, "displayName": null }`（均可选的部分更新）。
+- `DELETE /{id}`：从目录移除（不影响上游配置中的引用）。
+
+### GET|POST /api/admin/upstreams、PUT|DELETE /api/admin/upstreams/{id}、POST /api/admin/upstreams/{id}/probe
+
+上游模型服务管理。请求体（`upstreamInputSchema`，strict）：
+
+```jsonc
+{
+  "name": "主上游",
+  "baseUrl": "https://api.example.com/v1",   // OpenAI 兼容根地址（含 /v1）
+  "apiKey": "上游密钥",
+  "models": ["gpt-4o", "deepseek-chat"],     // 可服务的模型 ID（对应 ai_models._id）
+  "priority": 0,                              // 越小越优先；同模型多上游自动故障转移
+  "enabled": true
+}
+```
+
+`POST …/{id}/probe`：服务端请求上游 `GET {baseUrl}/models`，响应 `{ "upstreamId": "…", "models": ["…"] }`，供控制台一键导入模型目录；连接失败返回 `502`。
+
+---
+
+## 公开 API
+
+### GET /api/plans
+
+官网定价区使用的公开套餐列表，未登录可访问。
+
+- 响应 `200`：
+
+```jsonc
+{
+  "plans": [
+    { "id": "uuid", "name": "入门套餐", "description": null, "quotaTokens": 100000,
+      "validityDays": 30, "price": "¥9.9", "sortOrder": 0 }
+  ]
+}
+```
+
+---
+
+## AI API（OpenAI 兼容代理）
+
+`/v1/*` 是面向用户 API Key（`Authorization: Bearer sk-…`）的 OpenAI 兼容代理。可用模型 = 启用的模型目录 ∩ 至少一个启用上游可服务；额度在响应完成后按 `ceil(totalTokens × 模型倍率)` 扣减（下限 1，失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`）。
+
+### GET /v1/models
+
+```json
+{ "object": "list", "data": [ { "id": "gpt-4o", "object": "model", "created": 1700000000, "owned_by": "messenger-cloud" } ] }
+```
+
+### POST /v1/chat/completions
+
+标准的 OpenAI Chat Completions 请求/响应。流式请求会强制注入 `stream_options: {"include_usage": true}` 并将上游 SSE 字节原样透传。同模型配置多个启用上游时按 `priority` 升序故障转移（连接失败或 5xx 切换下一个；4xx 原样透传给调用方）。
+
+- 错误体为 OpenAI 格式：
+
+```jsonc
+// 401
+{ "error": { "message": "Invalid API key.", "type": "authentication_error", "code": "invalid_api_key" } }
+// 402 —— 额度耗尽 / 套餐过期
+{ "error": { "message": "Insufficient quota. Redeem a card key to top up.", "type": "insufficient_quota" } }
+// 404
+{ "error": { "message": "Model 'gpt-4o' is not available.", "type": "invalid_request_error", "code": "model_not_found" } }
+// 502 —— 全部上游不可用
+{ "error": { "message": "Upstream model service is unavailable.", "type": "api_error" } }
+```
 
 ---
 
@@ -777,6 +963,10 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 | `_id` | string | 用户 ID（UUID） |
 | `email` | string | 唯一索引 |
 | `passwordHash` | string | argon 风格哈希 |
+| `role` | `"user"` \| `"admin"` | 管理权限；首个注册用户自动晋升 |
+| `aiApiKey` | string | AI API Key（`sk-…`），有索引 |
+| `quotaBalance` | number | 剩余额度（整数） |
+| `quotaExpiresAt` | number \| null | 额度有效期；null 表示从未兑换 |
 | `avatarUrl` | string \| null | 头像 Blob 私有 URL（由头像端点管理） |
 | `avatarVersion` | number \| null | 头像版本 |
 | `syncVersion` | number | 用户级单调水位线 |
@@ -891,15 +1081,57 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 | `version` | number | 市场 entry 版本号（与用户 `syncVersion` 无关） |
 | `deleted` | boolean | |
 
+### PlanDoc（套餐）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `_id` | string | 套餐 ID |
+| `name` | string | |
+| `description` | string \| null | |
+| `quotaTokens` | number | 兑换后一次性充入的额度 |
+| `validityDays` | number | 有效期天数 |
+| `price` | string \| null | 展示价格文案，不参与支付 |
+| `enabled` | boolean | 停用后不出现在公开列表与开卡选项 |
+| `sortOrder` | number | 展示排序 |
+| `createdAt` / `updatedAt` | number | |
+
+### CardKeyDoc（卡密）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `_id` | string | |
+| `code` | string | `MS-XXXXX-XXXXX-XXXXX`，唯一索引 |
+| `planId` | string | 开卡时的套餐 |
+| `planName` / `quotaTokens` / `validityDays` | string / number / number | 创建时刻的套餐快照，套餐删除后仍可兑换 |
+| `status` | `"unused"` \| `"redeemed"` \| `"disabled"` | |
+| `note` | string \| null | 管理员备注 |
+| `createdByUserId` | string | 开卡管理员 |
+| `createdAt` | number | |
+| `redeemedByUserId` / `redeemedAt` | string / number \| null | 兑换信息 |
+
+### RedemptionDoc（兑换记录）、AiModelDoc（模型倍率）、UpstreamDoc（上游）、UsageLogDoc（用量）
+
+- `RedemptionDoc`: `{ _id, userId, cardKeyId, cardCode, planId, planName, quotaTokens, validityDays, createdAt }`
+- `AiModelDoc`: `{ _id: 模型ID, displayName, rate: 消耗倍率, enabled, createdAt, updatedAt }`
+- `UpstreamDoc`: `{ _id, name, baseUrl(含 /v1), apiKey, models: 可服务模型ID[], priority(小者先), enabled, createdAt, updatedAt }`
+- `UsageLogDoc`: `{ _id, userId, modelId, upstreamId, promptTokens, completionTokens, totalTokens, cost, stream, createdAt }`
+
+### system_bootstrap
+
+`{ _id: "admin_bootstrap", grantedToUserId, createdAt }` —— 管理员晋升标记。注册事务以它的唯一键保证并发注册只产生一名管理员；启动迁移据此判断是否需要把最早用户提升为 admin。
+
 ### MongoDB 索引
 
 服务首次连接时由 [`lib/mongo.ts`](./lib/mongo.ts) 初始化：
 
-- `users`: 唯一 `{ email: 1 }`
+- `users`: 唯一 `{ email: 1 }`、`{ updatedAt: -1, _id: 1 }`、`{ aiApiKey: 1 }`
 - `agents`: `{ userId: 1, version: 1 }`
 - `conversations`: `{ userId: 1, version: 1 }`、`{ userId: 1, agentId: 1 }`
 - `providers`: `{ userId: 1, version: 1 }`
 - `market_agents`: `{ deleted: 1, updatedAt: -1, _id: 1 }`、`{ ownerUserId: 1, deleted: 1 }`
+- `card_keys`: 唯一 `{ code: 1 }`、`{ status: 1, createdAt: -1, _id: 1 }`、`{ planId: 1, status: 1 }`
+- `redemptions`: `{ userId: 1, createdAt: -1, _id: 1 }`
+- `usage_logs`: `{ userId: 1, createdAt: -1, _id: 1 }`、`{ createdAt: -1, _id: 1 }`
 - 额外的部分唯一索引保护「每用户一个活跃默认 Agent」不变式
 
 ### 头像 Blob 路径
@@ -914,11 +1146,14 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 
 | HTTP | 触发场景（汇总） |
 | --- | --- |
-| 400 | Zod 校验失败、ID 不合法、`since`/`cursor`/`limit` 参数不合法、头像文件超限或类型不支持 |
-| 401 | 缺失/过期/角色不符的会话；登录密码错误；改密时 `currentPassword` 错误 |
-| 404 | 实体不存在、头像未设置、市场 Agent 不存在或不属于当前用户 |
-| 409 | 唯一约束冲突（重复邮箱、重复默认 Agent）、`ConflictError`、`AvatarLockError`（头像锁竞争） |
+| 400 | Zod 校验失败、ID 不合法、`since`/`cursor`/`limit` 参数不合法、头像文件超限或类型不支持、`/v1` 请求体缺 `model`/`messages` |
+| 401 | 缺失/过期的会话；登录密码错误；改密时 `currentPassword` 错误；无效 AI API Key（OpenAI 格式错误体） |
+| 402 | AI API 额度耗尽或套餐过期（OpenAI 格式错误体，`type: "insufficient_quota"`） |
+| 403 | 非管理员访问 `/api/admin/*` |
+| 404 | 实体不存在、头像未设置、市场 Agent 不存在或不属于当前用户、模型不可用 / 无可用上游 |
+| 409 | 唯一约束冲突（重复邮箱、重复默认 Agent）、卡密已被使用、`ConflictError`、`AvatarLockError` |
 | 500 | 其他未捕获错误；详情写入服务端日志，响应体仅返回通用 `fallbackMessage` |
+| 502 | 上游探测/转发失败、全部上游不可用（OpenAI 格式错误体） |
 
 通用错误响应体：
 

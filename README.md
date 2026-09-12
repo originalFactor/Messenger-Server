@@ -1,26 +1,26 @@
 # Messenger Server
 
-`server/` is the standalone Next.js account, incremental-sync, and Agent Market service for Messenger. It is intended for Vercel deployment. MongoDB stores synchronized application entities and market snapshots, while the Vercel Blob-compatible SDK stores only avatar files.
+`server/` is the standalone Next.js SaaS service for Messenger: official website, web console, account & incremental sync, card-key plan billing, and the built-in AI API (upstream model relay). It is intended for Vercel deployment. MongoDB stores synchronized application entities, billing data, and market snapshots, while the Vercel Blob-compatible SDK stores only avatar files.
 
 ## Features
 
+- Official website homepage with public plan/pricing display and web login/registration
+- Shared web console (`/console`) for users and administrators; the first registered user is automatically promoted to admin
 - Email/password accounts with JWT cookie sessions
-- MongoDB-backed versioned entity synchronization
-- Per-user monotonic synchronization watermarks
-- Soft-delete tombstones for multi-device deletion propagation
-- Embedded messages per conversation and embedded models per provider
-- Vercel Blob avatar lifecycle management
-- Protected admin dashboard with MongoDB activity statistics
+- MongoDB-backed versioned entity synchronization with per-user monotonic watermarks and soft-delete tombstones
+- Card-key (卡密) plan system: admin-defined plans, batch card issuance, user redemption with quota and validity extension
+- Per-model rate billing consumed by the built-in AI API
+- OpenAI-compatible AI API (`/v1/models`, `/v1/chat/completions`) relaying to admin-managed upstream model services with priority failover
 - Authenticated public Agent Market with publish, update, import, and unpublish workflows
+- Vercel Blob avatar lifecycle management
 
 ## Environment
 
 Copy `.env.example` to `.env.local` for local development.
 
-- `JWT_SECRET`: signs app and admin session cookies.
-- `ADMIN_PASSWORD`: password for `/admin/login`.
-- `APP_BASE_URL`: displayed by the server landing page.
-- `MONGODB_URI`: MongoDB connection string. Use MongoDB Atlas or a replica set because versioned entity writes use transactions.
+- `JWT_SECRET`: signs the user session cookie (user and admin roles share the same session format).
+- `APP_BASE_URL`: absolute base URL used to rewrite avatar URLs and shown on the website footer.
+- `MONGODB_URI`: MongoDB connection string. Use MongoDB Atlas or a replica set because versioned entity writes and redemptions use transactions.
 - `MONGODB_DB_NAME`: database name; defaults to `messenger`.
 - `BLOB_READ_WRITE_TOKEN`: Blob store token used only for avatar files.
 - `BLOB_STORE_ID`: Blob store identifier, `local` for the local emulator.
@@ -28,32 +28,44 @@ Copy `.env.example` to `.env.local` for local development.
 - `VERCEL_BLOB_STORAGE_URL`: Blob storage URL. Use `http://localhost:3100/blob` locally.
 - `VERCEL_BLOB_RETRIES`: Set to `0` for local development to avoid retry delays.
 
+The former `ADMIN_PASSWORD` variable is removed: administration is a user role granted to the first registered account.
+
 ## Data Model
 
 All documents use application-generated string IDs as MongoDB `_id` values. Timestamps are Unix epoch milliseconds.
 
-- `users`: `_id`, `email`, `passwordHash`, `avatarUrl`, `syncVersion`, `createdAt`, `updatedAt`, and `lastLoginAt`.
+- `users`: `_id`, `email`, `passwordHash`, `role` (`user` | `admin`), `aiApiKey`, `quotaBalance`, `quotaExpiresAt`, `avatarUrl`, `syncVersion`, `createdAt`, `updatedAt`, and `lastLoginAt`.
 - `agents`: `_id`, `userId`, agent configuration, `avatarUrl`, `version`, and `deleted`.
 - `conversations`: `_id`, `userId`, `agentId`, conversation overrides, one embedded `messages` array, `version`, and `deleted`.
 - `providers`: `_id`, `userId`, provider settings, one embedded `models` array, `version`, and `deleted`.
 - `market_agents`: server-generated `_id`, `ownerUserId`, portable Agent snapshot, avatar metadata, market `version`, and `deleted`. Entries never include provider settings, API keys, model bindings, or follow-default flags.
+- `plans`: admin-defined plans (`name`, `description`, `quotaTokens`, `validityDays`, display `price`, `enabled`, `sortOrder`).
+- `card_keys`: voucher codes with a creation-time plan snapshot (`planName`, `quotaTokens`, `validityDays`), `status` (`unused` | `redeemed` | `disabled`), `note`, and redemption metadata.
+- `redemptions`: one document per successful redemption (user, card, plan snapshot, timestamp).
+- `ai_models`: the model catalog consumed by the AI API (`_id` = model ID, `rate` multiplier, `enabled`).
+- `upstreams`: admin-managed upstream OpenAI-compatible services (`baseUrl` including `/v1`, `apiKey`, served `models`, `priority`, `enabled`).
+- `usage_logs`: one document per AI API completion (tokens and quota `cost`, upstream, stream flag).
+- `system_bootstrap`: the `admin_bootstrap` marker that makes the first-admin grant race-safe.
 
 Messages are stored inside their owning conversation. Models are stored inside their owning provider. A delete sets `deleted: true`; tombstones remain available to delta sync clients.
 
 Every entity write uses `findOneAndUpdate` with `$inc: { syncVersion: 1 }` inside the same MongoDB transaction that stamps the changed entity's `version`. This prevents a sync response from advancing its watermark past an uncommitted entity write.
 
-Registration inserts a user with `syncVersion: 0`, then creates the required default agent in the same transaction. That first entity write advances the account watermark to `1`, so an initial `GET /api/sync?since=0` includes the default agent.
+Registration inserts a user with `syncVersion: 0`, then creates the required default agent in the same transaction. When no admin exists, the registering user is promoted to `admin` in the same transaction (guarded by the unique `system_bootstrap` marker). Card redemption, quota consumption, and account deletion are likewise transactional.
 
 ## Indexes
 
 The server initializes these indexes when it first connects:
 
-- `users`: unique `{ email: 1 }`
+- `users`: unique `{ email: 1 }`, `{ updatedAt: -1, _id: 1 }`, `{ aiApiKey: 1 }`
 - `agents`: `{ userId: 1, version: 1 }`
 - `conversations`: `{ userId: 1, version: 1 }`
 - `conversations`: `{ userId: 1, agentId: 1 }`
 - `providers`: `{ userId: 1, version: 1 }`
 - `market_agents`: `{ deleted: 1, updatedAt: -1, _id: 1 }` and `{ ownerUserId: 1, deleted: 1 }`
+- `card_keys`: unique `{ code: 1 }`, `{ status: 1, createdAt: -1, _id: 1 }`, `{ planId: 1, status: 1 }`
+- `redemptions`: `{ userId: 1, createdAt: -1, _id: 1 }`
+- `usage_logs`: `{ userId: 1, createdAt: -1, _id: 1 }` and `{ createdAt: -1, _id: 1 }`
 
 An additional partial unique index protects the one-active-default-agent invariant for each user.
 
@@ -71,7 +83,10 @@ Private Blob URLs are never returned to clients as directly readable image URLs.
 
 ## API
 
-All sync, entity, and avatar routes require a valid `messenger_session` cookie. A request without a valid session returns `401 Unauthorized`.
+See [`API.md`](./API.md) for the complete endpoint reference. Summary:
+
+- Session-cookie routes (web console, entity sync, avatars, market) require a valid `messenger_session` cookie; admin-only routes additionally verify the database `role` and return `403 Forbidden` for non-admins.
+- The AI API (`/v1/models`, `/v1/chat/completions`) authenticates with the per-user API key (`Authorization: Bearer sk-…`) shown in the web console.
 
 ### Authentication
 
@@ -82,7 +97,29 @@ All sync, entity, and avatar routes require a valid `messenger_session` cookie. 
 - `PUT /api/auth/password`
 - `DELETE /api/auth/account`
 
-`PUT /api/auth/password` requires `currentPassword` and `newPassword`. `DELETE /api/auth/account` requires a JSON body containing `currentPassword` and permanently removes the authenticated user's account, synchronized entities, and avatars.
+`PUT /api/auth/password` requires `currentPassword` and `newPassword`. `DELETE /api/auth/account` requires a JSON body containing `currentPassword` and permanently removes the authenticated user's account, synchronized entities, billing history, usage logs, and avatars.
+
+### Console (users)
+
+- `GET /api/console/overview` — quota summary and recent usage
+- `POST /api/console/redeem` — redeem a card key (atomic claim + quota grant + redemption record)
+- `GET /api/console/redemptions` — redemption history
+- `POST /api/console/api-key` — regenerate the AI API key (old key invalidates immediately)
+
+### Admin
+
+All `/api/admin/*` routes require the session user to have `role: "admin"` in the database:
+
+- `GET /api/admin/overview` — site-wide statistics
+- `GET|POST /api/admin/plans`, `PUT|DELETE /api/admin/plans/{id}` — plan CRUD
+- `GET|POST /api/admin/cards`, `PATCH|DELETE /api/admin/cards/{id}` — card listing, batch issuance (1–500 per call), disabling, and deletion
+- `GET|POST /api/admin/models`, `PUT|DELETE /api/admin/models/{id}` — model catalog with per-model billing rates
+- `GET|POST /api/admin/upstreams`, `PUT|DELETE /api/admin/upstreams/{id}`, `POST /api/admin/upstreams/{id}/probe` — upstream CRUD and model-list probing for one-click catalog import
+
+### AI API (OpenAI-compatible)
+
+- `GET /v1/models` — enabled catalog models served by at least one enabled upstream
+- `POST /v1/chat/completions` — streaming and non-streaming relay; injects `stream_options.include_usage`, fails over across upstreams by priority, and deducts `ceil(totalTokens × rate)` from the user's quota after completion (402 when the quota is exhausted or expired)
 
 ### Entity Synchronization
 
@@ -142,7 +179,7 @@ pnpm install
 pnpm dev
 ```
 
-Open `http://localhost:3000` for the landing page and `http://localhost:3000/admin/login` for the admin portal. When using [vercel-blob-emu](https://github.com/ECSDevs/vercel-blob-emu), start its emulator on port `3100` and point `VERCEL_BLOB_API_URL` and `VERCEL_BLOB_STORAGE_URL` at that service.
+Open `http://localhost:3000` for the official website. Use `/register` to create the first account (it becomes the admin), then sign in at `/login` and manage the platform under `/console`. When using [vercel-blob-emu](https://github.com/ECSDevs/vercel-blob-emu), start its emulator on port `3100` and point `VERCEL_BLOB_API_URL` and `VERCEL_BLOB_STORAGE_URL` at that service.
 
 Run validation with:
 

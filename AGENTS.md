@@ -9,18 +9,20 @@
 
 ## Structure
 
-- This is a single Next.js App Router application, not a workspace despite the `pnpm-workspace.yaml` file. Pages are under `app/`; API route handlers are under `app/api/`.
-- `lib/storage.ts` is the persistence boundary for users, agents, conversations, providers, incremental sync watermarks, and tombstones. `lib/mongo.ts` also initializes indexes on first database access.
+- This is a single Next.js App Router application, not a workspace despite the `pnpm-workspace.yaml` file. Pages are under `app/` (official website at `app/page.tsx`, auth pages under `app/login|register/`, shared web console under `app/console/`); API route handlers are under `app/api/` and `app/v1/`.
+- `lib/storage.ts` is the persistence boundary for users, agents, conversations, providers, incremental sync watermarks, tombstones, plans, card keys, redemptions, the AI model catalog, upstreams, usage logs, and overview aggregations. `lib/mongo.ts` also initializes indexes and runs the one-time admin-bootstrap migration on first database access.
 - Versioned entity mutations must remain in the MongoDB transaction that increments the user `syncVersion` and stamps the entity `version`; sync reads first capture the waterline and bound collection queries to it.
 - Messages are embedded in conversations and models are embedded in providers. Deletes are soft deletes so tombstones remain available to `GET /api/sync?since=N`.
 - Multimodal images are NOT stored as blobs: each message may carry a `partsJson` string (validated by `messageSchema`, stored verbatim, returned untouched by sync). Image parts embed the full base64 `data:` URI plus the sender's device-local path; clients rebuild missing local files from the `dataUri` after a pull. Do not strip, re-encode, or reorder `partsJson` server-side — the mobile client relies on byte-identical round-trips.
 - Avatar routes use the Vercel Blob-compatible SDK only for avatar files. `lib/avatars.ts` handles prefix snapshots/replacement/rollback, while authenticated avatar GET routes stream private blobs to clients and `lib/avatar-locks.ts` serializes concurrent changes through MongoDB; preserve all protections when changing avatar behavior.
-- User and admin routes use different JWT cookies and guards from `lib/auth.ts`: `messenger_session` for application APIs and `messenger_admin_session` for `/admin`.
-- Account routes include authenticated password changes at `PUT /api/auth/password` and permanent account deletion at `DELETE /api/auth/account`; deletion removes the user's MongoDB entities and avatar blobs before clearing the session cookie.
+- All users (including admins) share the `messenger_session` JWT cookie from `lib/auth.ts`. `requireUserSession()` accepts any valid session; `requireAdminUser()` additionally verifies the database `role === "admin"` — every admin-only route and page must go through it. There is no separate admin cookie and no `ADMIN_PASSWORD` env.
+- The first-admin invariant is enforced in two places: the registration transaction (unique `system_bootstrap` marker makes concurrent first registrations produce exactly one admin, retried as a plain user on marker conflict) and the idempotent `ensureAdminBootstrap` migration in `lib/mongo.ts` (promotes the earliest-registered user of pre-SaaS deployments).
+- Billing and the AI relay are split across `lib/apikeys.ts` (key/card-code generation), `lib/quota.ts` (quota state, token estimation, `cost = max(1, ceil(totalTokens × rate))`), `lib/ai-proxy.ts` (Bearer-key auth + OpenAI error bodies), and the `/v1/*` routes (upstream failover by `priority`, streaming SSE passthrough with usage sniffing, post-completion quota settlement). Card codes embed a creation-time plan snapshot so plans can be edited or deleted without invalidating outstanding cards.
+- Account routes include authenticated password changes at `PUT /api/auth/password` and permanent account deletion at `DELETE /api/auth/account`; deletion removes the user's MongoDB entities, billing history, usage logs, and avatar blobs before clearing the session cookie.
 
 ## Environment
 
-- Copy `.env.example` to `.env.local`. `JWT_SECRET`, `ADMIN_PASSWORD`, and `MONGODB_URI` are required at runtime; `MONGODB_DB_NAME` defaults to `messenger`, and `APP_BASE_URL` defaults to `http://localhost:3000`.
+- Copy `.env.example` to `.env.local`. `JWT_SECRET` and `MONGODB_URI` are required at runtime; `MONGODB_DB_NAME` defaults to `messenger`, and `APP_BASE_URL` defaults to `http://localhost:3000`.
 - `BLOB_READ_WRITE_TOKEN` is needed for private avatar Blob operations and is not used for database or backup storage. Local development uses `vercel-blob-nonvercel` with `VERCEL_BLOB_API_URL=http://localhost:3100/api/blob` and `VERCEL_BLOB_STORAGE_URL=http://localhost:3100/blob`.
 - Keep secrets out of source control; `.env.*` is ignored except `.env.example`.
 
