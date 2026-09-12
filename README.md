@@ -1,6 +1,6 @@
 # Messenger Server
 
-`server/` is the standalone Next.js SaaS service for Messenger: official website, web console, account & incremental sync, card-key plan billing, and the built-in AI API (upstream model relay). It is intended for Vercel deployment. MongoDB stores synchronized application entities, billing data, and market snapshots, while the Vercel Blob-compatible SDK stores only avatar files.
+`server/` is the standalone Next.js SaaS service for Messenger: official website, web console, account & incremental sync, card-key plan billing, and the built-in AI API (upstream model relay). It runs on Vercel and on any self-hosted Node runtime. MongoDB stores synchronized application entities, billing data, and market snapshots, while avatar files live in a pluggable blob storage layer (Vercel Blob backend or a self-hosted filesystem backend).
 
 ## Features
 
@@ -11,8 +11,9 @@
 - Card-key (卡密) plan system: admin-defined plans, batch card issuance, user redemption with quota and validity extension
 - Per-model rate billing consumed by the built-in AI API
 - OpenAI-compatible AI API (`/v1/models`, `/v1/chat/completions`) relaying to admin-managed upstream model services with priority failover
+- Pluggable blob storage for avatars: Vercel Blob backend (existing deployments keep working) or self-hosted filesystem backend replacing the former local emulator
 - Authenticated public Agent Market with publish, update, import, and unpublish workflows
-- Vercel Blob avatar lifecycle management
+- Vercel Blob-compatible avatar lifecycle management (snapshot/replacement/rollback semantics) regardless of backend
 
 ## Environment
 
@@ -22,11 +23,13 @@ Copy `.env.example` to `.env.local` for local development.
 - `APP_BASE_URL`: absolute base URL used to rewrite avatar URLs and shown on the website footer.
 - `MONGODB_URI`: MongoDB connection string. Use MongoDB Atlas or a replica set because versioned entity writes and redemptions use transactions.
 - `MONGODB_DB_NAME`: database name; defaults to `messenger`.
-- `BLOB_READ_WRITE_TOKEN`: Blob store token used only for avatar files.
-- `BLOB_STORE_ID`: Blob store identifier, `local` for the local emulator.
-- `VERCEL_BLOB_API_URL`: Blob control API URL. Use `http://localhost:3100/api/blob` locally.
-- `VERCEL_BLOB_STORAGE_URL`: Blob storage URL. Use `http://localhost:3100/blob` locally.
-- `VERCEL_BLOB_RETRIES`: Set to `0` for local development to avoid retry delays.
+
+### Blob storage (avatars)
+
+- `BLOB_BACKEND`: `auto` (default) | `fs` | `vercel`. With `auto`, a configured `BLOB_READ_WRITE_TOKEN` selects the Vercel Blob backend (unchanged behavior for Vercel deployments); otherwise the filesystem backend is used.
+- `BLOB_STORAGE_DIR`: filesystem backend root directory; defaults to `./.blobs`. Requires a persistent disk (self-hosted deployments), and is git-ignored.
+
+The following variables only apply to the Vercel Blob backend (`BLOB_BACKEND=vercel` or a Vercel deployment); local development and self-hosting need none of them: `BLOB_READ_WRITE_TOKEN`, `BLOB_STORE_ID`, `VERCEL_BLOB_API_URL`, `VERCEL_BLOB_STORAGE_URL`, `VERCEL_BLOB_RETRIES`.
 
 The former `ADMIN_PASSWORD` variable is removed: administration is a user role granted to the first registered account.
 
@@ -71,15 +74,22 @@ An additional partial unique index protects the one-active-default-agent invaria
 
 ## Avatar Storage
 
-The Vercel Blob-compatible SDK is not used for backup payloads. It stores private avatar files at stable pathnames:
+Avatar files live behind `lib/blob-store.ts`, a small pluggable storage interface with two backends:
+
+- **`fs` backend** (`lib/blob-fs.ts`): the real, self-hosted implementation that replaces the former `vercel-blob-emu` emulator. Content is stored under `BLOB_STORAGE_DIR` (default `./.blobs`) with a `.meta.json` sidecar holding the sha256 ETag and content type. Missing sidecars are tolerated (ETag recomputed from content, content type guessed from the extension), so migrating from another storage simply means copying the `avatars/` file tree into `BLOB_STORAGE_DIR`. Requires a persistent disk.
+- **`vercel` backend** (`lib/blob-vercel.ts`): a pass-through adapter over `vercel-blob-nonvercel` with the exact call semantics the server has always used, keeping existing Vercel deployments fully compatible with no data migration.
+
+Selection: `BLOB_BACKEND=auto` (default) picks Vercel when `BLOB_READ_WRITE_TOKEN` is set, otherwise `fs`; `BLOB_BACKEND=fs|vercel` forces either backend.
+
+Stable logical pathnames are used by both backends:
 
 - User avatars: `avatars/users/{userId}.{ext}`
 - Agent avatars: `avatars/agents/{agentId}.{ext}`
-- Market Agent avatars: `avatars/market_agents/{marketAgentId}.{ext}`
+- Market Agent avatars: `avatars/market_agents/{agentId}.{ext}`
 
-Avatar replacement snapshots the previous file with `get(..., { access: "private" })`, deletes prefix-matched blobs, and restores the prior file if the replacement upload fails. Per-avatar locks and ETag-conditional Blob deletes prevent a stale request from overwriting or deleting a newer avatar. Agent deletion removes its avatar Blob and clears `avatarUrl`. Avatar uploads accept JPEG, PNG, WebP, and GIF files up to 5 MiB.
+Avatar replacement snapshots the previous file, deletes prefix-matched blobs, and restores the prior file if the replacement upload fails. Per-avatar locks and ETag-conditional deletes prevent a stale request from overwriting or deleting a newer avatar (`lib/avatar-locks.ts`). Agent deletion removes its avatar and clears `avatarUrl`. Avatar uploads accept JPEG, PNG, WebP, and GIF files up to 5 MiB.
 
-Private Blob URLs are never returned to clients as directly readable image URLs. Authenticated avatar routes stream the Blob through `get(..., { access: "private" })`, and mobile clients load those routes with the Messenger session cookie.
+Raw blob URLs are never returned to clients as directly readable image URLs. Authenticated avatar routes stream the content through conditional GETs (ETag / `If-None-Match`), and mobile clients load those routes with the Messenger session cookie.
 
 ## API
 
@@ -170,6 +180,18 @@ All market routes require a valid Messenger session. Listing is available to eve
 
 Create and update payloads contain `name`, `systemPrompt`, `temperature`, `topP`, and optional `maxTokens`. Listing is sorted by most recently updated entry and uses the last returned ID as its cursor.
 
+## Deployment
+
+The service is a standard Next.js App Router application and runs on Vercel as well as on any self-hosted Node 20+ host:
+
+```bash
+pnpm install
+pnpm build
+pnpm start   # serves on $PORT (default 3000); put a reverse proxy in front for TLS
+```
+
+Self-hosted deployments should use the `fs` blob backend (default when no Vercel token is configured) and point `BLOB_STORAGE_DIR` at a persistent disk. The AI streaming proxy has a `maxDuration` export that Vercel clamps per plan; self-hosted runtimes have no function timeout.
+
 ## Local Development
 
 Use a MongoDB replica set locally, for example a single-node `mongod --replSet rs0`, then initialize it once with `rs.initiate()` in `mongosh`.
@@ -179,7 +201,7 @@ pnpm install
 pnpm dev
 ```
 
-Open `http://localhost:3000` for the official website. Use `/register` to create the first account (it becomes the admin), then sign in at `/login` and manage the platform under `/console`. When using [vercel-blob-emu](https://github.com/ECSDevs/vercel-blob-emu), start its emulator on port `3100` and point `VERCEL_BLOB_API_URL` and `VERCEL_BLOB_STORAGE_URL` at that service.
+Open `http://localhost:3000` for the official website. Use `/register` to create the first account (it becomes the admin), then sign in at `/login` and manage the platform under `/console`. Local avatar files are written to `BLOB_STORAGE_DIR` (default `./.blobs`); no emulator or Vercel account is needed.
 
 Run validation with:
 
@@ -188,6 +210,7 @@ pnpm typecheck
 pnpm lint
 ```
 
-## Breaking Change
+## Breaking Changes
 
-The former Redis/Vercel Blob whole-backup system and `/api/backups/*` endpoints were removed. Existing backup JSON payloads are not migrated automatically; a one-time migration is intentionally out of scope.
+- The former Redis/Vercel Blob whole-backup system and `/api/backups/*` endpoints were removed. Existing backup JSON payloads are not migrated automatically; a one-time migration is intentionally out of scope.
+- The `vercel-blob-emu` emulator submodule was removed. Local development uses the filesystem blob backend; existing deployments that move off Vercel can copy their stored `avatars/` file tree into `BLOB_STORAGE_DIR` (ETags are recomputed from content when sidecars are absent). Vercel deployments are unaffected.

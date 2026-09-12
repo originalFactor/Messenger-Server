@@ -14,7 +14,13 @@
  * limitations under the License.
  */
 
-import { BlobPreconditionFailedError, del, get, list, put } from "vercel-blob-nonvercel";
+import {
+  BlobPreconditionFailedError,
+  blobPathFromUrl,
+  getBlobStore,
+} from "@/lib/blob-store";
+
+const blobStore = getBlobStore();
 
 type LockVerifier = () => Promise<void>;
 
@@ -59,27 +65,22 @@ async function verifyLock(verify?: LockVerifier): Promise<void> {
 }
 
 async function listByPrefix(prefix: string, verify?: LockVerifier) {
-  const blobs = [] as Awaited<ReturnType<typeof list>>["blobs"];
-  let cursor: string | undefined;
-  do {
-    await verifyLock(verify);
-    const page = await list({ prefix, cursor });
-    blobs.push(...page.blobs);
-    cursor = page.hasMore ? page.cursor : undefined;
-  } while (cursor);
-  return blobs;
+  await verifyLock(verify);
+  // 两个后端都在内部翻页拉满后一次性返回；头像前缀下文件数很小。
+  const page = await blobStore.list({ prefix });
+  return page.blobs;
 }
 
 async function snapshotByPrefix(prefix: string, verify?: LockVerifier): Promise<AvatarBlobBackup[]> {
   const blobs = await listByPrefix(prefix, verify);
   // 串行下载并立即 buffer：每个头像最大 5 MiB，并发 Promise.all 会让多个
-  // 头像同时驻留 serverless 实例内存（几个并发请求就能 OOM）。
+  // 头像同时驻留实例内存（几个并发请求就能 OOM）。
   // 串行处理时同一时刻只有一份 buffer 在内存里，并且 verifyLock 在每份
   // 之间刷新锁，避免锁过期。
   const backups: AvatarBlobBackup[] = [];
   for (const blob of blobs) {
     await verifyLock(verify);
-    const stored = await get(blob.pathname, { access: "private", useCache: false });
+    const stored = await blobStore.get(blob.pathname);
     if (!stored || stored.statusCode !== 200 || !stored.stream) {
       throw new Error(`Unable to preserve existing avatar blob: ${blob.pathname}`);
     }
@@ -88,7 +89,7 @@ async function snapshotByPrefix(prefix: string, verify?: LockVerifier): Promise<
       pathname: blob.pathname,
       etag: blob.etag,
       content: Buffer.from(await new Response(stored.stream).arrayBuffer()),
-      contentType: stored.blob.contentType,
+      contentType: stored.blob.contentType ?? "application/octet-stream",
     });
   }
   return backups;
@@ -98,7 +99,7 @@ async function deleteBackups(backups: AvatarBlobBackup[], verify?: LockVerifier)
   const deleted: AvatarBlobBackup[] = [];
   for (const backup of backups) {
     await verifyLock(verify);
-    await del(backup.url, { ifMatch: backup.etag });
+    await blobStore.del(backup.url, { ifMatch: backup.etag });
     deleted.push(backup);
   }
   return deleted;
@@ -108,12 +109,7 @@ async function restoreBackups(backups: AvatarBlobBackup[], verify?: LockVerifier
   try {
     for (const backup of backups) {
       await verifyLock(verify);
-      await put(backup.pathname, backup.content, {
-        access: "private",
-        addRandomSuffix: false,
-        contentType: backup.contentType,
-        cacheControlMaxAge: 60,
-      });
+      await blobStore.put(backup.pathname, backup.content, { contentType: backup.contentType });
     }
     return true;
   } catch {
@@ -132,12 +128,7 @@ async function replaceAvatar(
   try {
     deleted = await deleteBackups(backups, verify);
     await verifyLock(verify);
-    const blob = await put(pathname, buffer, {
-      access: "private",
-      addRandomSuffix: false,
-      contentType,
-      cacheControlMaxAge: 60,
-    });
+    const blob = await blobStore.put(pathname, buffer, { contentType });
     return { url: blob.url, etag: blob.etag };
   } catch (error) {
     const restored = await restoreBackups(deleted, verify);
@@ -153,7 +144,7 @@ async function revertReplacement(
 ): Promise<boolean> {
   try {
     await verifyLock(verify);
-    await del(replacement.url, { ifMatch: replacement.etag });
+    await blobStore.del(replacement.url, { ifMatch: replacement.etag });
     return restoreBackups(backups, verify);
   } catch (error) {
     if (error instanceof BlobPreconditionFailedError) {
@@ -247,28 +238,12 @@ export async function deleteMarketAgentAvatar(agentId: string): Promise<void> {
   await deleteByPrefix(`avatars/market_agents/${agentId}.`);
 }
 
-// VERCEL_BLOB_STORAGE_URL 在 serverless 部署期注入，单次请求内不会变；
-// lazy 缓存避免每次 avatar GET 都 new URL() 解析一遍。null 表示尚未计算。
-let cachedStoragePath: string | null = null;
-
-function blobStoragePath(): string {
-  if (cachedStoragePath === null) {
-    const storageBase = process.env.VERCEL_BLOB_STORAGE_URL;
-    cachedStoragePath = storageBase
-      ? new URL(storageBase).pathname.replace(/^\/+|\/+$/g, "")
-      : "";
-  }
-  return cachedStoragePath;
-}
-
+/**
+ * DB 里的 avatarUrl 既可能是 fs 后端的裸 pathname，也可能是历史 Vercel
+ * Blob 后端写入的完整 URL；统一规范化为逻辑路径并校验前缀。
+ */
 function avatarLogicalPathFromUrl(url: string): string {
-  const parsedUrl = new URL(url);
-  const pathname = parsedUrl.pathname.replace(/^\/+/, "");
-  const storagePath = blobStoragePath();
-  const logicalPath = storagePath &&
-      (pathname === storagePath || pathname.startsWith(`${storagePath}/`))
-    ? pathname.slice(storagePath.length).replace(/^\/+/, "")
-    : pathname;
+  const logicalPath = blobPathFromUrl(url);
   if (!logicalPath.startsWith("avatars/")) {
     throw new Error(`Invalid avatar pathname: ${logicalPath}`);
   }
@@ -284,20 +259,15 @@ export interface AvatarFetchResult {
 }
 
 /**
- * Avatar GET 的共享逻辑：用 SDK 的 ifNoneMatch 直接做条件 GET，
- * 命中时 Vercel Blob 只回 304 + 元数据、不回内容流；
- * 未命中才把完整字节流回传到 serverless 实例。
+ * Avatar GET 的共享逻辑：条件 GET（ifNoneMatch 命中时后端只回 304 +
+ * 元数据、不回内容流）；未命中才把完整内容流回传。
  */
 export async function fetchAvatarWithConditional(
   avatarUrl: string,
   ifNoneMatch: string | null,
 ): Promise<AvatarFetchResult> {
   const logicalPath = avatarLogicalPathFromUrl(avatarUrl);
-  const avatar = await get(logicalPath, {
-    access: "private",
-    useCache: false,
-    ...(ifNoneMatch ? { ifNoneMatch } : {}),
-  });
+  const avatar = await blobStore.get(logicalPath, ifNoneMatch ? { ifNoneMatch } : undefined);
   if (!avatar) {
     throw new Error("Avatar blob is unavailable.");
   }

@@ -1,6 +1,6 @@
 # Messenger Server API
 
-Messenger `server/` 是一个独立的 Next.js (App Router) SaaS 服务，提供官网、注册登录、网页控制台、账号云同步、卡密套餐计费与内置 AI API（上游模型中转），部署目标是 Vercel。所有业务数据存于 MongoDB（需为副本集），头像文件存于 Vercel Blob 兼容存储。
+Messenger `server/` 是一个独立的 Next.js (App Router) SaaS 服务，提供官网、注册登录、网页控制台、账号云同步、卡密套餐计费与内置 AI API（上游模型中转），可部署在 Vercel 或任意自托管 Node 环境。所有业务数据存于 MongoDB（需为副本集），头像文件存于可插拔 Blob 存储层（Vercel Blob 后端或自托管文件系统后端）。
 
 - **运行时**: Node.js ≥ 20，Next.js 15.4
 - **路由运行时**: 所有触碰 MongoDB 或 Blob 的路由均声明 `export const runtime = "nodejs"`
@@ -728,7 +728,7 @@ interface SessionClaims {
 4. 上传成功后写入新 `avatarUrl` 与 `avatarVersion`（= `Date.now()`）。
 5. 删除操作先清空 DB 字段再删 Blob。
 
-所有头像 GET 走认证代理：服务端用 `get(..., { access: "private" })` 拉取私有 Blob 并流式返回，支持 `If-None-Match` 条件请求。
+所有头像 GET 走认证代理：服务端经 `BlobStore` 接口（`lib/blob-store.ts`，Vercel Blob / 文件系统双后端）以条件 GET（`If-None-Match` → 304）流式返回内容。
 
 ### GET /api/avatars/user
 
@@ -1135,6 +1135,8 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 - 额外的部分唯一索引保护「每用户一个活跃默认 Agent」不变式
 
 ### 头像 Blob 路径
+
+两种 Blob 后端（Vercel / 文件系统，见 README「Avatar Storage」）共用稳定的逻辑路径：
 
 - 用户头像：`avatars/users/{userId}.{ext}`
 - Agent 头像：`avatars/agents/{agentId}.{ext}`

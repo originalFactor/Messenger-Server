@@ -27,6 +27,11 @@ export const env = {
   appBaseUrl: () => process.env.APP_BASE_URL ?? "http://localhost:3000",
   mongoUri: () => requireEnv("MONGODB_URI"),
   mongoDbName: () => process.env.MONGODB_DB_NAME ?? "messenger",
+  // Blob 存储：auto（默认）= 配置了 BLOB_READ_WRITE_TOKEN 时走 Vercel Blob，
+  // 否则走文件系统后端；也可显式指定 "vercel" | "fs"。
+  blobBackend: () => (process.env.BLOB_BACKEND ?? "auto").trim().toLowerCase(),
+  blobStorageDir: () => process.env.BLOB_STORAGE_DIR ?? "./.blobs",
+  blobReadWriteToken: () => process.env.BLOB_READ_WRITE_TOKEN ?? "",
 };
 
 export function appUrl(path: string): string {
