@@ -14,18 +14,27 @@
  * limitations under the License.
  */
 
-import type { Metadata } from "next";
-import "./globals.css";
+import { redirect } from "next/navigation";
+import { CardsManager } from "@/components/admin/cards-manager";
+import { requireAdminUser } from "@/lib/auth";
+import { listPlans } from "@/lib/storage";
 
-export const metadata: Metadata = {
-  title: "Messenger Cloud",
-  description: "Messenger 云同步与 AI 服务平台",
-};
+export const dynamic = "force-dynamic";
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function AdminCardsPage() {
+  const admin = await requireAdminUser();
+  if (!admin) {
+    redirect("/console");
+  }
+
+  const plans = await listPlans();
+
   return (
-    <html lang="zh-CN">
-      <body>{children}</body>
-    </html>
+    <>
+      <div className="topbar">
+        <h1 style={{ margin: 0, fontSize: "1.5rem" }}>开卡</h1>
+      </div>
+      <CardsManager plans={plans} />
+    </>
   );
 }

@@ -14,18 +14,19 @@
  * limitations under the License.
  */
 
-import type { Metadata } from "next";
-import "./globals.css";
+import { redirect } from "next/navigation";
+import { AuthForm } from "@/components/auth-form";
+import { requireUserSession } from "@/lib/auth";
 
-export const metadata: Metadata = {
-  title: "Messenger Cloud",
-  description: "Messenger 云同步与 AI 服务平台",
-};
+export const dynamic = "force-dynamic";
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function LoginPage() {
+  if (await requireUserSession()) {
+    redirect("/console");
+  }
   return (
-    <html lang="zh-CN">
-      <body>{children}</body>
-    </html>
+    <main className="auth-shell">
+      <AuthForm mode="login" />
+    </main>
   );
 }
