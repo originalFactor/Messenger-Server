@@ -26,7 +26,8 @@ export function ApiKeyCard({ apiKey }: { apiKey: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const masked = `${apiKey.slice(0, 8)}${"•".repeat(24)}${apiKey.slice(-4)}`;
+  const hasKey = Boolean(apiKey);
+  const masked = hasKey ? `${apiKey.slice(0, 8)}${"•".repeat(24)}${apiKey.slice(-4)}` : "";
 
   async function copyKey() {
     try {
@@ -39,7 +40,10 @@ export function ApiKeyCard({ apiKey }: { apiKey: string }) {
   }
 
   async function regenerate() {
-    if (!window.confirm("重置后旧 Key 将立即失效，Messenger 应用内置服务商也需要重新同步。确定重置？")) {
+    if (
+      hasKey &&
+      !window.confirm("重置后旧 Key 将立即失效，Messenger 应用内置服务商也需要重新同步。确定重置？")
+    ) {
       return;
     }
     setBusy(true);
@@ -58,6 +62,21 @@ export function ApiKeyCard({ apiKey }: { apiKey: string }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (!hasKey) {
+    return (
+      <div className="panel">
+        <div className="kicker">AI API 密钥</div>
+        <p className="muted" style={{ margin: "8px 0 16px" }}>
+          当前账号还没有 AI API 密钥，生成后即可在 Messenger 中使用云 AI 服务。
+        </p>
+        {error ? <p className="error">{error}</p> : null}
+        <button className="button" type="button" onClick={regenerate} disabled={busy}>
+          {busy ? "生成中…" : "生成密钥"}
+        </button>
+      </div>
+    );
   }
 
   return (

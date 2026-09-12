@@ -15,6 +15,7 @@
  */
 
 import { Db, MongoClient } from "mongodb";
+import { generateAiApiKey } from "@/lib/apikeys";
 import { env } from "@/lib/env";
 
 declare global {
@@ -67,7 +68,7 @@ async function ensureIndexesFor(database: Db): Promise<void> {
       database.collection("usage_logs").createIndex({ createdAt: -1, _id: 1 }),
     ]).then(() => undefined);
     globalThis.messengerMongoIndexesPromise = indexes
-      .then(() => ensureAdminBootstrap(database))
+      .then(() => ensureUserDocumentBackfill(database))
       .catch((error: unknown) => {
         globalThis.messengerMongoIndexesPromise = undefined;
         throw error;
@@ -79,6 +80,7 @@ async function ensureIndexesFor(database: Db): Promise<void> {
 interface BootstrapUserDoc {
   _id: string;
   role?: string;
+  aiApiKey?: string;
   createdAt: number;
 }
 
@@ -89,16 +91,29 @@ interface SystemBootstrapDoc {
 }
 
 /**
- * 管理员不变量的惰性迁移：首个注册用户自动晋升 admin。
- * - 全新部署没有任何用户时直接返回，交给注册事务处理；
- * - 既有部署（SaaS 改造前注册的用户都没有 role 字段）把最早注册的
- *   用户提升为 admin，并写入 system_bootstrap 标记防止重复迁移；
- * - 标记存在但找不到 admin（管理员账号被删）同样跳过，由下一次
- *   注册事务重新产生管理员。
+ * 存量用户文档的惰性迁移（SaaS 改造前注册的用户没有 role/quota/aiApiKey
+ * 字段），随后执行管理员晋升：
+ * - role 缺失 → "user"；额度字段缺失 → 0 / null；
+ * - aiApiKey 缺失或为空 → 逐个生成（必须唯一随机，不能 updateMany 批量同值）；
+ * - 管理员不变量：没有 admin 时把最早注册的用户提升为 admin，并写入
+ *   system_bootstrap 标记防止重复迁移（全新部署交给注册事务处理）。
  */
-async function ensureAdminBootstrap(database: Db): Promise<void> {
+async function ensureUserDocumentBackfill(database: Db): Promise<void> {
   try {
     const users = database.collection<BootstrapUserDoc>("users");
+    await users.updateMany({ role: { $exists: false } }, { $set: { role: "user" } });
+    await users.updateMany(
+      { quotaBalance: { $exists: false } },
+      { $set: { quotaBalance: 0, quotaExpiresAt: null } },
+    );
+    const legacyKeys = await users.find(
+      { $or: [{ aiApiKey: { $exists: false } }, { aiApiKey: "" }] },
+      { projection: { _id: 1 } },
+    ).toArray();
+    for (const user of legacyKeys) {
+      await users.updateOne({ _id: user._id }, { $set: { aiApiKey: generateAiApiKey() } });
+    }
+
     const admin = await users.findOne({ role: "admin" }, { projection: { _id: 1 } });
     if (admin) {
       return;
@@ -119,7 +134,7 @@ async function ensureAdminBootstrap(database: Db): Promise<void> {
       createdAt: Date.now(),
     });
   } catch (error) {
-    console.error("Unable to run admin bootstrap migration.", error);
+    console.error("Unable to run the user document backfill migration.", error);
   }
 }
 

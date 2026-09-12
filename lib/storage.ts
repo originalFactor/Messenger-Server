@@ -58,7 +58,7 @@ function toStoredUser(doc: UserDoc): StoredUser {
     passwordHash: doc.passwordHash,
     // SaaS 改造前注册的用户没有 role 字段，一律视为普通用户。
     role: doc.role ?? "user",
-    aiApiKey: doc.aiApiKey,
+    aiApiKey: doc.aiApiKey ?? "",
     quotaBalance: doc.quotaBalance ?? 0,
     quotaExpiresAt: doc.quotaExpiresAt ?? null,
     avatarUrl: doc.avatarUrl ?? null,
