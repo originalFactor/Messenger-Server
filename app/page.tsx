@@ -37,88 +37,108 @@ export default async function HomePage() {
   }
 
   return (
-    <main>
-      <div className="shell">
-        <header className="topbar">
-          <Link className="brand" href="/">Messenger Cloud</Link>
+    <>
+      <header className="site-header">
+        <div className="shell site-header-inner">
+          <Link className="brand" href="/">
+            <span className="brand-dot" />
+            Messenger Cloud
+          </Link>
           <nav className="topnav">
+            <a className="nav-link" href="#features">功能</a>
+            <a className="nav-link" href="#pricing">套餐</a>
+            <a className="nav-link" href="https://github.com/ECSDevs/Messenger">GitHub</a>
             {session ? (
               <Link className="button button-small" href="/console">进入控制台</Link>
             ) : (
               <>
-                <Link href="/login">登录</Link>
+                <Link className="nav-link" href="/login">登录</Link>
                 <Link className="button button-small" href="/register">注册</Link>
               </>
             )}
           </nav>
-        </header>
+        </div>
+      </header>
 
+      <main className="shell">
         <section className="hero">
-          <div className="panel">
-            <div className="kicker">Messenger Cloud</div>
-            <h1 className="title">为 Messenger 而生的云端服务。</h1>
-            <p className="muted">
-              一个账号，多端同步。Messenger Cloud 为 Messenger 应用提供账号体系、
-              增量云同步与内置 AI API：使用卡密兑换套餐额度，通过 OpenAI 兼容接口
-              从上游模型服务获得对话能力，无需自备 API Key。
+          <div className="hero-inner">
+            <span className="kicker">MESSENGER CLOUD</span>
+            <h1>
+              云端同步。
+              <br />
+              <span className="hero-gradient">内置 AI 能力。</span>
+            </h1>
+            <p>
+              一个账号，多端一致。Messenger Cloud 为 Messenger 提供账号体系、
+              增量云同步与 OpenAI 兼容的 AI API —— 使用卡密兑换套餐，
+              无需自备 API Key。
             </p>
-            <p className="row" style={{ marginTop: 20 }}>
+            <div className="hero-cta">
               <Link className="button" href={session ? "/console" : "/register"}>
                 {session ? "打开控制台" : "立即注册"}
               </Link>
               <Link className="button-secondary" href="https://github.com/ECSDevs/Messenger">
                 下载 Messenger
               </Link>
-            </p>
+            </div>
           </div>
-          <div className="panel grid">
-            <div>
-              <div className="kicker">云同步</div>
-              <p className="muted">
-                会话、Agent 与服务商配置按版本增量同步，手机、平板、桌面与手表数据一致，
-                换机不丢历史。
+        </section>
+
+        <section id="features">
+          <div className="feature-grid">
+            <div className="feature-card">
+              <span className="mono-kicker">SYNC</span>
+              <h3>版本化增量同步</h3>
+              <p>
+                会话、Agent 与服务商配置按版本水位增量同步，手机、平板、桌面与
+                手表数据一致，换机不丢历史。
               </p>
             </div>
-            <div>
-              <div className="kicker">内置 AI API</div>
-              <p className="muted">
-                登录即自动配置云端 AI 服务商，对话直接可用；标准 OpenAI 兼容协议
+            <div className="feature-card">
+              <span className="mono-kicker">AI API</span>
+              <h3>内置云 AI 服务商</h3>
+              <p>
+                登录即自动配置，对话直接可用。标准 OpenAI 兼容协议
                 （/v1/models、/v1/chat/completions），额度按模型倍率计费。
               </p>
             </div>
-            <div>
-              <div className="kicker">卡密套餐</div>
-              <p className="muted">
-                使用卡密兑换套餐额度，有效期自动顺延；在控制台随时查看余额、
+            <div className="feature-card">
+              <span className="mono-kicker">BILLING</span>
+              <h3>卡密套餐体系</h3>
+              <p>
+                卡密兑换套餐额度，有效期自动顺延；控制台随时查看余额、
                 用量明细与兑换记录。
               </p>
             </div>
           </div>
         </section>
 
-        <h2 className="section-title">套餐</h2>
-        {plans.length === 0 ? (
-          <div className="panel muted">暂无可售套餐，敬请期待。</div>
-        ) : (
-          <div className="plan-grid">
-            {plans.map((plan) => (
-              <div className="panel" key={plan._id}>
-                <div className="kicker">{plan.name}</div>
-                <div className="plan-price">{plan.price || formatQuota(plan.quotaTokens)}</div>
-                <p className="plan-quota">
-                  {formatQuota(plan.quotaTokens)} · 有效期 {plan.validityDays} 天
-                </p>
-                {plan.description ? <p className="muted">{plan.description}</p> : null}
-              </div>
-            ))}
-          </div>
-        )}
+        <section id="pricing">
+          <h2 className="section-title">套餐</h2>
+          {plans.length === 0 ? (
+            <div className="panel muted">暂无可售套餐，敬请期待。</div>
+          ) : (
+            <div className="plan-grid">
+              {plans.map((plan) => (
+                <div className="plan-card" key={plan._id}>
+                  <span className="kicker">{plan.name}</span>
+                  <div className="plan-price">{plan.price || formatQuota(plan.quotaTokens)}</div>
+                  <p className="plan-quota">
+                    {formatQuota(plan.quotaTokens)} · 有效期 {plan.validityDays} 天
+                  </p>
+                  {plan.description ? <p className="plan-desc">{plan.description}</p> : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
-        <footer className="footer">
+        <footer className="site-footer">
           <span>© {new Date().getFullYear()} ECSDevs · Messenger Cloud</span>
           <span className="mono">{process.env.APP_BASE_URL ?? ""}</span>
         </footer>
-      </div>
-    </main>
+      </main>
+    </>
   );
 }

@@ -60,8 +60,17 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
 
   return (
     <div className="panel auth-panel">
-      <div className="kicker">Messenger Cloud</div>
-      <h1 className="title" style={{ fontSize: "1.8rem" }}>{isRegister ? "注册账号" : "登录"}</h1>
+      <div style={{ display: "grid", justifyItems: "center", gap: 12, textAlign: "center" }}>
+        <span className="brand-dot" />
+        <div>
+          <h1 style={{ fontSize: "1.4rem", marginBottom: 4 }}>
+            {isRegister ? "创建账号" : "登录 Messenger Cloud"}
+          </h1>
+          <p className="muted" style={{ fontSize: "0.9rem", margin: 0 }}>
+            {isRegister ? "注册后即可使用云同步与内置 AI 服务" : "使用邮箱与密码继续"}
+          </p>
+        </div>
+      </div>
       <form className="form" onSubmit={handleSubmit}>
         <div className="field">
           <label htmlFor="email">邮箱</label>
@@ -71,6 +80,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
             type="email"
             required
             autoComplete="email"
+            placeholder="you@example.com"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
           />
@@ -84,6 +94,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
             required
             minLength={8}
             autoComplete={isRegister ? "new-password" : "current-password"}
+            placeholder={isRegister ? "至少 8 位" : "密码"}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />
@@ -98,6 +109,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
               required
               minLength={8}
               autoComplete="new-password"
+              placeholder="再次输入密码"
               value={confirm}
               onChange={(event) => setConfirm(event.target.value)}
             />
@@ -108,7 +120,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
           {busy ? "请稍候…" : isRegister ? "注册" : "登录"}
         </button>
       </form>
-      <p className="muted" style={{ marginTop: 16 }}>
+      <p className="auth-switch">
         {isRegister ? (
           <>已有账号？<Link href="/login">直接登录</Link></>
         ) : (

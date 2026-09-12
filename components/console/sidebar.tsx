@@ -30,6 +30,7 @@ export function ConsoleSidebar({ email, role }: SidebarProps) {
 
   const isActive = (href: string) =>
     href === "/console" ? pathname === "/console" : pathname.startsWith(href);
+  const isAdminOverviewActive = pathname === "/console/admin";
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
@@ -39,7 +40,10 @@ export function ConsoleSidebar({ email, role }: SidebarProps) {
 
   return (
     <aside className="sidebar">
-      <Link className="brand" href="/">Messenger Cloud</Link>
+      <Link className="brand" href="/">
+        <span className="brand-dot" />
+        Messenger Cloud
+      </Link>
       <div className="sidebar-section">用户功能区</div>
       <Link className={isActive("/console") ? "active" : ""} href="/console">概览</Link>
       <Link className={isActive("/console/finance") ? "active" : ""} href="/console/finance">财务</Link>
@@ -47,7 +51,7 @@ export function ConsoleSidebar({ email, role }: SidebarProps) {
       {role === "admin" ? (
         <>
           <div className="sidebar-section">管理功能区</div>
-          <Link className={isActive("/console/admin") && !pathname.startsWith("/console/admin/") ? "active" : ""} href="/console/admin">全站概览</Link>
+          <Link className={isAdminOverviewActive ? "active" : ""} href="/console/admin">全站概览</Link>
           <Link className={isActive("/console/admin/plans") ? "active" : ""} href="/console/admin/plans">套餐管理</Link>
           <Link className={isActive("/console/admin/cards") ? "active" : ""} href="/console/admin/cards">开卡</Link>
           <Link className={isActive("/console/admin/upstreams") ? "active" : ""} href="/console/admin/upstreams">上游管理</Link>
@@ -55,10 +59,12 @@ export function ConsoleSidebar({ email, role }: SidebarProps) {
       ) : null}
 
       <div className="sidebar-user">
-        <div>{email}</div>
-        {role === "admin" ? <span className="badge badge-accent" style={{ marginTop: 8 }}>管理员</span> : null}
-        <div className="actions" style={{ marginTop: 10 }}>
-          <button className="button button-secondary button-small" type="button" onClick={handleLogout}>
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <span style={{ overflowWrap: "anywhere" }}>{email}</span>
+          {role === "admin" ? <span className="badge badge-accent">管理员</span> : null}
+        </div>
+        <div className="actions">
+          <button className="button-secondary button-small" type="button" onClick={handleLogout}>
             退出登录
           </button>
         </div>
