@@ -133,6 +133,8 @@ interface SessionClaims {
 | DELETE | `/api/admin/cards/{id}` | 管理员 | 删除未用/停用卡密 |
 | GET | `/api/admin/models/metadata` | 管理员 | models.dev 模型元数据（上下文/输入输出倍率） |
 | GET | `/api/admin/upstreams` | 管理员 | 上游列表 |
+| GET | `/api/admin/users` | 管理员 | 用户列表（不含敏感字段） |
+| PATCH | `/api/admin/users/{id}` | 管理员 | 修改用户（角色 / 额度增减 / 有效期顺延） |
 | POST | `/api/admin/upstreams` | 管理员 | 新增上游 |
 | PUT | `/api/admin/upstreams/{id}` | 管理员 | 更新上游 |
 | DELETE | `/api/admin/upstreams/{id}` | 管理员 | 删除上游 |
@@ -446,6 +448,17 @@ interface SessionClaims {
 - 倍率以 `deepseek/deepseek-v4.1-flash` 的成本为基准归一化（基准恰为 1.0）。
 - 响应 `200`：`{ "metadata": { "gpt-4o": { "contextWindow": 128000, "inputRate": 16.6667, "outputRate": 16.6667 } } }`
 - 供「更新元数据」入口与上游元数据展示使用。
+
+### GET /api/admin/users、PATCH /api/admin/users/{id}
+
+管理端用户管理。
+
+- `GET /api/admin/users`：响应 `200` 为 `{ "users": [ /* AdminUserView[]，createdAt 降序，默认 200 条 */ ] }`；`AdminUserView` 为 `{ _id, email, role, quotaBalance, quotaExpiresAt, createdAt, lastLoginAt }`，不含 `passwordHash` / `aiApiKey` 等敏感字段。支持 `?limit=N`（1–1000）。
+- `PATCH /api/admin/users/{id}`：请求体为以下字段的任意非空组合 —— `{ "quotaDelta": 100000, "quotaExtendDays": 30, "role": "admin" }`：
+  - `quotaDelta`：整数，正数充值 / 负数扣减，结果下限 0；
+  - `quotaExtendDays`：有效期顺延天数，与卡密兑换同语义（`max(now, 现有有效期) + 天数`）；
+  - `role`：`"user" | "admin"`；禁止修改自己的角色（`409 不能修改自己的角色。`），避免把唯一管理员降级锁死。
+- 响应 `200`：`{ "user": AdminUserView }`；错误：`400` 载荷无效、`404` 用户不存在。
 
 ### GET|POST /api/admin/upstreams、PUT|DELETE /api/admin/upstreams/{id}、POST /api/admin/upstreams/{id}/probe
 

@@ -43,6 +43,7 @@ import type {
   UserDoc,
   UserRole,
 } from "@/lib/types";
+import type { AdminUserView } from "@/lib/types";
 
 export class NotFoundError extends Error {}
 export class ConflictError extends Error {}
@@ -1225,6 +1226,81 @@ export async function updateUserAiApiKey(userId: string, apiKey: string): Promis
   if (result.matchedCount !== 1) {
     throw new NotFoundError("User not found.");
   }
+}
+
+export async function listUsers(limit = 200): Promise<AdminUserView[]> {
+  const db = await getDb();
+  const users = await db.collection<UserDoc>("users")
+    .find({}, { projection: { email: 1, role: 1, quotaBalance: 1, quotaExpiresAt: 1, createdAt: 1, lastLoginAt: 1 } })
+    .sort({ createdAt: -1, _id: -1 })
+    .limit(Math.min(Math.max(limit, 1), 1_000))
+    .toArray();
+  return users.map((user) => ({
+    _id: user._id,
+    email: user.email,
+    role: user.role ?? "user",
+    quotaBalance: user.quotaBalance ?? 0,
+    quotaExpiresAt: user.quotaExpiresAt ?? null,
+    createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt,
+  }));
+}
+
+export interface AdminUserPatch {
+  /** 额度增减（正数充值 / 负数扣减），结果下限 0。 */
+  quotaDelta?: number;
+  /** 有效期顺延天数，与卡密兑换同语义：max(now, 现有有效期) + 天数。 */
+  quotaExtendDays?: number;
+  role?: UserRole;
+}
+
+/**
+ * 管理员修改用户（角色 / 额度 / 有效期）。禁止修改自己的角色，
+ * 避免误操作把唯一管理员降级导致锁死。
+ */
+export async function adminUpdateUser(
+  operatorId: string,
+  userId: string,
+  patch: AdminUserPatch,
+): Promise<AdminUserView> {
+  const db = await getDb();
+  const user = await db.collection<UserDoc>("users").findOne({ _id: userId });
+  if (!user) {
+    throw new NotFoundError("User not found.");
+  }
+  if (patch.role !== undefined && patch.role !== user.role && userId === operatorId) {
+    throw new ConflictError("不能修改自己的角色。");
+  }
+
+  const now = Date.now();
+  const update: Partial<UserDoc> = { updatedAt: now };
+  if (patch.role !== undefined) {
+    update.role = patch.role;
+  }
+  if (patch.quotaDelta !== undefined) {
+    update.quotaBalance = Math.max(0, (user.quotaBalance ?? 0) + patch.quotaDelta);
+  }
+  if (patch.quotaExtendDays !== undefined && patch.quotaExtendDays > 0) {
+    update.quotaExpiresAt = Math.max(now, user.quotaExpiresAt ?? 0) + patch.quotaExtendDays * 24 * 60 * 60 * 1000;
+  }
+
+  const updated = await db.collection<UserDoc>("users").findOneAndUpdate(
+    { _id: userId },
+    { $set: update },
+    { returnDocument: "after", includeResultMetadata: false },
+  );
+  if (!updated) {
+    throw new NotFoundError("User not found.");
+  }
+  return {
+    _id: updated._id,
+    email: updated.email,
+    role: updated.role ?? "user",
+    quotaBalance: updated.quotaBalance ?? 0,
+    quotaExpiresAt: updated.quotaExpiresAt ?? null,
+    createdAt: updated.createdAt,
+    lastLoginAt: updated.lastLoginAt,
+  };
 }
 
 

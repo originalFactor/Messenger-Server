@@ -176,6 +176,14 @@ export const upstreamTestSchema = z.object({
   model: z.string().trim().min(1).max(200),
 }).strict();
 
+export const adminUserPatchSchema = z.object({
+  /** 额度增减（正数充值 / 负数扣减），结果下限 0。 */
+  quotaDelta: z.number().int().min(-1_000_000_000_000).max(1_000_000_000_000).optional(),
+  /** 有效期顺延天数（与卡密兑换同语义：max(now, 现有) + 天数）。 */
+  quotaExtendDays: z.number().int().min(0).max(3_650).optional(),
+  role: z.enum(["user", "admin"]).optional(),
+}).strict().refine((patch) => Object.keys(patch).length > 0, "Patch must not be empty.");
+
 export const MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024;
 
 const avatarContentTypes = {

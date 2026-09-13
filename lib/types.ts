@@ -22,6 +22,17 @@ export type MessageStatus = "SENDING" | "SENT" | "ERROR";
 export type UserRole = "user" | "admin";
 export type CardKeyStatus = "unused" | "redeemed" | "disabled";
 
+/** 管理端用户视图：不含 passwordHash / aiApiKey 等敏感字段。 */
+export interface AdminUserView {
+  _id: string;
+  email: string;
+  role: UserRole;
+  quotaBalance: number;
+  quotaExpiresAt: number | null;
+  createdAt: number;
+  lastLoginAt?: number;
+}
+
 export interface StoredUser {
   id: string;
   email: string;

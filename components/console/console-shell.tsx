@@ -26,6 +26,7 @@ import {
   LayoutDashboard,
   LogOut,
   Server,
+  Users,
   Wallet,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -138,6 +139,14 @@ export function ConsoleShell({ email, role, children }: ConsoleShellProps) {
                     <Link href="/console/admin/upstreams">
                       <Server />
                       <span>上游管理</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={isActive("/console/admin/users")}>
+                    <Link href="/console/admin/users">
+                      <Users />
+                      <span>用户管理</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
