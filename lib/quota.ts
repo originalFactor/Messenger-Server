@@ -24,8 +24,8 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-function safeRate(rate: number | null | undefined): number {
-  return Number.isFinite(rate) && rate !== undefined && rate !== null && rate > 0 ? rate : 1;
+function safeRateOrZero(rate: number | null | undefined): number {
+  return Number.isFinite(rate) && rate !== undefined && rate !== null && rate > 0 ? rate : 0;
 }
 
 export function computeCost(
@@ -34,13 +34,15 @@ export function computeCost(
   inputRate: number | null | undefined,
   outputRate: number | null | undefined,
 ): number {
-  if ((!Number.isFinite(promptTokens) || promptTokens <= 0) && (!Number.isFinite(completionTokens) || completionTokens <= 0)) {
+  const ir = safeRateOrZero(inputRate);
+  const or = safeRateOrZero(outputRate);
+  // 双倍率置零 = 不限制 / 不计费。
+  if (ir <= 0 && or <= 0) {
     return 0;
   }
   const prompt = Number.isFinite(promptTokens) && promptTokens > 0 ? promptTokens : 0;
   const completion = Number.isFinite(completionTokens) && completionTokens > 0 ? completionTokens : 0;
-  const cost = Math.ceil(prompt * safeRate(inputRate) + completion * safeRate(outputRate));
-  return Math.max(1, cost);
+  return Math.max(1, Math.ceil(prompt * ir + completion * or));
 }
 
 export interface QuotaState {

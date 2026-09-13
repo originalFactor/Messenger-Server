@@ -130,12 +130,7 @@ interface SessionClaims {
 | POST | `/api/admin/cards` | 管理员 | 批量开卡 |
 | PATCH | `/api/admin/cards/{id}` | 管理员 | 停用未用卡密 |
 | DELETE | `/api/admin/cards/{id}` | 管理员 | 删除未用/停用卡密 |
-| GET | `/api/admin/models` | 管理员 | 模型倍率目录 |
-| POST | `/api/admin/models` | 管理员 | 批量导入模型（默认 1.0 倍率） |
-| PUT | `/api/admin/models/{id}` | 管理员 | 更新模型倍率/启停 |
-| DELETE | `/api/admin/models/{id}` | 管理员 | 删除模型 |
-| PUT | `/api/admin/models/context` | 管理员 | 批量写入模型上下文窗口（不存在则建档） |
-| GET | `/api/admin/models/metadata` | 管理员 | models.dev 模型元数据（上下文大小） |
+| GET | `/api/admin/models/metadata` | 管理员 | models.dev 模型元数据（上下文/输入输出倍率） |
 | GET | `/api/admin/upstreams` | 管理员 | 上游列表 |
 | POST | `/api/admin/upstreams` | 管理员 | 新增上游 |
 | PUT | `/api/admin/upstreams/{id}` | 管理员 | 更新上游 |
@@ -421,14 +416,13 @@ interface SessionClaims {
 - `PATCH`：仅未用卡可停用，请求体 `{ "status": "disabled" }`。
 - `DELETE`：仅未用/停用卡可删除；已兑换卡保留作对账凭据。
 
-### GET|POST /api/admin/models、PUT|DELETE /api/admin/models/{id}
+### GET /api/admin/models/metadata
 
-模型倍率目录（`ai_models` 集合）。
+返回 models.dev（`models.json` + `api.json`）合并的模型元数据，实例内存缓存 24 小时；models.dev 不可用时返回空映射。
 
-- `POST`：`{ "modelIds": ["gpt-4o", …] }` 批量导入；已存在的保持原倍率，新模型默认启用；输入/输出倍率与上下文窗口由服务端从 models.dev 元数据填充（倍率以 deepseek-v4.1-flash 的成本为基准归一化）。
-- `PUT /{id}`：`{ "inputRate": 16.6667, "outputRate": 16.6667, "enabled": true, "displayName": null, "contextWindow": 272000 }`（均为可选的部分更新；`contextWindow` 传 `null` 清除）。
-- `PUT /api/admin/models/context`：`{ "models": [{ "id": "gpt-4o", "contextWindow": 128000 }] }` 批量写入上下文（`contextWindow` 可为 `null` 清除；模型不存在时以默认倍率 1.0 建档）。
-- `DELETE /{id}`：从目录移除（不影响上游配置中的引用）。
+- 倍率以 `deepseek/deepseek-v4.1-flash` 的成本为基准归一化（基准恰为 1.0）。
+- 响应 `200`：`{ "metadata": { "gpt-4o": { "contextWindow": 128000, "inputRate": 16.6667, "outputRate": 16.6667 } } }`
+- 供「更新元数据」入口与上游元数据展示使用。
 
 ### GET|POST /api/admin/upstreams、PUT|DELETE /api/admin/upstreams/{id}、POST /api/admin/upstreams/{id}/probe
 
@@ -439,9 +433,10 @@ interface SessionClaims {
   "name": "主上游",
   "baseUrl": "https://api.example.com/v1",   // OpenAI 兼容根地址（含 /v1）
   "apiKey": "上游密钥",
-  "models": ["gpt-4o", "deepseek-chat"],     // 可服务的模型 ID（对应 ai_models._id）
-  "modelRates": {                             // 可选：按上游差异化的倍率覆盖
-    "gpt-4o": { "inputRate": 16.6667, "outputRate": 16.6667 }
+  "models": ["gpt-4o", "deepseek-chat"],     // 可服务的模型 ID
+  "metaOverride": false,                      // 元数据覆盖开关：开启时使用 modelMeta，关闭时使用 models.dev
+  "modelMeta": {                              // 按上游自定义的模型元数据（仅 metaOverride 开启时生效）
+    "gpt-4o": { "contextWindow": 128000, "inputRate": 16.6667, "outputRate": 16.6667 }
   },
   "priority": 0,                              // 越小越优先；同模型多上游自动故障转移
   "enabled": true
@@ -479,7 +474,7 @@ interface SessionClaims {
 
 ## AI API（OpenAI 兼容代理）
 
-`/v1/*` 是面向用户 API Key（`Authorization: Bearer sk-…`）的 OpenAI 兼容代理。可用模型 = 启用的模型目录 ∩ 至少一个启用上游可服务；额度在响应完成后按 `ceil(promptTokens × 输入倍率 + completionTokens × 输出倍率)` 扣减（下限 1，失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`）。倍率解析顺序：上游对模型的覆盖值（`upstreams.modelRates`）→ 目录默认值（`ai_models.inputRate/outputRate`，源自 models.dev 定价、以 deepseek-v4.1-flash 归一化）→ 1.0。
+`/v1/*` 是面向用户 API Key（`Authorization: Bearer sk-…`）的 OpenAI 兼容代理。可用模型 = 所有启用上游可服务模型的并集；额度在响应完成后按 `ceil(promptTokens × 输入倍率 + completionTokens × 输出倍率)` 扣减（失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`）。元数据解析：上游开启 `metaOverride` 时用其 `modelMeta` 自定义值（缺失字段回退 models.dev），关闭时直接用 models.dev 元数据；无数据置零 —— contextWindow 0 = 不限制，倍率 0 = 不计费（双倍率为 0 时本条调用免费）。
 
 ### GET /v1/models
 
@@ -1122,10 +1117,9 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 | `createdAt` | number | |
 | `redeemedByUserId` / `redeemedAt` | string / number \| null | 兑换信息 |
 
-### RedemptionDoc（兑换记录）、AiModelDoc（模型倍率）、UpstreamDoc（上游）、UsageLogDoc（用量）
+### RedemptionDoc（兑换记录）、UpstreamDoc（上游，含 modelMeta 元数据覆盖）、UsageLogDoc（用量）
 
 - `RedemptionDoc`: `{ _id, userId, cardKeyId, cardCode, planId, planName, quotaTokens, validityDays, createdAt }`
-- `AiModelDoc`: `{ _id: 模型ID, displayName, rate: 消耗倍率, enabled, createdAt, updatedAt }`
 - `UpstreamDoc`: `{ _id, name, baseUrl(含 /v1), apiKey, models: 可服务模型ID[], priority(小者先), enabled, createdAt, updatedAt }`
 - `UsageLogDoc`: `{ _id, userId, modelId, upstreamId, promptTokens, completionTokens, totalTokens, cost, stream, createdAt }`
 

@@ -16,7 +16,7 @@
 
 import { authenticateAiKey, openAiError } from "@/lib/ai-proxy";
 import { jsonOk } from "@/lib/http";
-import { listAvailableAiModels } from "@/lib/storage";
+import { listEnabledUpstreamModels } from "@/lib/storage";
 
 export const runtime = "nodejs";
 
@@ -26,13 +26,13 @@ export async function GET(request: Request) {
     return openAiError("Invalid API key.", 401, { type: "authentication_error", code: "invalid_api_key" });
   }
 
-  const models = await listAvailableAiModels();
+  const models = await listEnabledUpstreamModels();
   return jsonOk({
     object: "list",
-    data: models.map((model) => ({
-      id: model._id,
+    data: models.map((modelId) => ({
+      id: modelId,
       object: "model",
-      created: Math.floor(model.createdAt / 1000),
+      created: Math.floor(Date.now() / 1000),
       owned_by: "messenger-cloud",
     })),
   });

@@ -98,25 +98,13 @@ export interface RedemptionDoc {
   createdAt: number;
 }
 
-export interface AiModelDoc {
-  _id: string;
-  displayName?: string | null;
-  /** @deprecated 旧版单一倍率，仅作为 inputRate/outputRate 缺失时的回退。 */
-  rate?: number;
-  /** 输入倍率：promptTokens × inputRate，缺省回退 rate 再回退 1。 */
-  inputRate?: number;
-  /** 输出倍率：completionTokens × outputRate，缺省回退 rate 再回退 1。 */
-  outputRate?: number;
-  /** 上下文窗口（tokens），来自 models.dev 或管理员手填，仅用于展示。 */
+export interface UpstreamModelMeta {
+  /** 上下文窗口（tokens），0 = 不限制。 */
   contextWindow?: number | null;
-  enabled: boolean;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface UpstreamRateOverride {
-  inputRate: number;
-  outputRate: number;
+  /** 输入倍率，0 = 不计费。 */
+  inputRate?: number | null;
+  /** 输出倍率，0 = 不计费。 */
+  outputRate?: number | null;
 }
 
 export interface UpstreamDoc {
@@ -125,10 +113,12 @@ export interface UpstreamDoc {
   /** OpenAI 兼容根地址（含 /v1），例如 https://api.example.com/v1。 */
   baseUrl: string;
   apiKey: string;
-  /** 该上游可服务的模型 ID 列表（对应 ai_models._id）。 */
+  /** 该上游可服务的模型 ID 列表。 */
   models: string[];
-  /** 按上游差异化的倍率覆盖；缺失的模型回退目录默认值。 */
-  modelRates?: Record<string, UpstreamRateOverride> | null;
+  /** 元数据覆盖开关：开启时使用 modelMeta 自定义值，关闭时使用 models.dev 元数据。 */
+  metaOverride?: boolean;
+  /** 按上游自定义的模型元数据（仅 metaOverride 开启时生效）。 */
+  modelMeta?: Record<string, UpstreamModelMeta> | null;
   /** 路由优先级，数字越小越优先。 */
   priority: number;
   enabled: boolean;

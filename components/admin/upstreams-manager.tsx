@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Activity, Plus, RefreshCw, X } from "lucide-react";
+import { Activity, ArrowDownToLine, Plus, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import {
   Table,
   TableBody,
@@ -47,7 +48,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { AiModelDoc, UpstreamDoc } from "@/lib/types";
+import { Switch } from "@/components/ui/switch";
+import type { UpstreamDoc, UpstreamModelMeta } from "@/lib/types";
 
 interface UpstreamFormState {
   name: string;
@@ -55,6 +57,7 @@ interface UpstreamFormState {
   apiKey: string;
   priority: string;
   enabled: string;
+  metaOverride: boolean;
 }
 
 const emptyUpstreamForm: UpstreamFormState = {
@@ -63,9 +66,15 @@ const emptyUpstreamForm: UpstreamFormState = {
   apiKey: "",
   priority: "0",
   enabled: "1",
+  metaOverride: false,
 };
 
-type ContextSizes = Record<string, number>;
+type DevMeta = Record<string, UpstreamModelMeta>;
+interface MetaDraft {
+  context: string;
+  inputRate: string;
+  outputRate: string;
+}
 
 /** 展示形式：取能整除的最大单位（1000000 → 1M、1050000 → 1050K、500 → 500）。 */
 function formatContext(tokens: number): string {
@@ -78,31 +87,34 @@ function formatContext(tokens: number): string {
   return String(tokens);
 }
 
-/** 编辑形式：接受 1M / 1.05M / 272K / 200000（不区分大小写，最多两位小数），空串表示清除。 */
-function parseContextInput(input: string): number | null | "invalid" {
+/** 上下文编辑：接受 272K / 1M / 200000（不区分大小写，最多两位小数），空串 = 0（不限）。 */
+function parseContextInput(input: string): number | "invalid" {
   const trimmed = input.trim().toUpperCase();
   if (!trimmed) {
-    return null;
+    return 0;
   }
   const match = /^([0-9]+(\.[0-9]{1,2})?)\s*(K|M)?$/.exec(trimmed);
   if (!match) {
     return "invalid";
   }
   const value = Number(match[1]);
-  if (!Number.isFinite(value) || value <= 0) {
+  if (!Number.isFinite(value) || value < 0) {
     return "invalid";
   }
-  const tokens = Math.round(value * (match[2] === "K" ? 1_000 : match[2] === "M" ? 1_000_000 : 1));
-  return tokens > 0 ? tokens : "invalid";
+  return Math.round(value * (match[3] === "K" ? 1_000 : match[3] === "M" ? 1_000_000 : 1));
 }
 
-export function UpstreamsManager({
-  upstreams,
-  models,
-}: {
-  upstreams: UpstreamDoc[];
-  models: AiModelDoc[];
-}) {
+/** 倍率编辑：非负数字，空串 = 0（不计费）。 */
+function parseRateInput(input: string): number | "invalid" {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return 0;
+  }
+  const value = Number(trimmed);
+  return Number.isFinite(value) && value >= 0 ? value : "invalid";
+}
+
+export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -115,17 +127,13 @@ export function UpstreamsManager({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [contextSizes, setContextSizes] = useState<ContextSizes>({});
-  const [probeResults, setProbeResults] = useState<Record<string, string[]>>({});
+  const [devMeta, setDevMeta] = useState<DevMeta>({});
+  const [editingModelMeta, setEditingModelMeta] = useState<Record<string, UpstreamModelMeta>>({});
+  const [metaDrafts, setMetaDrafts] = useState<Record<string, MetaDraft>>({});
   const [probingId, setProbingId] = useState<string | null>(null);
-  const [importingId, setImportingId] = useState<string | null>(null);
+  const [probeResults, setProbeResults] = useState<Record<string, string[]>>({});
 
-  const [newModelId, setNewModelId] = useState("");
-  const [modelEdits, setModelEdits] = useState<Record<string, { context: string; inputRate: string; outputRate: string; enabled: boolean }>>({});
-  const [contextDrafts, setContextDrafts] = useState<Record<string, string>>({});
-  const [rateDrafts, setRateDrafts] = useState<Record<string, { input: string; output: string }>>({});
-  const [editingModelRates, setEditingModelRates] = useState<Record<string, { inputRate: number; outputRate: number }>>({});
-
+  // models.dev 元数据（含上下文与归一化倍率），页面加载时拉取一次。
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -133,18 +141,13 @@ export function UpstreamsManager({
         const response = await fetch("/api/admin/models/metadata");
         if (!response.ok) return;
         const payload = (await response.json()) as {
-          metadata?: Record<string, { contextWindow?: number }>;
+          metadata?: Record<string, UpstreamModelMeta>;
         };
-        if (cancelled) return;
-        const sizes: ContextSizes = {};
-        for (const [modelId, meta] of Object.entries(payload.metadata ?? {})) {
-          if (typeof meta?.contextWindow === "number" && meta.contextWindow > 0) {
-            sizes[modelId] = meta.contextWindow;
-          }
+        if (!cancelled && payload.metadata) {
+          setDevMeta(payload.metadata);
         }
-        setContextSizes(sizes);
       } catch {
-        // 元数据仅用于展示，拉取失败静默降级。
+        // 元数据仅用于展示/默认值，拉取失败静默降级（显示 0 = 不限制）。
       }
     })();
     return () => {
@@ -152,51 +155,14 @@ export function UpstreamsManager({
     };
   }, []);
 
-  // 上下文展示优先级：模型目录中已保存的值 > models.dev 元数据。
-  const catalogSizes = useMemo(() => {
-    const sizes: ContextSizes = {};
-    for (const model of models) {
-      if (model.contextWindow) {
-        sizes[model._id] = model.contextWindow;
-      }
-    }
-    return sizes;
-  }, [models]);
-
-  // 目录默认倍率（models.dev 归一化；旧文档回退 legacy 单一倍率，再回退 1）。
-  const catalogRates = useMemo(() => {
-    const rates: Record<string, { input: number; output: number }> = {};
-    for (const model of models) {
-      rates[model._id] = {
-        input: model.inputRate ?? model.rate ?? 1,
-        output: model.outputRate ?? model.rate ?? 1,
-      };
-    }
-    return rates;
-  }, [models]);
-
-  const contextOf = useCallback(
-    (modelId: string): number | null => catalogSizes[modelId] ?? contextSizes[modelId] ?? null,
-    [catalogSizes, contextSizes],
-  );
-
-  const contextLabel = useCallback(
-    (modelId: string): string | null => {
-      const context = contextOf(modelId);
-      return context ? formatContext(context) : null;
-    },
-    [contextOf],
-  );
-
   function startCreate() {
     setEditingId(null);
     setForm(emptyUpstreamForm);
     setSelectedModels([]);
     setDiscoveredModels([]);
     setManualModel("");
-    setContextDrafts({});
-    setRateDrafts({});
-    setEditingModelRates({});
+    setEditingModelMeta({});
+    setMetaDrafts({});
     setFormError(null);
     setShowForm(true);
     setError(null);
@@ -210,13 +176,13 @@ export function UpstreamsManager({
       apiKey: upstream.apiKey,
       priority: String(upstream.priority),
       enabled: upstream.enabled ? "1" : "0",
+      metaOverride: upstream.metaOverride ?? false,
     });
     setSelectedModels([...upstream.models].sort((a, b) => a.localeCompare(b)));
     setDiscoveredModels([...upstream.models].sort((a, b) => a.localeCompare(b)));
     setManualModel("");
-    setContextDrafts({});
-    setRateDrafts({});
-    setEditingModelRates(upstream.modelRates ?? {});
+    setEditingModelMeta(upstream.modelMeta ?? {});
+    setMetaDrafts({});
     setFormError(null);
     setShowForm(true);
     setError(null);
@@ -233,8 +199,8 @@ export function UpstreamsManager({
   function addManualModel() {
     const modelId = manualModel.trim();
     if (!modelId) return;
-    setDiscoveredModels((models_) =>
-      models_.includes(modelId) ? models_ : [...models_, modelId].sort((a, b) => a.localeCompare(b)),
+    setDiscoveredModels((models) =>
+      models.includes(modelId) ? models : [...models, modelId].sort((a, b) => a.localeCompare(b)),
     );
     setSelectedModels((selected) =>
       selected.includes(modelId) ? selected : [...selected, modelId].sort((a, b) => a.localeCompare(b)),
@@ -257,7 +223,7 @@ export function UpstreamsManager({
       });
       const payload = (await response.json().catch(() => null)) as {
         models?: string[];
-        contextSizes?: ContextSizes;
+        contextSizes?: Record<string, number>;
         error?: string;
       } | null;
       if (!response.ok || !payload?.models) {
@@ -265,10 +231,16 @@ export function UpstreamsManager({
         return;
       }
       if (payload.contextSizes) {
-        setContextSizes((sizes) => ({ ...sizes, ...payload.contextSizes }));
+        setDevMeta((meta) => {
+          const next = { ...meta };
+          for (const [modelId, contextWindow] of Object.entries(payload.contextSizes ?? {})) {
+            next[modelId] = { ...next[modelId], contextWindow };
+          }
+          return next;
+        });
       }
-      setDiscoveredModels((models_) =>
-        [...new Set([...models_, ...payload.models ?? []])].sort((a, b) => a.localeCompare(b)),
+      setDiscoveredModels((models) =>
+        [...new Set([...models, ...payload.models ?? []])].sort((a, b) => a.localeCompare(b)),
       );
       toast.success(`发现 ${payload.models.length} 个模型，勾选后保存即可`);
     } catch {
@@ -278,33 +250,117 @@ export function UpstreamsManager({
     }
   }
 
+  /** 从 models.dev 更新元数据：填充自定义元数据草稿并开启覆盖开关。 */
+  async function updateMetaFromModelsDev() {
+    setFormError(null);
+    try {
+      const response = await fetch("/api/admin/models/metadata");
+      if (!response.ok) {
+        setFormError("元数据拉取失败，请稍后重试。");
+        return;
+      }
+      const payload = (await response.json()) as {
+        metadata?: Record<string, UpstreamModelMeta>;
+      };
+      const metadata = payload.metadata ?? {};
+      setDevMeta((meta) => ({ ...meta, ...metadata }));
+      setMetaDrafts((drafts) => {
+        const next = { ...drafts };
+        for (const modelId of discoveredModels) {
+          if (next[modelId]) continue;
+          const dev = metadata[modelId];
+          next[modelId] = {
+            context: dev?.contextWindow ? formatContext(dev.contextWindow) : "0",
+            inputRate: dev?.inputRate != null ? String(dev.inputRate) : "0",
+            outputRate: dev?.outputRate != null ? String(dev.outputRate) : "0",
+          };
+        }
+        return next;
+      });
+      setForm((value) => ({ ...value, metaOverride: true }));
+      toast.success("已从 models.dev 拉取元数据（已开启自定义覆盖）");
+    } catch {
+      setFormError("网络错误，请稍后重试。");
+    }
+  }
+
+  function metaDraftOf(modelId: string): MetaDraft {
+    return (
+      metaDrafts[modelId] ?? {
+        context: "",
+        inputRate: "",
+        outputRate: "",
+      }
+    );
+  }
+
+  /** 生效元数据：覆盖开启时 草稿 > 自定义 > models.dev > 0；关闭时 models.dev > 0。 */
+  function resolvedMeta(modelId: string): { contextWindow: number; inputRate: number; outputRate: number } {
+    const dev = devMeta[modelId];
+    if (!form.metaOverride) {
+      return { contextWindow: dev?.contextWindow ?? 0, inputRate: dev?.inputRate ?? 0, outputRate: dev?.outputRate ?? 0 };
+    }
+    const stored = editingModelMeta[modelId];
+    const draft = metaDrafts[modelId];
+    const pick = (
+      draftValue: string | undefined,
+      storedValue: number | null | undefined,
+      devValue: number | null | undefined,
+    ): number => {
+      if (draftValue !== undefined) {
+        const parsed = parseContextInput(draftValue);
+        return parsed === "invalid" ? (storedValue ?? devValue ?? 0) : parsed;
+      }
+      return storedValue ?? devValue ?? 0;
+    };
+    const pickRate = (
+      draftValue: string | undefined,
+      storedValue: number | null | undefined,
+      devValue: number | null | undefined,
+    ): number => {
+      if (draftValue !== undefined) {
+        const parsed = parseRateInput(draftValue);
+        return parsed === "invalid" ? (storedValue ?? devValue ?? 0) : parsed;
+      }
+      return storedValue ?? devValue ?? 0;
+    };
+    return {
+      contextWindow: pick(draft?.context, stored?.contextWindow, dev?.contextWindow),
+      inputRate: pickRate(draft?.inputRate, stored?.inputRate, dev?.inputRate),
+      outputRate: pickRate(draft?.outputRate, stored?.outputRate, dev?.outputRate),
+    };
+  }
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    const contextEntries: { id: string; contextWindow: number | null }[] = [];
-    for (const [modelId, draft] of Object.entries(contextDrafts)) {
-      const parsed = parseContextInput(draft);
-      if (parsed === "invalid") {
-        setFormError(`模型 ${modelId} 的上下文格式无效，请使用 272K / 1M 等形式。`);
-        return;
+    let modelMeta: Record<string, UpstreamModelMeta> | null = null;
+    if (form.metaOverride) {
+      modelMeta = {};
+      for (const [modelId, draft] of Object.entries(metaDrafts)) {
+        const context = parseContextInput(draft.context);
+        if (context === "invalid") {
+          setFormError(`模型 ${modelId} 的上下文格式无效，请使用 272K / 1M 等形式。`);
+          return;
+        }
+        const inputRate = parseRateInput(draft.inputRate);
+        const outputRate = parseRateInput(draft.outputRate);
+        if (inputRate === "invalid" || outputRate === "invalid") {
+          setFormError(`模型 ${modelId} 的倍率必须是数字。`);
+          return;
+        }
+        modelMeta[modelId] = { contextWindow: context, inputRate, outputRate };
       }
-      contextEntries.push({ id: modelId, contextWindow: parsed });
-    }
-    const modelRates: Record<string, { inputRate: number; outputRate: number }> = { ...editingModelRates };
-    for (const [modelId, draft] of Object.entries(rateDrafts)) {
-      const input = Number(draft.input);
-      const output = Number(draft.output);
-      if (!Number.isFinite(input) || input <= 0 || !Number.isFinite(output) || output <= 0) {
-        setFormError(`模型 ${modelId} 的倍率必须是正数。`);
-        return;
+      if (Object.keys(modelMeta).length === 0) {
+        modelMeta = null;
       }
-      modelRates[modelId] = { inputRate: input, outputRate: output };
     }
     const payload = {
       name: form.name,
       baseUrl: form.baseUrl,
       apiKey: form.apiKey,
       models: selectedModels,
-      modelRates,
+      metaOverride: form.metaOverride,
+      modelMeta,
       priority: Number(form.priority) || 0,
       enabled: form.enabled === "1",
     };
@@ -320,22 +376,6 @@ export function UpstreamsManager({
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
         setFormError(body?.error ?? "保存失败，请稍后重试。");
         return;
-      }
-      if (contextEntries.length > 0) {
-        try {
-          const contextResponse = await fetch("/api/admin/models/context", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ models: contextEntries }),
-          });
-          if (!contextResponse.ok) {
-            toast.error("上游已保存，但上下文窗口写入模型目录失败。");
-          }
-        } catch {
-          toast.error("上游已保存，但上下文窗口写入模型目录失败。");
-        }
-        setContextDrafts({});
-        setRateDrafts({});
       }
       setShowForm(false);
       router.refresh();
@@ -368,145 +408,16 @@ export function UpstreamsManager({
     setError(null);
     try {
       const response = await fetch(`/api/admin/upstreams/${upstream._id}/probe`, { method: "POST" });
-      const payload = (await response.json().catch(() => null)) as {
-        models?: string[];
-        contextSizes?: ContextSizes;
-        error?: string;
-      } | null;
+      const payload = (await response.json().catch(() => null)) as { models?: string[]; error?: string } | null;
       if (!response.ok || !payload?.models) {
         setError(payload?.error ?? "探测失败。");
         return;
-      }
-      if (payload.contextSizes) {
-        setContextSizes((sizes) => ({ ...sizes, ...payload.contextSizes }));
       }
       setProbeResults((results) => ({ ...results, [upstream._id]: payload.models ?? [] }));
     } catch {
       setError("网络错误，请稍后重试。");
     } finally {
       setProbingId(null);
-    }
-  }
-
-  async function importModels(upstream: UpstreamDoc) {
-    const modelIds = probeResults[upstream._id];
-    if (!modelIds || modelIds.length === 0) {
-      return;
-    }
-    setImportingId(upstream._id);
-    setError(null);
-    try {
-      const response = await fetch("/api/admin/models", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ modelIds }),
-      });
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-        setError(payload?.error ?? "导入失败。");
-        return;
-      }
-      toast.success(`已导入 ${modelIds.length} 个模型（默认 1.0 倍率）`);
-      router.refresh();
-    } finally {
-      setImportingId(null);
-    }
-  }
-
-  async function saveModelEdit(model: AiModelDoc) {
-    const edit = modelEdits[model._id];
-    if (!edit) {
-      return;
-    }
-    const inputRate = Number(edit.inputRate);
-    const outputRate = Number(edit.outputRate);
-    if (!Number.isFinite(inputRate) || inputRate <= 0 || !Number.isFinite(outputRate) || outputRate <= 0) {
-      setError("倍率必须是正数。");
-      return;
-    }
-    const context = parseContextInput(edit.context);
-    if (context === "invalid") {
-      setError("上下文格式无效，请使用 272K / 1M 等形式。");
-      return;
-    }
-    const baselineContext = model.contextWindow ?? contextSizes[model._id] ?? null;
-    const baselineInput = model.inputRate ?? model.rate ?? 1;
-    const baselineOutput = model.outputRate ?? model.rate ?? 1;
-    if (
-      context === baselineContext &&
-      inputRate === baselineInput &&
-      outputRate === baselineOutput &&
-      edit.enabled === model.enabled
-    ) {
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch(`/api/admin/models/${encodeURIComponent(model._id)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: edit.enabled, contextWindow: context, inputRate, outputRate }),
-      });
-      if (!response.ok) {
-        setError("保存失败。");
-        return;
-      }
-      setModelEdits((edits) => {
-        const next = { ...edits };
-        delete next[model._id];
-        return next;
-      });
-      router.refresh();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function toggleModel(model: AiModelDoc) {
-    setBusy(true);
-    try {
-      await fetch(`/api/admin/models/${encodeURIComponent(model._id)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: !model.enabled }),
-      });
-      router.refresh();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function deleteModel(model: AiModelDoc) {
-    if (!window.confirm(`确定从目录删除模型 ${model._id}？`)) {
-      return;
-    }
-    setBusy(true);
-    try {
-      await fetch(`/api/admin/models/${encodeURIComponent(model._id)}`, { method: "DELETE" });
-      router.refresh();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function addModel(event: React.FormEvent) {
-    event.preventDefault();
-    if (!newModelId.trim()) {
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await fetch("/api/admin/models", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ modelIds: [newModelId.trim()] }),
-      });
-      setNewModelId("");
-      router.refresh();
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -522,6 +433,12 @@ export function UpstreamsManager({
     setSelectedModels(
       allDiscoveredSelected ? [] : [...discoveredModels].sort((a, b) => a.localeCompare(b)),
     );
+  }
+
+  /** 只读展示（覆盖关闭或未编辑时）的上下文/倍率文本。 */
+  function contextDisplay(modelId: string): string {
+    const meta = resolvedMeta(modelId);
+    return meta.contextWindow > 0 ? formatContext(meta.contextWindow) : "不限";
   }
 
   return (
@@ -639,11 +556,6 @@ export function UpstreamsManager({
                     {selectedModels.map((modelId) => (
                       <Badge key={modelId} variant="secondary" className="gap-1.5 py-1 font-mono text-xs">
                         {modelId}
-                        {contextLabel(modelId) ? (
-                          <span className="font-sans text-[10px] text-muted-foreground">
-                            {contextLabel(modelId)}
-                          </span>
-                        ) : null}
                         <button
                           type="button"
                           aria-label={`移除 ${modelId}`}
@@ -656,6 +568,31 @@ export function UpstreamsManager({
                     ))}
                   </div>
                 )}
+              </div>
+
+              <Separator />
+
+              <div className="grid gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="grid gap-1">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="meta-override"
+                        checked={form.metaOverride}
+                        onCheckedChange={(checked) => setForm((value) => ({ ...value, metaOverride: checked }))}
+                      />
+                      <Label htmlFor="meta-override">自定义元数据（覆盖 models.dev）</Label>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      关闭时直接使用 models.dev 元数据（上下文 0 / 倍率 0 = 不限制 / 不计费）；
+                      开启后可在下方表格按此上游自定义。
+                    </p>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={updateMetaFromModelsDev}>
+                    <ArrowDownToLine />
+                    从 models.dev 更新元数据
+                  </Button>
+                </div>
 
                 {discoveredModels.length > 0 ? (
                   <div className="overflow-hidden rounded-lg border">
@@ -672,79 +609,86 @@ export function UpstreamsManager({
                             />
                           </TableHead>
                           <TableHead>模型 ID</TableHead>
-                          <TableHead className="w-32">Context Window</TableHead>
+                          <TableHead className="w-36">Context Window</TableHead>
                           <TableHead className="w-24">输入倍率</TableHead>
                           <TableHead className="w-24">输出倍率</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {sortedDiscovered.map((modelId) => (
-                          <TableRow
-                            key={modelId}
-                            className="cursor-pointer"
-                            onClick={() => toggleFormModel(modelId)}
-                          >
-                            <TableCell onClick={(event) => event.stopPropagation()}>
-                              <Checkbox
-                                checked={selectedModels.includes(modelId)}
-                                onCheckedChange={() => toggleFormModel(modelId)}
-                              />
-                            </TableCell>
-                            <TableCell className="font-mono text-xs">
-                              {modelId}
-                              {selectedModels.includes(modelId) ? (
-                                <Badge variant="secondary" className="ml-2 font-sans text-[10px]">
-                                  已选
-                                </Badge>
-                              ) : null}
-                            </TableCell>
-                            <TableCell onClick={(event) => event.stopPropagation()}>
-                              <Input
-                                placeholder="272K / 1M"
-                                className="h-8 font-mono text-xs uppercase"
-                                value={contextDrafts[modelId] ?? contextLabel(modelId) ?? ""}
-                                onChange={(event) =>
-                                  setContextDrafts((drafts) => ({
-                                    ...drafts,
-                                    [modelId]: event.target.value,
-                                  }))
-                                }
-                              />
-                            </TableCell>
-                            <TableCell onClick={(event) => event.stopPropagation()}>
-                              <Input
-                                inputMode="decimal"
-                                className="h-8 font-mono text-xs tabular-nums"
-                                value={
-                                  rateDrafts[modelId]?.input ??
-                                  String(editingModelRates[modelId]?.inputRate ?? catalogRates[modelId]?.input ?? 1)
-                                }
-                                onChange={(event) =>
-                                  setRateDrafts((drafts) => ({
-                                    ...drafts,
-                                    [modelId]: { output: rateDrafts[modelId]?.output ?? String(editingModelRates[modelId]?.outputRate ?? catalogRates[modelId]?.output ?? 1), input: event.target.value },
-                                  }))
-                                }
-                              />
-                            </TableCell>
-                            <TableCell onClick={(event) => event.stopPropagation()}>
-                              <Input
-                                inputMode="decimal"
-                                className="h-8 font-mono text-xs tabular-nums"
-                                value={
-                                  rateDrafts[modelId]?.output ??
-                                  String(editingModelRates[modelId]?.outputRate ?? catalogRates[modelId]?.output ?? 1)
-                                }
-                                onChange={(event) =>
-                                  setRateDrafts((drafts) => ({
-                                    ...drafts,
-                                    [modelId]: { input: rateDrafts[modelId]?.input ?? String(editingModelRates[modelId]?.inputRate ?? catalogRates[modelId]?.input ?? 1), output: event.target.value },
-                                  }))
-                                }
-                              />
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {sortedDiscovered.map((modelId) => {
+                          const meta = resolvedMeta(modelId);
+                          const editable = form.metaOverride;
+                          const draft = metaDraftOf(modelId);
+                          const setDraft = (field: keyof MetaDraft, value: string) =>
+                            setMetaDrafts((drafts) => ({
+                              ...drafts,
+                              [modelId]: { ...metaDraftOf(modelId), [field]: value },
+                            }));
+                          return (
+                            <TableRow
+                              key={modelId}
+                              className="cursor-pointer"
+                              onClick={() => toggleFormModel(modelId)}
+                            >
+                              <TableCell onClick={(event) => event.stopPropagation()}>
+                                <Checkbox
+                                  checked={selectedModels.includes(modelId)}
+                                  onCheckedChange={() => toggleFormModel(modelId)}
+                                />
+                              </TableCell>
+                              <TableCell className="font-mono text-xs">
+                                {modelId}
+                                {selectedModels.includes(modelId) ? (
+                                  <Badge variant="secondary" className="ml-2 font-sans text-[10px]">
+                                    已选
+                                  </Badge>
+                                ) : null}
+                              </TableCell>
+                              <TableCell onClick={(event) => event.stopPropagation()}>
+                                {editable ? (
+                                  <Input
+                                    placeholder="272K / 1M"
+                                    className="h-8 font-mono text-xs uppercase"
+                                    value={draft.context}
+                                    onChange={(event) => setDraft("context", event.target.value)}
+                                  />
+                                ) : (
+                                  <span className="font-mono text-xs text-muted-foreground">
+                                    {contextDisplay(modelId)}
+                                  </span>
+                                )}
+                              </TableCell>
+                              <TableCell onClick={(event) => event.stopPropagation()}>
+                                {editable ? (
+                                  <Input
+                                    inputMode="decimal"
+                                    className="h-8 font-mono text-xs tabular-nums"
+                                    value={draft.inputRate}
+                                    onChange={(event) => setDraft("inputRate", event.target.value)}
+                                  />
+                                ) : (
+                                  <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                                    {meta.inputRate}
+                                  </span>
+                                )}
+                              </TableCell>
+                              <TableCell onClick={(event) => event.stopPropagation()}>
+                                {editable ? (
+                                  <Input
+                                    inputMode="decimal"
+                                    className="h-8 font-mono text-xs tabular-nums"
+                                    value={draft.outputRate}
+                                    onChange={(event) => setDraft("outputRate", event.target.value)}
+                                  />
+                                ) : (
+                                  <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                                    {meta.outputRate}
+                                  </span>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </div>
@@ -783,6 +727,7 @@ export function UpstreamsManager({
                   <TableHead>Base URL</TableHead>
                   <TableHead>优先级</TableHead>
                   <TableHead>模型</TableHead>
+                  <TableHead>元数据</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
@@ -810,6 +755,11 @@ export function UpstreamsManager({
                           ) : null}
                         </div>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={upstream.metaOverride ? "default" : "secondary"}>
+                        {upstream.metaOverride ? "自定义" : "models.dev"}
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       <Badge variant={upstream.enabled ? "default" : "secondary"}>
@@ -848,168 +798,12 @@ export function UpstreamsManager({
           {upstreams.map((upstream) =>
             probeResults[upstream._id] ? (
               <div key={`probe-${upstream._id}`} className="mt-4 grid gap-3 rounded-lg border bg-muted/40 p-4 first:mt-6">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-sm font-medium">
-                    「{upstream.name}」发现 {probeResults[upstream._id].length} 个模型
-                  </p>
-                  <Button
-                    size="sm"
-                    disabled={importingId === upstream._id}
-                    onClick={() => importModels(upstream)}
-                  >
-                    {importingId === upstream._id ? "导入中…" : "全部导入目录（默认 1.0 倍率）"}
-                  </Button>
-                </div>
+                <p className="text-sm font-medium">「{upstream.name}」发现 {probeResults[upstream._id].length} 个模型</p>
                 <div className="max-h-28 overflow-y-auto font-mono text-xs leading-relaxed text-muted-foreground">
                   {probeResults[upstream._id].join(", ")}
                 </div>
               </div>
             ) : null,
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
-          <div className="grid gap-1.5">
-            <CardTitle className="text-base">模型倍率目录</CardTitle>
-            <CardDescription>
-              只有目录中启用且至少一个启用上游可服务的模型，才会出现在 AI API 的 /v1/models
-              中。默认倍率来自 models.dev 定价（以 deepseek-v4.1-flash 为基准 1.0）；消耗额度
-              = ceil(输入 tokens × 输入倍率 + 输出 tokens × 输出倍率)，上游可按模型覆盖。
-            </CardDescription>
-          </div>
-          <form className="flex items-end gap-2" onSubmit={addModel}>
-            <div className="grid gap-2">
-              <Input
-                placeholder="model-id"
-                className="w-56 font-mono text-xs"
-                value={newModelId}
-                onChange={(event) => setNewModelId(event.target.value)}
-              />
-            </div>
-            <Button variant="outline" type="submit" disabled={busy || !newModelId.trim()}>
-              添加模型
-            </Button>
-          </form>
-        </CardHeader>
-        <CardContent>
-          {models.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">
-              目录为空，可通过上游「测试」一键导入，或手动添加。
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>模型 ID</TableHead>
-                  <TableHead className="w-36">上下文</TableHead>
-                  <TableHead className="w-24">输入倍率</TableHead>
-                  <TableHead className="w-24">输出倍率</TableHead>
-                  <TableHead className="w-32">状态</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {models.map((model) => {
-                  const baselineContext = model.contextWindow ?? contextSizes[model._id] ?? null;
-                  const baselineInput = model.inputRate ?? model.rate ?? 1;
-                  const baselineOutput = model.outputRate ?? model.rate ?? 1;
-                  const edit = modelEdits[model._id] ?? {
-                    context: baselineContext ? formatContext(baselineContext) : "",
-                    inputRate: String(baselineInput),
-                    outputRate: String(baselineOutput),
-                    enabled: model.enabled,
-                  };
-                  const context = parseContextInput(edit.context);
-                  const inputRate = Number(edit.inputRate);
-                  const outputRate = Number(edit.outputRate);
-                  const ratesValid =
-                    Number.isFinite(inputRate) && inputRate > 0 && Number.isFinite(outputRate) && outputRate > 0;
-                  const ratesDirty = ratesValid && (inputRate !== baselineInput || outputRate !== baselineOutput);
-                  const dirty =
-                    edit.enabled !== model.enabled ||
-                    (context !== "invalid" && context !== baselineContext) ||
-                    ratesDirty;
-                  return (
-                    <TableRow key={model._id}>
-                      <TableCell className="font-mono text-xs">{model._id}</TableCell>
-                      <TableCell>
-                        <Input
-                          placeholder="272K / 1M"
-                          className="font-mono text-xs uppercase"
-                          value={edit.context}
-                          onChange={(event) =>
-                            setModelEdits((edits) => ({
-                              ...edits,
-                              [model._id]: { ...edit, context: event.target.value },
-                            }))
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          inputMode="decimal"
-                          className="font-mono text-xs tabular-nums"
-                          value={edit.inputRate}
-                          onChange={(event) =>
-                            setModelEdits((edits) => ({
-                              ...edits,
-                              [model._id]: { ...edit, inputRate: event.target.value },
-                            }))
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          inputMode="decimal"
-                          className="font-mono text-xs tabular-nums"
-                          value={edit.outputRate}
-                          onChange={(event) =>
-                            setModelEdits((edits) => ({
-                              ...edits,
-                              [model._id]: { ...edit, outputRate: event.target.value },
-                            }))
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Select
-                          value={edit.enabled ? "1" : "0"}
-                          onValueChange={(value) =>
-                            setModelEdits((edits) => ({
-                              ...edits,
-                              [model._id]: { ...edit, enabled: value === "1" },
-                            }))
-                          }
-                        >
-                          <SelectTrigger className="w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="1">启用</SelectItem>
-                            <SelectItem value="0">停用</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex justify-end gap-2">
-                          <Button size="sm" disabled={!dirty || busy} onClick={() => saveModelEdit(model)}>
-                            保存
-                          </Button>
-                          <Button variant="outline" size="sm" disabled={busy} onClick={() => toggleModel(model)}>
-                            启停
-                          </Button>
-                          <Button variant="destructive" size="sm" disabled={busy} onClick={() => deleteModel(model)}>
-                            删除
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
           )}
         </CardContent>
       </Card>

@@ -17,7 +17,7 @@
 import { redirect } from "next/navigation";
 import { UpstreamsManager } from "@/components/admin/upstreams-manager";
 import { requireAdminUser } from "@/lib/auth";
-import { listAiModels, listUpstreams } from "@/lib/storage";
+import { listUpstreams } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -27,12 +27,12 @@ export default async function AdminUpstreamsPage() {
     redirect("/console");
   }
 
-  const [upstreams, models] = await Promise.all([listUpstreams(), listAiModels()]);
+  const upstreams = await listUpstreams();
 
   return (
     <div className="grid gap-6">
       <h1 className="text-xl font-semibold tracking-tight">上游管理</h1>
-      <UpstreamsManager upstreams={upstreams} models={models} />
+      <UpstreamsManager upstreams={upstreams} />
     </div>
   );
 }

@@ -141,44 +141,24 @@ export const redeemSchema = z.object({
   code: z.string().trim().min(4).max(64),
 }).strict();
 
-export const aiModelImportSchema = z.object({
-  modelIds: z.array(z.string().trim().min(1).max(200)).min(1).max(500),
-}).strict();
-
-export const aiModelPatchSchema = z.object({
-  enabled: z.boolean().optional(),
-  displayName: z.string().trim().max(200).nullable().optional(),
-  contextWindow: z.number().int().positive().max(1_000_000_000).nullable().optional(),
-  inputRate: z.number().finite().positive().max(100_000).optional(),
-  outputRate: z.number().finite().positive().max(100_000).optional(),
-}).strict();
-
-export const aiModelContextBatchSchema = z.object({
-  models: z
-    .array(
-      z.object({
-        id: z.string().trim().min(1).max(200),
-        contextWindow: z.number().int().positive().max(1_000_000_000).nullable(),
-      }),
-    )
-    .min(1)
-    .max(500),
-}).strict();
-
 export const upstreamInputSchema = z.object({
   name: z.string().trim().min(1).max(100),
   baseUrl: z.string().url().max(2_000),
   apiKey: z.string().max(2_000),
   models: z.array(z.string().trim().min(1).max(200)).max(1_000),
-  modelRates: z
+  metaOverride: z.boolean().optional(),
+  modelMeta: z
     .record(
       z.string().max(200),
-      z.object({
-        inputRate: z.number().finite().positive().max(100_000),
-        outputRate: z.number().finite().positive().max(100_000),
-      }),
+      z
+        .object({
+          contextWindow: z.number().int().min(0).max(1_000_000_000).nullable().optional(),
+          inputRate: z.number().finite().min(0).max(100_000).nullable().optional(),
+          outputRate: z.number().finite().min(0).max(100_000).nullable().optional(),
+        })
+        .strict(),
     )
-    .refine((rates) => Object.keys(rates).length <= 1_000, "Too many model rates.")
+    .refine((meta) => Object.keys(meta).length <= 1_000, "Too many model meta entries.")
     .optional(),
   priority: z.number().int().min(0).max(100_000),
   enabled: z.boolean(),

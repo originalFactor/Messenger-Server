@@ -23,7 +23,6 @@ import type {
   AdminRecentUser,
   AgentDoc,
   AgentUpsertInput,
-  AiModelDoc,
   CardKeyDoc,
   CardKeyStatus,
   MarketAgentDoc,
@@ -38,6 +37,7 @@ import type {
   StoredUser,
   SyncResponse,
   UpstreamDoc,
+  UpstreamModelMeta,
   UsageLogDoc,
   UsageStats,
   UserDoc,
@@ -1210,159 +1210,41 @@ export async function updateUserAiApiKey(userId: string, apiKey: string): Promis
   }
 }
 
-export async function listAiModels(): Promise<AiModelDoc[]> {
-  const db = await getDb();
-  return db.collection<AiModelDoc>("ai_models").find({}).sort({ _id: 1 }).toArray();
-}
 
-export async function getAiModel(modelId: string): Promise<AiModelDoc | null> {
-  const db = await getDb();
-  return db.collection<AiModelDoc>("ai_models").findOne({ _id: modelId });
-}
-
-/** 模型目录导入：已存在的模型保持原倍率，新模型以传入的默认倍率
- * （来自 models.dev，以 deepseek-v4.1-flash 归一化；缺省 1.0）启用；
- * 传入 contextSizes 时填充上下文窗口，并回填已存在但为空的条目。 */
-export async function importAiModels(
-  modelIds: string[],
-  contextSizes?: Record<string, number>,
-  rates?: Record<string, { input: number; output: number }>,
-): Promise<AiModelDoc[]> {
-  const db = await getDb();
-  const now = Date.now();
-  const unique = [...new Set(modelIds.map((id) => id.trim()).filter(Boolean))];
-  for (const modelId of unique) {
-    try {
-      await db.collection<AiModelDoc>("ai_models").insertOne({
-        _id: modelId,
-        displayName: null,
-        inputRate: rates?.[modelId]?.input ?? 1,
-        outputRate: rates?.[modelId]?.output ?? 1,
-        contextWindow: contextSizes?.[modelId] ?? null,
-        enabled: true,
-        createdAt: now,
-        updatedAt: now,
-      });
-    } catch (error) {
-      if (!isDuplicateKeyError(error)) {
-        throw error;
-      }
-    }
-  }
-  for (const modelId of unique) {
-    const contextWindow = contextSizes?.[modelId];
-    if (contextWindow) {
-      await db.collection<AiModelDoc>("ai_models").updateOne(
-        { _id: modelId, contextWindow: null },
-        { $set: { contextWindow, updatedAt: Date.now() } },
-      );
-    }
-    const rate = rates?.[modelId];
-    if (rate) {
-      await db.collection<AiModelDoc>("ai_models").updateOne(
-        { _id: modelId, inputRate: { $exists: false }, rate: { $exists: false } },
-        { $set: { inputRate: rate.input, outputRate: rate.output, updatedAt: Date.now() } },
-      );
-    }
-  }
-  if (unique.length === 0) {
-    return [];
-  }
-  return db.collection<AiModelDoc>("ai_models").find({ _id: { $in: unique } }).sort({ _id: 1 }).toArray();
-}
-
-export interface AiModelPatch {
-  enabled?: boolean;
-  displayName?: string | null;
-  contextWindow?: number | null;
-  inputRate?: number;
-  outputRate?: number;
-}
-
-/** 批量写入模型上下文窗口（不存在则按默认倍率 1.0 建档）。 */
-export async function upsertModelContexts(
-  entries: { modelId: string; contextWindow: number | null }[],
-): Promise<void> {
-  const db = await getDb();
-  const now = Date.now();
-  for (const { modelId, contextWindow } of entries) {
-    await db.collection<AiModelDoc>("ai_models").updateOne(
-      { _id: modelId },
-      {
-        $set: { contextWindow, updatedAt: now },
-        $setOnInsert: {
-          displayName: null,
-          inputRate: 1,
-          outputRate: 1,
-          enabled: true,
-          createdAt: now,
-        },
-      },
-      { upsert: true },
-    );
-  }
-}
-
-export async function updateAiModel(modelId: string, patch: AiModelPatch): Promise<AiModelDoc> {
-  const db = await getDb();
-  const set: Record<string, unknown> = { updatedAt: Date.now() };
-  if (patch.inputRate !== undefined) {
-    set.inputRate = patch.inputRate;
-    set.rate = patch.inputRate;
-  }
-  if (patch.outputRate !== undefined) {
-    set.outputRate = patch.outputRate;
-  }
-  if (patch.enabled !== undefined) {
-    set.enabled = patch.enabled;
-  }
-  if (patch.displayName !== undefined) {
-    set.displayName = patch.displayName;
-  }
-  if (patch.contextWindow !== undefined) {
-    set.contextWindow = patch.contextWindow;
-  }
-  const updated = await db.collection<AiModelDoc>("ai_models").findOneAndUpdate(
-    { _id: modelId },
-    { $set: set },
-    { returnDocument: "after", includeResultMetadata: false },
-  );
-  if (!updated) {
-    throw new NotFoundError("Model not found.");
-  }
-  return updated;
-}
-
-export async function deleteAiModel(modelId: string): Promise<void> {
-  const db = await getDb();
-  const result = await db.collection<AiModelDoc>("ai_models").deleteOne({ _id: modelId });
-  if (result.deletedCount !== 1) {
-    throw new NotFoundError("Model not found.");
-  }
-}
 
 export interface UpstreamInput {
   name: string;
   baseUrl: string;
   apiKey: string;
   models: string[];
-  modelRates?: Record<string, { inputRate: number; outputRate: number }> | null;
+  metaOverride?: boolean;
+  modelMeta?: Record<string, UpstreamModelMeta> | null;
   priority: number;
   enabled: boolean;
 }
 
-function normalizeUpstreamModelRates(
-  modelRates: Record<string, { inputRate: number; outputRate: number }> | null | undefined,
-): Record<string, { inputRate: number; outputRate: number }> | null {
-  if (!modelRates) {
+function normalizeUpstreamModelMeta(
+  modelMeta: Record<string, UpstreamModelMeta> | null | undefined,
+): Record<string, UpstreamModelMeta> | null {
+  if (!modelMeta) {
     return null;
   }
-  const normalized: Record<string, { inputRate: number; outputRate: number }> = {};
-  for (const [modelId, rates] of Object.entries(modelRates)) {
+  const normalized: Record<string, UpstreamModelMeta> = {};
+  for (const [modelId, meta] of Object.entries(modelMeta)) {
     const id = modelId.trim();
-    if (!id) continue;
-    if (Number.isFinite(rates?.inputRate) && (rates?.inputRate ?? 0) > 0 && Number.isFinite(rates?.outputRate) && (rates?.outputRate ?? 0) > 0) {
-      normalized[id] = { inputRate: rates.inputRate, outputRate: rates.outputRate };
+    if (!id || !meta) continue;
+    const entry: UpstreamModelMeta = {};
+    if (typeof meta.contextWindow === 'number' && Number.isFinite(meta.contextWindow) && meta.contextWindow >= 0) {
+      entry.contextWindow = Math.round(meta.contextWindow);
+    }
+    if (typeof meta.inputRate === 'number' && Number.isFinite(meta.inputRate) && meta.inputRate >= 0) {
+      entry.inputRate = meta.inputRate;
+    }
+    if (typeof meta.outputRate === 'number' && Number.isFinite(meta.outputRate) && meta.outputRate >= 0) {
+      entry.outputRate = meta.outputRate;
+    }
+    if (Object.keys(entry).length > 0) {
+      normalized[id] = entry;
     }
   }
   return Object.keys(normalized).length > 0 ? normalized : null;
@@ -1402,7 +1284,8 @@ export async function createUpstream(input: UpstreamInput): Promise<UpstreamDoc>
     baseUrl: input.baseUrl,
     apiKey: input.apiKey,
     models: normalizeUpstreamModels(input.models),
-    modelRates: normalizeUpstreamModelRates(input.modelRates),
+    metaOverride: input.metaOverride ?? false,
+    modelMeta: normalizeUpstreamModelMeta(input.modelMeta),
     priority: input.priority,
     enabled: input.enabled,
     createdAt: now,
@@ -1422,7 +1305,8 @@ export async function updateUpstream(upstreamId: string, input: UpstreamInput): 
         baseUrl: input.baseUrl,
         apiKey: input.apiKey,
         models: normalizeUpstreamModels(input.models),
-        modelRates: normalizeUpstreamModelRates(input.modelRates),
+        metaOverride: input.metaOverride ?? false,
+        modelMeta: normalizeUpstreamModelMeta(input.modelMeta),
         priority: input.priority,
         enabled: input.enabled,
         updatedAt: Date.now(),
@@ -1444,15 +1328,13 @@ export async function deleteUpstream(upstreamId: string): Promise<void> {
   }
 }
 
-/** AI API 可对外提供的模型 = 启用的目录模型 ∩ 至少一个启用上游可服务。 */
-export async function listAvailableAiModels(): Promise<AiModelDoc[]> {
+/** AI API 可对外提供的模型 = 所有启用上游可服务模型的并集。 */
+export async function listEnabledUpstreamModels(): Promise<string[]> {
   const db = await getDb();
   const upstreams = await db.collection<UpstreamDoc>("upstreams")
     .find({ enabled: true }, { projection: { models: 1 } })
     .toArray();
-  const served = new Set(upstreams.flatMap((upstream) => upstream.models));
-  const models = await db.collection<AiModelDoc>("ai_models").find({ enabled: true }).sort({ _id: 1 }).toArray();
-  return models.filter((model) => served.has(model._id));
+  return [...new Set(upstreams.flatMap((upstream) => upstream.models))].sort((a, b) => a.localeCompare(b));
 }
 
 export async function recordUsage(log: Omit<UsageLogDoc, "_id" | "createdAt">, createdAt?: number): Promise<void> {

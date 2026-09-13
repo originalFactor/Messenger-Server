@@ -17,7 +17,8 @@
 import { NextResponse } from "next/server";
 import { authenticateAiKey, estimatePromptTokens, joinUpstreamUrl, openAiError } from "@/lib/ai-proxy";
 import { computeCost, quotaState } from "@/lib/quota";
-import { consumeQuota, getAiModel, listUpstreamsForModel, recordUsage } from "@/lib/storage";
+import { consumeQuota, listUpstreamsForModel, recordUsage } from "@/lib/storage";
+import { getModelDefaults } from "@/lib/model-metadata";
 import type { UpstreamDoc } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -45,11 +46,6 @@ export async function POST(request: Request) {
   const model = body.model;
   const stream = body.stream === true;
 
-  const aiModel = await getAiModel(model);
-  if (!aiModel || !aiModel.enabled) {
-    return openAiError(`Model '${model}' is not available.`, 404, { code: "model_not_found" });
-  }
-
   const quota = quotaState(user.quotaBalance, user.quotaExpiresAt);
   if (!quota.available) {
     return openAiError(
@@ -67,11 +63,12 @@ export async function POST(request: Request) {
   }
 
   const promptTokens = estimatePromptTokens(body.messages);
+  const defaults = await getModelDefaults();
   const settle = {
     userId: user.id,
     modelId: model,
     promptTokens,
-    aiModel: { inputRate: aiModel.inputRate, outputRate: aiModel.outputRate, rate: aiModel.rate },
+    defaults: { contextSizes: defaults.contextSizes, rates: defaults.rates },
   };
 
   if (stream) {
@@ -84,20 +81,35 @@ interface SettleParams {
   userId: string;
   modelId: string;
   promptTokens: number;
-  aiModel: { inputRate?: number; outputRate?: number; rate?: number };
+  defaults: { contextSizes: Record<string, number>; rates: Record<string, { input: number; output: number }> };
+}
+
+interface ResolvedModelMeta {
+  contextWindow: number;
+  inputRate: number;
+  outputRate: number;
 }
 
 /**
- * 倍率解析：优先该上游对此模型的覆盖值，回退目录默认值
- * （目录默认来自 models.dev 定价，以 deepseek-v4.1-flash 归一化），
- * 再回退 legacy 单一倍率，最后 1.0。
+ * 元数据解析：上游开启元数据覆盖时使用其自定义值（缺失字段回退
+ * models.dev），关闭时直接使用 models.dev 元数据；无数据一律置零
+ * （contextWindow 0 = 不限制，倍率 0 = 不计费）。
  */
-function resolveRates(upstream: UpstreamDoc, aiModel: { inputRate?: number; outputRate?: number; rate?: number }, model: string) {
+function resolveModelMeta(upstream: UpstreamDoc, model: string, defaults: SettleParams["defaults"]): ResolvedModelMeta {
+  const devContext = defaults.contextSizes[model];
+  const devRate = defaults.rates[model];
+  if (upstream.metaOverride) {
+    const custom = upstream.modelMeta?.[model];
+    return {
+      contextWindow: custom?.contextWindow ?? devContext ?? 0,
+      inputRate: custom?.inputRate ?? devRate?.input ?? 0,
+      outputRate: custom?.outputRate ?? devRate?.output ?? 0,
+    };
+  }
   return {
-    inputRate:
-      upstream.modelRates?.[model]?.inputRate ?? aiModel.inputRate ?? aiModel.rate ?? 1,
-    outputRate:
-      upstream.modelRates?.[model]?.outputRate ?? aiModel.outputRate ?? aiModel.rate ?? 1,
+    contextWindow: devContext ?? 0,
+    inputRate: devRate?.input ?? 0,
+    outputRate: devRate?.output ?? 0,
   };
 }
 
@@ -186,7 +198,7 @@ async function nonStreamProxy(
 
     await settleUsage({
       ...settle,
-      ...resolveRates(upstream, settle.aiModel, settle.modelId),
+      ...resolveModelMeta(upstream, settle.modelId, settle.defaults),
       upstreamId: upstream._id,
       usage: payload.usage ?? null,
       completionChars: extractCompletionChars(payload),
@@ -293,7 +305,7 @@ function buildStreamingResponse(response: Response, upstream: UpstreamDoc, settl
       }
       await settleUsage({
         ...settle,
-        ...resolveRates(upstream, settle.aiModel, settle.modelId),
+        ...resolveModelMeta(upstream, settle.modelId, settle.defaults),
         upstreamId: upstream._id,
         usage: sniffed.usage,
         completionChars: sniffed.completionChars,
