@@ -68,7 +68,8 @@ export default async function HomePage() {
       <header className="sticky top-0 z-50 border-b bg-background/70 backdrop-blur">
         <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-6">
           <Link className="flex items-center gap-2.5 text-sm font-semibold tracking-tight" href="/">
-            <span className="size-2.5 rounded-[4px] bg-gradient-to-br from-blue-500 to-purple-500 shadow-[0_0_12px] shadow-blue-500/30" />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.svg" alt="" className="size-5 rounded-md" />
             Messenger Cloud
           </Link>
           <nav className="flex items-center gap-5">

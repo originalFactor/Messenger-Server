@@ -74,9 +74,8 @@ export function ConsoleShell({ email, role, children }: ConsoleShellProps) {
             <SidebarMenuItem>
               <SidebarMenuButton asChild size="lg">
                 <Link href="/">
-                  <span className="flex size-6 items-center justify-center rounded-[6px] bg-gradient-to-br from-blue-500 to-purple-500 text-primary-foreground shadow-[0_0_12px] shadow-blue-500/30">
-                    <Globe className="size-3.5" />
-                  </span>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/logo.svg" alt="" className="size-6 rounded-md" />
                   <span className="font-semibold tracking-tight">Messenger Cloud</span>
                 </Link>
               </SidebarMenuButton>

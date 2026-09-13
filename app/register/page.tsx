@@ -29,7 +29,8 @@ export default async function RegisterPage() {
     <main className="grid min-h-screen place-items-center p-6">
       <div className="flex w-full max-w-sm flex-col items-center gap-6">
         <Link className="flex items-center gap-2.5 text-sm font-semibold tracking-tight" href="/">
-          <span className="size-2.5 rounded-[4px] bg-gradient-to-br from-blue-500 to-purple-500 shadow-[0_0_12px] shadow-blue-500/30" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.svg" alt="" className="size-5 rounded-md" />
           Messenger Cloud
         </Link>
         <AuthForm mode="register" />

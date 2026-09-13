@@ -71,7 +71,6 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   return (
     <Card className="w-full max-w-sm">
       <CardHeader className="items-center text-center">
-        <span className="mx-auto mb-1 size-2.5 rounded-[4px] bg-gradient-to-br from-blue-500 to-purple-500 shadow-[0_0_12px] shadow-blue-500/30" />
         <CardTitle className="text-xl">{isRegister ? "创建账号" : "登录 Messenger Cloud"}</CardTitle>
         <CardDescription>
           {isRegister ? "注册后即可使用云同步与内置 AI 服务" : "使用邮箱与密码继续"}
