@@ -70,7 +70,6 @@ export function CardsManager({ plans }: { plans: PlanDoc[] }) {
   const [actionBusy, setActionBusy] = useState(false);
 
   const loadCards = useCallback(async () => {
-    setLoadingCards(true);
     try {
       const query = statusFilter === "all" ? "" : `?status=${statusFilter}`;
       const response = await fetch(`/api/admin/cards${query}`);

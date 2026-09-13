@@ -39,6 +39,16 @@ import { getUserById, listUsageLogs, sumUsage } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
+/** 数据装配放在组件外的普通函数里，避免在渲染期间直接调用 Date.now()。 */
+async function loadOverviewData(userId: string, balance: number, expiresAt: number | null) {
+  const now = Date.now();
+  const [today, recentUsage] = await Promise.all([
+    sumUsage(userId, now - 24 * 60 * 60 * 1000),
+    listUsageLogs(userId, 10),
+  ]);
+  return { today, recentUsage, quota: quotaState(balance, expiresAt, now) };
+}
+
 export default async function ConsoleOverviewPage() {
   const session = await requireUserSession();
   if (!session) {
@@ -49,12 +59,11 @@ export default async function ConsoleOverviewPage() {
     redirect("/login");
   }
 
-  const now = Date.now();
-  const [today, recentUsage] = await Promise.all([
-    sumUsage(user.id, now - 24 * 60 * 60 * 1000),
-    listUsageLogs(user.id, 10),
-  ]);
-  const quota = quotaState(user.quotaBalance, user.quotaExpiresAt, now);
+  const { today, recentUsage, quota } = await loadOverviewData(
+    user.id,
+    user.quotaBalance,
+    user.quotaExpiresAt,
+  );
 
   return (
     <div className="grid gap-6">
