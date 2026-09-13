@@ -16,9 +16,9 @@
  * limitations under the License.
  */
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Activity, Plus } from "lucide-react";
+import { Activity, Plus, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -46,14 +47,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import type { AiModelDoc, UpstreamDoc } from "@/lib/types";
 
 interface UpstreamFormState {
   name: string;
   baseUrl: string;
   apiKey: string;
-  models: string;
   priority: string;
   enabled: string;
 }
@@ -62,10 +61,19 @@ const emptyUpstreamForm: UpstreamFormState = {
   name: "",
   baseUrl: "",
   apiKey: "",
-  models: "",
   priority: "0",
   enabled: "1",
 };
+
+type ContextSizes = Record<string, number>;
+
+function formatContext(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    const millions = tokens / 1_000_000;
+    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`;
+  }
+  return `${Math.round(tokens / 1000)}k`;
+}
 
 export function UpstreamsManager({
   upstreams,
@@ -78,9 +86,15 @@ export function UpstreamsManager({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<UpstreamFormState>(emptyUpstreamForm);
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
+  const [manualModel, setManualModel] = useState("");
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [contextSizes, setContextSizes] = useState<ContextSizes>({});
   const [probeResults, setProbeResults] = useState<Record<string, string[]>>({});
   const [probingId, setProbingId] = useState<string | null>(null);
   const [importingId, setImportingId] = useState<string | null>(null);
@@ -88,9 +102,47 @@ export function UpstreamsManager({
   const [newModelId, setNewModelId] = useState("");
   const [modelEdits, setModelEdits] = useState<Record<string, { rate: string; enabled: boolean }>>({});
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/admin/models/metadata");
+        if (!response.ok) return;
+        const payload = (await response.json()) as {
+          metadata?: Record<string, { contextWindow?: number }>;
+        };
+        if (cancelled) return;
+        const sizes: ContextSizes = {};
+        for (const [modelId, meta] of Object.entries(payload.metadata ?? {})) {
+          if (typeof meta?.contextWindow === "number" && meta.contextWindow > 0) {
+            sizes[modelId] = meta.contextWindow;
+          }
+        }
+        setContextSizes(sizes);
+      } catch {
+        // 元数据仅用于展示，拉取失败静默降级。
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const contextLabel = useCallback(
+    (modelId: string): string | null => {
+      const context = contextSizes[modelId];
+      return context ? formatContext(context) : null;
+    },
+    [contextSizes],
+  );
+
   function startCreate() {
     setEditingId(null);
     setForm(emptyUpstreamForm);
+    setSelectedModels([]);
+    setDiscoveredModels([]);
+    setManualModel("");
+    setFormError(null);
     setShowForm(true);
     setError(null);
   }
@@ -101,27 +153,78 @@ export function UpstreamsManager({
       name: upstream.name,
       baseUrl: upstream.baseUrl,
       apiKey: upstream.apiKey,
-      models: upstream.models.join("\n"),
       priority: String(upstream.priority),
       enabled: upstream.enabled ? "1" : "0",
     });
+    setSelectedModels([...upstream.models].sort((a, b) => a.localeCompare(b)));
+    setDiscoveredModels([...upstream.models].sort((a, b) => a.localeCompare(b)));
+    setManualModel("");
+    setFormError(null);
     setShowForm(true);
     setError(null);
   }
 
+  function toggleFormModel(modelId: string) {
+    setSelectedModels((selected) =>
+      selected.includes(modelId)
+        ? selected.filter((value) => value !== modelId)
+        : [...selected, modelId].sort((a, b) => a.localeCompare(b)),
+    );
+  }
+
+  function addManualModel() {
+    const modelId = manualModel.trim();
+    if (!modelId) return;
+    setDiscoveredModels((models_) =>
+      models_.includes(modelId) ? models_ : [...models_, modelId].sort((a, b) => a.localeCompare(b)),
+    );
+    setSelectedModels((selected) =>
+      selected.includes(modelId) ? selected : [...selected, modelId].sort((a, b) => a.localeCompare(b)),
+    );
+    setManualModel("");
+  }
+
+  async function fetchFormModels() {
+    if (!form.baseUrl) {
+      setFormError("请先填写 Base URL。");
+      return;
+    }
+    setFetchingModels(true);
+    setFormError(null);
+    try {
+      const response = await fetch("/api/admin/upstreams/probe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ baseUrl: form.baseUrl, apiKey: form.apiKey }),
+      });
+      const payload = (await response.json().catch(() => null)) as { models?: string[]; error?: string } | null;
+      if (!response.ok || !payload?.models) {
+        setFormError(payload?.error ?? "拉取失败，请稍后重试。");
+        return;
+      }
+      setDiscoveredModels((models_) =>
+        [...new Set([...models_, ...payload.models ?? []])].sort((a, b) => a.localeCompare(b)),
+      );
+      toast.success(`发现 ${payload.models.length} 个模型，勾选后保存即可`);
+    } catch {
+      setFormError("网络错误，请稍后重试。");
+    } finally {
+      setFetchingModels(false);
+    }
+  }
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    const modelList = form.models.split(/[\n,]/).map((model) => model.trim()).filter(Boolean);
     const payload = {
       name: form.name,
       baseUrl: form.baseUrl,
       apiKey: form.apiKey,
-      models: modelList,
+      models: selectedModels,
       priority: Number(form.priority) || 0,
       enabled: form.enabled === "1",
     };
     setBusy(true);
-    setError(null);
+    setFormError(null);
     try {
       const response = await fetch(editingId ? `/api/admin/upstreams/${editingId}` : "/api/admin/upstreams", {
         method: editingId ? "PUT" : "POST",
@@ -130,13 +233,13 @@ export function UpstreamsManager({
       });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        setError(body?.error ?? "保存失败，请稍后重试。");
+        setFormError(body?.error ?? "保存失败，请稍后重试。");
         return;
       }
       setShowForm(false);
       router.refresh();
     } catch {
-      setError("网络错误，请稍后重试。");
+      setFormError("网络错误，请稍后重试。");
     } finally {
       setBusy(false);
     }
@@ -282,6 +385,8 @@ export function UpstreamsManager({
     }
   }
 
+  const discoveredNotSelected = discoveredModels.filter((modelId) => !selectedModels.includes(modelId));
+
   return (
     <div className="grid gap-4">
       <div>
@@ -354,18 +459,88 @@ export function UpstreamsManager({
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid gap-2 sm:col-span-2 lg:col-span-3">
-                  <Label htmlFor="upstream-models">可服务模型（每行一个，或逗号分隔）</Label>
-                  <Textarea
-                    id="upstream-models"
-                    className="font-mono text-xs"
-                    placeholder={"gpt-4o\ndeepseek-chat"}
-                    value={form.models}
-                    onChange={(event) => setForm({ ...form, models: event.target.value })}
-                  />
-                </div>
               </div>
-              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+
+              <div className="grid gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Label>可服务模型（{selectedModels.length}）</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={fetchingModels || !form.baseUrl}
+                    onClick={fetchFormModels}
+                  >
+                    <RefreshCw className={fetchingModels ? "animate-spin" : undefined} />
+                    {fetchingModels ? "拉取中…" : "从 /v1/models 拉取"}
+                  </Button>
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      placeholder="手动添加 model-id"
+                      className="h-8 w-52 font-mono text-xs"
+                      value={manualModel}
+                      onChange={(event) => setManualModel(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          addManualModel();
+                        }
+                      }}
+                    />
+                    <Button type="button" variant="outline" size="sm" onClick={addManualModel} disabled={!manualModel.trim()}>
+                      添加
+                    </Button>
+                  </div>
+                </div>
+
+                {selectedModels.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    尚未选择模型：填写 Base URL 后从上游拉取勾选，或手动添加。
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedModels.map((modelId) => (
+                      <Badge key={modelId} variant="secondary" className="gap-1.5 py-1 font-mono text-xs">
+                        {modelId}
+                        {contextLabel(modelId) ? (
+                          <span className="font-sans text-[10px] text-muted-foreground">
+                            {contextLabel(modelId)}
+                          </span>
+                        ) : null}
+                        <button
+                          type="button"
+                          aria-label={`移除 ${modelId}`}
+                          className="rounded-sm opacity-60 transition-opacity hover:opacity-100"
+                          onClick={() => toggleFormModel(modelId)}
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+
+                {discoveredNotSelected.length > 0 ? (
+                  <div className="max-h-60 overflow-y-auto rounded-lg border p-1.5">
+                    {discoveredNotSelected.map((modelId) => (
+                      <label
+                        key={modelId}
+                        className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/60"
+                      >
+                        <Checkbox onCheckedChange={() => toggleFormModel(modelId)} />
+                        <span className="font-mono text-xs">{modelId}</span>
+                        {contextLabel(modelId) ? (
+                          <span className="ml-auto font-mono text-xs text-muted-foreground">
+                            {contextLabel(modelId)} tokens
+                          </span>
+                        ) : null}
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
+              {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
               <div className="flex gap-2">
                 <Button type="submit" disabled={busy}>
                   {editingId ? "保存" : "创建"}
@@ -396,7 +571,7 @@ export function UpstreamsManager({
                   <TableHead>名称</TableHead>
                   <TableHead>Base URL</TableHead>
                   <TableHead>优先级</TableHead>
-                  <TableHead>模型数</TableHead>
+                  <TableHead>模型</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
@@ -405,9 +580,26 @@ export function UpstreamsManager({
                 {upstreams.map((upstream) => (
                   <TableRow key={upstream._id}>
                     <TableCell className="font-medium">{upstream.name}</TableCell>
-                    <TableCell className="max-w-64 font-mono text-xs break-all">{upstream.baseUrl}</TableCell>
+                    <TableCell className="max-w-52 font-mono text-xs break-all">{upstream.baseUrl}</TableCell>
                     <TableCell className="tabular-nums">{upstream.priority}</TableCell>
-                    <TableCell className="tabular-nums">{upstream.models.length}</TableCell>
+                    <TableCell>
+                      {upstream.models.length === 0 ? (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      ) : (
+                        <div className="flex max-w-72 flex-wrap items-center gap-1">
+                          {upstream.models.slice(0, 3).map((modelId) => (
+                            <Badge key={modelId} variant="secondary" className="font-mono text-[10px]">
+                              {modelId}
+                            </Badge>
+                          ))}
+                          {upstream.models.length > 3 ? (
+                            <Badge variant="outline" className="font-mono text-[10px]">
+                              +{upstream.models.length - 3}
+                            </Badge>
+                          ) : null}
+                        </div>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={upstream.enabled ? "default" : "secondary"}>
                         {upstream.enabled ? "启用" : "停用"}
@@ -499,6 +691,7 @@ export function UpstreamsManager({
               <TableHeader>
                 <TableRow>
                   <TableHead>模型 ID</TableHead>
+                  <TableHead className="w-28">上下文</TableHead>
                   <TableHead className="w-32">倍率</TableHead>
                   <TableHead className="w-32">状态</TableHead>
                   <TableHead className="text-right">操作</TableHead>
@@ -511,6 +704,9 @@ export function UpstreamsManager({
                   return (
                     <TableRow key={model._id}>
                       <TableCell className="font-mono text-xs">{model._id}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {contextLabel(model._id) ? `${contextLabel(model._id)} tokens` : "—"}
+                      </TableCell>
                       <TableCell>
                         <Input
                           type="number"

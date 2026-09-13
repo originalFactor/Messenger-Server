@@ -16,32 +16,29 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
-import { getUpstreamById } from "@/lib/storage";
 import { UpstreamProbeError, fetchUpstreamModelIds } from "@/lib/upstream-probe";
+import { upstreamProbeSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
-type RouteContext = { params: Promise<{ id: string }> };
-
 /**
- * 探测已保存的上游：服务端请求上游的 GET /models，返回可用模型 ID 列表，
- * 供控制台一键导入模型目录。
+ * 直接探测上游：不要求上游已保存，表单里填好 Base URL / API Key 即可
+ * 拉取其 /v1/models，供「新增/编辑上游」的模型列表勾选。
  */
-export async function POST(_request: Request, context: RouteContext) {
+export async function POST(request: Request) {
   const admin = await requireAdminUser();
   if (!admin) {
     return jsonError("Forbidden.", 403);
   }
 
-  const { id } = await context.params;
-  const upstream = await getUpstreamById(id);
-  if (!upstream) {
-    return jsonError("Upstream not found.", 404);
+  const parsed = upstreamProbeSchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) {
+    return jsonError("Invalid upstream probe payload.", 400);
   }
 
   try {
-    const models = await fetchUpstreamModelIds(upstream.baseUrl, upstream.apiKey);
-    return jsonOk({ upstreamId: upstream._id, models });
+    const models = await fetchUpstreamModelIds(parsed.data.baseUrl, parsed.data.apiKey);
+    return jsonOk({ models });
   } catch (error) {
     if (error instanceof UpstreamProbeError) {
       return jsonError(error.message, error.status);

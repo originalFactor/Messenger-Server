@@ -134,11 +134,13 @@ interface SessionClaims {
 | POST | `/api/admin/models` | 管理员 | 批量导入模型（默认 1.0 倍率） |
 | PUT | `/api/admin/models/{id}` | 管理员 | 更新模型倍率/启停 |
 | DELETE | `/api/admin/models/{id}` | 管理员 | 删除模型 |
+| GET | `/api/admin/models/metadata` | 管理员 | models.dev 模型元数据（上下文大小） |
 | GET | `/api/admin/upstreams` | 管理员 | 上游列表 |
 | POST | `/api/admin/upstreams` | 管理员 | 新增上游 |
 | PUT | `/api/admin/upstreams/{id}` | 管理员 | 更新上游 |
 | DELETE | `/api/admin/upstreams/{id}` | 管理员 | 删除上游 |
-| POST | `/api/admin/upstreams/{id}/probe` | 管理员 | 探测上游模型列表 |
+| POST | `/api/admin/upstreams/probe` | 管理员 | 直接探测上游模型列表（无需先保存） |
+| POST | `/api/admin/upstreams/{id}/probe` | 管理员 | 探测已保存上游的模型列表 |
 | GET | `/api/plans` | 无 | 公开套餐列表（官网定价） |
 | GET | `/v1/models` | AI API Key | OpenAI 兼容模型列表 |
 | POST | `/v1/chat/completions` | AI API Key | OpenAI 兼容对话（流式/非流式，扣额度） |
@@ -441,7 +443,13 @@ interface SessionClaims {
 }
 ```
 
-`POST …/{id}/probe`：服务端请求上游 `GET {baseUrl}/models`，响应 `{ "upstreamId": "…", "models": ["…"] }`，供控制台一键导入模型目录；连接失败返回 `502`。
+`POST /api/admin/upstreams/probe`：直探模式 —— 请求体 `{ "baseUrl": "https://api.example.com/v1", "apiKey": "…" }`，不要求上游已保存，供「新增/编辑上游」表单直接拉取模型列表；与 `{id}/probe` 共享 `lib/upstream-probe.ts` 实现，连接失败返回 `502`。
+
+### GET /api/admin/models/metadata
+
+返回 models.dev（`https://models.dev/models.json`）的模型元数据映射，实例内存缓存 24 小时；models.dev 不可用时返回空映射。
+
+- 响应 `200`：`{ "metadata": { "gpt-4o": { "contextWindow": 128000 }, "…": {} } }` —— 完整 `vendor/model` 键与 `/` 后的裸 ID 均可命中。
 
 ---
 
