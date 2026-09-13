@@ -30,11 +30,9 @@ export default async function AdminUpstreamsPage() {
   const [upstreams, models] = await Promise.all([listUpstreams(), listAiModels()]);
 
   return (
-    <>
-      <div className="topbar">
-        <h1 style={{ margin: 0, fontSize: "1.5rem" }}>上游管理</h1>
-      </div>
+    <div className="grid gap-6">
+      <h1 className="text-xl font-semibold tracking-tight">上游管理</h1>
       <UpstreamsManager upstreams={upstreams} models={models} />
-    </>
+    </div>
   );
 }

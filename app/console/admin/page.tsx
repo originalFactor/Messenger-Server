@@ -15,6 +15,22 @@
  */
 
 import { redirect } from "next/navigation";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { requireAdminUser } from "@/lib/auth";
 import { formatDateTime, formatTokens } from "@/lib/format";
 import { getSiteOverview } from "@/lib/storage";
@@ -30,107 +46,135 @@ export default async function AdminOverviewPage() {
   const overview = await getSiteOverview();
 
   return (
-    <>
-      <div className="topbar">
-        <h1 style={{ margin: 0, fontSize: "1.5rem" }}>全站概览</h1>
+    <div className="grid gap-6">
+      <h1 className="text-xl font-semibold tracking-tight">全站概览</h1>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <Card>
+          <CardHeader>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">用户总数</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">{overview.users.total}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground">
+            管理员 {overview.users.admins} · 近 24h 新增 {overview.users.newToday}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">近 24h 用量</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">{overview.usage.today.requests}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground">
+            {formatTokens(overview.usage.today.tokens)} tokens · 消耗 {formatTokens(overview.usage.today.cost)}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">近 7 天用量</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">{overview.usage.week.requests}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground">
+            {formatTokens(overview.usage.week.tokens)} tokens · 消耗 {formatTokens(overview.usage.week.cost)}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">卡密</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">{overview.cards.total}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground">
+            未用 {overview.cards.unused} · 已用 {overview.cards.redeemed} · 停用 {overview.cards.disabled}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">套餐</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">
+              {overview.plans.enabled}/{overview.plans.total}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground">启用中 / 总数</CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">上游</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">
+              {overview.upstreams.enabled}/{overview.upstreams.total}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground">启用中 / 总数</CardContent>
+        </Card>
       </div>
 
-      <div className="stats-grid">
-        <div className="panel">
-          <div className="stat-label">用户总数</div>
-          <div className="stat-value">{overview.users.total}</div>
-          <div className="stat-sub">管理员 {overview.users.admins} · 近 24h 新增 {overview.users.newToday}</div>
-        </div>
-        <div className="panel">
-          <div className="stat-label">近 24h 用量</div>
-          <div className="stat-value">{overview.usage.today.requests}</div>
-          <div className="stat-sub">{formatTokens(overview.usage.today.tokens)} tokens · 消耗 {formatTokens(overview.usage.today.cost)}</div>
-        </div>
-        <div className="panel">
-          <div className="stat-label">近 7 天用量</div>
-          <div className="stat-value">{overview.usage.week.requests}</div>
-          <div className="stat-sub">{formatTokens(overview.usage.week.tokens)} tokens · 消耗 {formatTokens(overview.usage.week.cost)}</div>
-        </div>
-        <div className="panel">
-          <div className="stat-label">卡密</div>
-          <div className="stat-value">{overview.cards.total}</div>
-          <div className="stat-sub">未用 {overview.cards.unused} · 已用 {overview.cards.redeemed} · 停用 {overview.cards.disabled}</div>
-        </div>
-        <div className="panel">
-          <div className="stat-label">套餐</div>
-          <div className="stat-value">{overview.plans.enabled}/{overview.plans.total}</div>
-          <div className="stat-sub">启用中 / 总数</div>
-        </div>
-        <div className="panel">
-          <div className="stat-label">上游</div>
-          <div className="stat-value">{overview.upstreams.enabled}/{overview.upstreams.total}</div>
-          <div className="stat-sub">启用中 / 总数</div>
-        </div>
-      </div>
-
-      <div className="row" style={{ alignItems: "stretch" }}>
-        <div className="panel" style={{ flex: 1, minWidth: 280 }}>
-          <div className="kicker">最新注册用户</div>
-          {overview.recentUsers.length === 0 ? (
-            <p className="muted">暂无用户。</p>
-          ) : (
-            <div className="table-wrap" style={{ marginTop: 12 }}>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>邮箱</th>
-                    <th>角色</th>
-                    <th>注册时间</th>
-                  </tr>
-                </thead>
-                <tbody>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">最新注册用户</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {overview.recentUsers.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">暂无用户。</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>邮箱</TableHead>
+                    <TableHead>角色</TableHead>
+                    <TableHead className="text-right">注册时间</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {overview.recentUsers.map((user) => (
-                    <tr key={user.id}>
-                      <td>{user.email}</td>
-                      <td>
-                        <span className={user.role === "admin" ? "badge badge-accent" : "badge"}>
+                    <TableRow key={user.id}>
+                      <TableCell className="max-w-52 truncate">{user.email}</TableCell>
+                      <TableCell>
+                        <Badge variant={user.role === "admin" ? "default" : "secondary"}>
                           {user.role === "admin" ? "管理员" : "用户"}
-                        </span>
-                      </td>
-                      <td>{formatDateTime(user.createdAt)}</td>
-                    </tr>
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-right text-muted-foreground">
+                        {formatDateTime(user.createdAt)}
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
 
-        <div className="panel" style={{ flex: 1, minWidth: 280 }}>
-          <div className="kicker">全站近期调用</div>
-          {overview.recentUsage.length === 0 ? (
-            <p className="muted">暂无调用记录。</p>
-          ) : (
-            <div className="table-wrap" style={{ marginTop: 12 }}>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>时间</th>
-                    <th>模型</th>
-                    <th>tokens</th>
-                    <th>额度</th>
-                  </tr>
-                </thead>
-                <tbody>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">全站近期调用</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {overview.recentUsage.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">暂无调用记录。</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>时间</TableHead>
+                    <TableHead>模型</TableHead>
+                    <TableHead>tokens</TableHead>
+                    <TableHead className="text-right">额度</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {overview.recentUsage.map((log) => (
-                    <tr key={log._id}>
-                      <td>{formatDateTime(log.createdAt)}</td>
-                      <td className="mono">{log.modelId}</td>
-                      <td>{formatTokens(log.totalTokens)}</td>
-                      <td>{log.cost}</td>
-                    </tr>
+                    <TableRow key={log._id}>
+                      <TableCell className="whitespace-nowrap">{formatDateTime(log.createdAt)}</TableCell>
+                      <TableCell className="font-mono text-xs">{log.modelId}</TableCell>
+                      <TableCell className="tabular-nums">{formatTokens(log.totalTokens)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{log.cost}</TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
       </div>
-    </>
+    </div>
   );
 }

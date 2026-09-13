@@ -18,6 +18,33 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Plus } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { formatTokens } from "@/lib/format";
 import type { PlanDoc } from "@/lib/types";
 
@@ -27,7 +54,7 @@ interface PlanFormState {
   quotaTokens: string;
   validityDays: string;
   price: string;
-  enabled: boolean;
+  enabled: string;
   sortOrder: string;
 }
 
@@ -37,7 +64,7 @@ const emptyForm: PlanFormState = {
   quotaTokens: "",
   validityDays: "",
   price: "",
-  enabled: true,
+  enabled: "1",
   sortOrder: "0",
 };
 
@@ -64,7 +91,7 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
       quotaTokens: String(plan.quotaTokens),
       validityDays: String(plan.validityDays),
       price: plan.price ?? "",
-      enabled: plan.enabled,
+      enabled: plan.enabled ? "1" : "0",
       sortOrder: String(plan.sortOrder),
     });
     setShowForm(true);
@@ -79,7 +106,7 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
       quotaTokens: Number(form.quotaTokens),
       validityDays: Number(form.validityDays),
       price: form.price || null,
-      enabled: form.enabled,
+      enabled: form.enabled === "1",
       sortOrder: Number(form.sortOrder) || 0,
     };
     if (!Number.isFinite(payload.quotaTokens) || payload.quotaTokens <= 0) {
@@ -132,108 +159,164 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
   }
 
   return (
-    <>
-      <div className="toolbar">
-        <button className="button" type="button" onClick={startCreate}>新建套餐</button>
+    <div className="grid gap-4">
+      <div>
+        <Button onClick={startCreate}>
+          <Plus />
+          新建套餐
+        </Button>
       </div>
 
       {showForm ? (
-        <div className="panel" style={{ marginBottom: 20 }}>
-          <div className="kicker">{editingId ? "编辑套餐" : "新建套餐"}</div>
-          <form className="toolbar" style={{ marginTop: 14, alignItems: "flex-start" }} onSubmit={submit}>
-            <div className="field">
-              <label>名称</label>
-              <input className="input" required value={form.name}
-                onChange={(event) => setForm({ ...form, name: event.target.value })} />
-            </div>
-            <div className="field">
-              <label>额度（tokens）</label>
-              <input className="input" required type="number" min={1} value={form.quotaTokens}
-                onChange={(event) => setForm({ ...form, quotaTokens: event.target.value })} />
-            </div>
-            <div className="field">
-              <label>有效期（天）</label>
-              <input className="input" required type="number" min={1} value={form.validityDays}
-                onChange={(event) => setForm({ ...form, validityDays: event.target.value })} />
-            </div>
-            <div className="field">
-              <label>价格文案（选填）</label>
-              <input className="input" placeholder="¥9.9" value={form.price}
-                onChange={(event) => setForm({ ...form, price: event.target.value })} />
-            </div>
-            <div className="field">
-              <label>排序</label>
-              <input className="input" type="number" min={0} value={form.sortOrder}
-                onChange={(event) => setForm({ ...form, sortOrder: event.target.value })} />
-            </div>
-            <div className="field">
-              <label>描述（选填）</label>
-              <input className="input" value={form.description}
-                onChange={(event) => setForm({ ...form, description: event.target.value })} />
-            </div>
-            <div className="field">
-              <label>启用</label>
-              <select className="select" value={form.enabled ? "1" : "0"}
-                onChange={(event) => setForm({ ...form, enabled: event.target.value === "1" })}>
-                <option value="1">启用</option>
-                <option value="0">停用</option>
-              </select>
-            </div>
-            <div className="field">
-              <label>&nbsp;</label>
-              <div className="row">
-                <button className="button" type="submit" disabled={busy}>{editingId ? "保存" : "创建"}</button>
-                <button className="button-secondary" type="button" onClick={() => setShowForm(false)}>取消</button>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{editingId ? "编辑套餐" : "新建套餐"}</CardTitle>
+            <CardDescription>
+              额度在兑换时一次性充入；有效期自兑换时刻（或现有有效期之后）起算。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <form className="grid gap-4" onSubmit={submit}>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid gap-2">
+                  <Label htmlFor="plan-name">名称</Label>
+                  <Input
+                    id="plan-name"
+                    required
+                    value={form.name}
+                    onChange={(event) => setForm({ ...form, name: event.target.value })}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="plan-quota">额度（tokens）</Label>
+                  <Input
+                    id="plan-quota"
+                    required
+                    type="number"
+                    min={1}
+                    value={form.quotaTokens}
+                    onChange={(event) => setForm({ ...form, quotaTokens: event.target.value })}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="plan-validity">有效期（天）</Label>
+                  <Input
+                    id="plan-validity"
+                    required
+                    type="number"
+                    min={1}
+                    value={form.validityDays}
+                    onChange={(event) => setForm({ ...form, validityDays: event.target.value })}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="plan-price">价格文案（选填）</Label>
+                  <Input
+                    id="plan-price"
+                    placeholder="¥9.9"
+                    value={form.price}
+                    onChange={(event) => setForm({ ...form, price: event.target.value })}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="plan-sort">排序</Label>
+                  <Input
+                    id="plan-sort"
+                    type="number"
+                    min={0}
+                    value={form.sortOrder}
+                    onChange={(event) => setForm({ ...form, sortOrder: event.target.value })}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="plan-enabled">启用</Label>
+                  <Select value={form.enabled} onValueChange={(value) => setForm({ ...form, enabled: value })}>
+                    <SelectTrigger id="plan-enabled" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">启用</SelectItem>
+                      <SelectItem value="0">停用</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2 sm:col-span-2 lg:col-span-3">
+                  <Label htmlFor="plan-desc">描述（选填）</Label>
+                  <Input
+                    id="plan-desc"
+                    value={form.description}
+                    onChange={(event) => setForm({ ...form, description: event.target.value })}
+                  />
+                </div>
               </div>
-            </div>
-          </form>
-          {error ? <p className="error">{error}</p> : null}
-        </div>
+              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+              <div className="flex gap-2">
+                <Button type="submit" disabled={busy}>
+                  {editingId ? "保存" : "创建"}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
+                  取消
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
       ) : null}
 
-      <div className="panel">
-        {plans.length === 0 ? (
-          <p className="muted">还没有套餐，点击「新建套餐」创建第一个。</p>
-        ) : (
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>名称</th>
-                  <th>额度</th>
-                  <th>有效期</th>
-                  <th>价格文案</th>
-                  <th>排序</th>
-                  <th>状态</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
+      <Card>
+        <CardContent className="pt-6">
+          {plans.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              还没有套餐，点击「新建套餐」创建第一个。
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>名称</TableHead>
+                  <TableHead>额度</TableHead>
+                  <TableHead>有效期</TableHead>
+                  <TableHead>价格文案</TableHead>
+                  <TableHead>排序</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {plans.map((plan) => (
-                  <tr key={plan._id}>
-                    <td>{plan.name}{plan.description ? <div className="muted" style={{ fontSize: ".84rem" }}>{plan.description}</div> : null}</td>
-                    <td>{formatTokens(plan.quotaTokens)}</td>
-                    <td>{plan.validityDays} 天</td>
-                    <td>{plan.price || "—"}</td>
-                    <td>{plan.sortOrder}</td>
-                    <td>
-                      <span className={plan.enabled ? "badge badge-ok" : "badge"}>
+                  <TableRow key={plan._id}>
+                    <TableCell>
+                      <div className="font-medium">{plan.name}</div>
+                      {plan.description ? (
+                        <div className="text-xs text-muted-foreground">{plan.description}</div>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="tabular-nums">{formatTokens(plan.quotaTokens)}</TableCell>
+                    <TableCell className="tabular-nums">{plan.validityDays} 天</TableCell>
+                    <TableCell>{plan.price || "—"}</TableCell>
+                    <TableCell className="tabular-nums">{plan.sortOrder}</TableCell>
+                    <TableCell>
+                      <Badge variant={plan.enabled ? "default" : "secondary"}>
                         {plan.enabled ? "启用" : "停用"}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="actions">
-                        <button className="button-secondary button-small" type="button" onClick={() => startEdit(plan)}>编辑</button>
-                        <button className="button-danger button-small" type="button" onClick={() => remove(plan)} disabled={busy}>删除</button>
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" size="sm" onClick={() => startEdit(plan)}>
+                          编辑
+                        </Button>
+                        <Button variant="destructive" size="sm" onClick={() => remove(plan)} disabled={busy}>
+                          删除
+                        </Button>
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </>
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }

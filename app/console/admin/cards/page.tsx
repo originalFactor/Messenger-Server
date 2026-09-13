@@ -30,11 +30,9 @@ export default async function AdminCardsPage() {
   const plans = await listPlans();
 
   return (
-    <>
-      <div className="topbar">
-        <h1 style={{ margin: 0, fontSize: "1.5rem" }}>开卡</h1>
-      </div>
+    <div className="grid gap-6">
+      <h1 className="text-xl font-semibold tracking-tight">开卡</h1>
       <CardsManager plans={plans} />
-    </>
+    </div>
   );
 }

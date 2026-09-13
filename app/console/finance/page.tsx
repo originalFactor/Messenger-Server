@@ -16,6 +16,21 @@
 
 import { redirect } from "next/navigation";
 import { RedeemForm } from "@/components/console/redeem-form";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { requireUserSession } from "@/lib/auth";
 import { formatDateTime, formatTokens } from "@/lib/format";
 import { listRedemptions } from "@/lib/storage";
@@ -31,44 +46,45 @@ export default async function ConsoleFinancePage() {
   const redemptions = await listRedemptions(session.sub, 50);
 
   return (
-    <>
-      <div className="topbar">
-        <h1 style={{ margin: 0, fontSize: "1.5rem" }}>财务</h1>
-      </div>
+    <div className="grid gap-6">
+      <h1 className="text-xl font-semibold tracking-tight">财务</h1>
 
       <RedeemForm />
 
-      <div className="panel" style={{ marginTop: 20 }}>
-        <div className="kicker">历史兑换记录</div>
-        {redemptions.length === 0 ? (
-          <p className="muted">还没有兑换记录。</p>
-        ) : (
-          <div className="table-wrap" style={{ marginTop: 12 }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>时间</th>
-                  <th>卡密</th>
-                  <th>套餐</th>
-                  <th>额度</th>
-                  <th>有效期</th>
-                </tr>
-              </thead>
-              <tbody>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">历史兑换记录</CardTitle>
+          <CardDescription>最近的 50 条兑换记录。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {redemptions.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">还没有兑换记录。</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>时间</TableHead>
+                  <TableHead>卡密</TableHead>
+                  <TableHead>套餐</TableHead>
+                  <TableHead>额度</TableHead>
+                  <TableHead className="text-right">有效期</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {redemptions.map((redemption) => (
-                  <tr key={redemption._id}>
-                    <td>{formatDateTime(redemption.createdAt)}</td>
-                    <td className="mono">{redemption.cardCode}</td>
-                    <td>{redemption.planName}</td>
-                    <td>+{formatTokens(redemption.quotaTokens)}</td>
-                    <td>{redemption.validityDays} 天</td>
-                  </tr>
+                  <TableRow key={redemption._id}>
+                    <TableCell className="whitespace-nowrap">{formatDateTime(redemption.createdAt)}</TableCell>
+                    <TableCell className="font-mono text-xs">{redemption.cardCode}</TableCell>
+                    <TableCell>{redemption.planName}</TableCell>
+                    <TableCell className="tabular-nums">+{formatTokens(redemption.quotaTokens)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{redemption.validityDays} 天</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </>
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }

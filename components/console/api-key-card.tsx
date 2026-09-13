@@ -18,11 +18,20 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 
 export function ApiKeyCard({ apiKey }: { apiKey: string }) {
   const router = useRouter();
   const [revealed, setRevealed] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,8 +41,7 @@ export function ApiKeyCard({ apiKey }: { apiKey: string }) {
   async function copyKey() {
     try {
       await navigator.clipboard.writeText(apiKey);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      toast.success("已复制到剪贴板");
     } catch {
       setError("复制失败，请手动选择复制。");
     }
@@ -56,6 +64,7 @@ export function ApiKeyCard({ apiKey }: { apiKey: string }) {
         return;
       }
       setRevealed(true);
+      toast.success(hasKey ? "密钥已重置" : "密钥已生成");
       router.refresh();
     } catch {
       setError("网络错误，请稍后重试。");
@@ -64,45 +73,41 @@ export function ApiKeyCard({ apiKey }: { apiKey: string }) {
     }
   }
 
-  if (!hasKey) {
-    return (
-      <div className="panel">
-        <div className="kicker">AI API 密钥</div>
-        <p className="muted" style={{ margin: "8px 0 16px" }}>
-          当前账号还没有 AI API 密钥，生成后即可在 Messenger 中使用云 AI 服务。
-        </p>
-        {error ? <p className="error">{error}</p> : null}
-        <button className="button" type="button" onClick={regenerate} disabled={busy}>
-          {busy ? "生成中…" : "生成密钥"}
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div className="panel">
-      <div className="topbar" style={{ marginBottom: 8 }}>
-        <div>
-          <div className="kicker">AI API 密钥</div>
-          <p className="muted" style={{ margin: "8px 0 0" }}>
-            Messenger 应用登录后会自动以此密钥配置内置的 Messenger Cloud AI 服务商；
-            也可用于任意 OpenAI 兼容客户端，Base URL 填 <span className="mono">{"/v1"}</span>。
-          </p>
-        </div>
-      </div>
-      <div className="row">
-        <span className="chip">{revealed ? apiKey : masked}</span>
-        <button className="button-secondary button-small" type="button" onClick={() => setRevealed((value) => !value)}>
-          {revealed ? "隐藏" : "显示"}
-        </button>
-        <button className="button-secondary button-small" type="button" onClick={copyKey}>
-          {copied ? "已复制" : "复制"}
-        </button>
-        <button className="button-danger button-small" type="button" onClick={regenerate} disabled={busy}>
-          {busy ? "重置中…" : "重置密钥"}
-        </button>
-      </div>
-      {error ? <p className="error">{error}</p> : null}
-    </div>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">AI API 密钥</CardTitle>
+        <CardDescription>
+          Messenger 应用登录后会自动以此密钥配置内置的 Messenger Cloud AI 服务商；也可用于任意
+          OpenAI 兼容客户端，Base URL 填 <code className="font-mono text-xs">/v1</code>。
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        {hasKey ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Input readOnly value={revealed ? apiKey : masked} className="max-w-md font-mono text-xs" />
+            <Button variant="outline" size="sm" onClick={() => setRevealed((value) => !value)}>
+              {revealed ? "隐藏" : "显示"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={copyKey}>
+              复制
+            </Button>
+            <Button variant="destructive" size="sm" onClick={regenerate} disabled={busy}>
+              {busy ? "重置中…" : "重置密钥"}
+            </Button>
+          </div>
+        ) : (
+          <div>
+            <p className="mb-3 text-sm text-muted-foreground">
+              当前账号还没有 AI API 密钥，生成后即可在 Messenger 中使用云 AI 服务。
+            </p>
+            <Button onClick={regenerate} disabled={busy}>
+              {busy ? "生成中…" : "生成密钥"}
+            </Button>
+          </div>
+        )}
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      </CardContent>
+    </Card>
   );
 }

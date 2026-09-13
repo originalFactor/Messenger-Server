@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AuthForm } from "@/components/auth-form";
 import { requireUserSession } from "@/lib/auth";
@@ -25,8 +26,14 @@ export default async function RegisterPage() {
     redirect("/console");
   }
   return (
-    <main className="auth-shell">
-      <AuthForm mode="register" />
+    <main className="grid min-h-screen place-items-center p-6">
+      <div className="flex w-full max-w-sm flex-col items-center gap-6">
+        <Link className="flex items-center gap-2.5 text-sm font-semibold tracking-tight" href="/">
+          <span className="size-2.5 rounded-[4px] bg-gradient-to-br from-blue-500 to-purple-500 shadow-[0_0_12px] shadow-blue-500/30" />
+          Messenger Cloud
+        </Link>
+        <AuthForm mode="register" />
+      </div>
     </main>
   );
 }

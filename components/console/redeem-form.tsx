@@ -18,25 +18,28 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-
-interface RedeemSuccess {
-  planName: string;
-  quotaTokens: number;
-  validityDays: number;
-}
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export function RedeemForm() {
   const router = useRouter();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<RedeemSuccess | null>(null);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(null);
-    setSuccess(null);
     try {
       const response = await fetch("/api/console/redeem", {
         method: "POST",
@@ -51,11 +54,9 @@ export function RedeemForm() {
         setError(payload?.error ?? "兑换失败，请稍后重试。");
         return;
       }
-      setSuccess({
-        planName: payload.redemption.planName,
-        quotaTokens: payload.redemption.quotaTokens,
-        validityDays: payload.redemption.validityDays,
-      });
+      toast.success(
+        `兑换成功：${payload.redemption.planName}，+${payload.redemption.quotaTokens} 额度，有效期 ${payload.redemption.validityDays} 天`,
+      );
       setCode("");
       router.refresh();
     } catch {
@@ -66,33 +67,30 @@ export function RedeemForm() {
   }
 
   return (
-    <div className="panel">
-      <div className="kicker">兑换卡密</div>
-      <p className="muted" style={{ margin: "8px 0 16px" }}>
-        兑换成功后额度立即到账，有效期从当前有效期之后顺延。
-      </p>
-      <form className="toolbar" onSubmit={handleSubmit}>
-        <div className="field" style={{ flex: 1, minWidth: 240 }}>
-          <label htmlFor="card-code">卡密</label>
-          <input
-            id="card-code"
-            className="input mono"
-            required
-            placeholder="MS-XXXXX-XXXXX-XXXXX"
-            value={code}
-            onChange={(event) => setCode(event.target.value)}
-          />
-        </div>
-        <button className="button" type="submit" disabled={busy}>
-          {busy ? "兑换中…" : "兑换"}
-        </button>
-      </form>
-      {error ? <p className="error">{error}</p> : null}
-      {success ? (
-        <div className="notice">
-          兑换成功：{success.planName}，+{success.quotaTokens} 额度，有效期 {success.validityDays} 天。
-        </div>
-      ) : null}
-    </div>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">兑换卡密</CardTitle>
+        <CardDescription>兑换成功后额度立即到账，有效期从当前有效期之后顺延。</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form className="flex flex-wrap items-end gap-3" onSubmit={handleSubmit}>
+          <div className="grid min-w-60 flex-1 gap-2">
+            <Label htmlFor="card-code">卡密</Label>
+            <Input
+              id="card-code"
+              required
+              placeholder="MS-XXXXX-XXXXX-XXXXX"
+              className="font-mono text-xs uppercase"
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+            />
+          </div>
+          <Button type="submit" disabled={busy}>
+            {busy ? "兑换中…" : "兑换"}
+          </Button>
+        </form>
+        {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
+      </CardContent>
+    </Card>
   );
 }

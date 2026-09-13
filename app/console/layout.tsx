@@ -15,7 +15,7 @@
  */
 
 import { redirect } from "next/navigation";
-import { ConsoleSidebar } from "@/components/console/sidebar";
+import { ConsoleShell } from "@/components/console/console-shell";
 import { requireUserSession } from "@/lib/auth";
 import { getUserById } from "@/lib/storage";
 
@@ -33,11 +33,8 @@ export default async function ConsoleLayout({ children }: Readonly<{ children: R
   }
 
   return (
-    <main>
-      <div className="console">
-        <ConsoleSidebar email={user.email} role={user.role} />
-        <section>{children}</section>
-      </div>
-    </main>
+    <ConsoleShell email={user.email} role={user.role}>
+      {children}
+    </ConsoleShell>
   );
 }

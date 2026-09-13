@@ -19,6 +19,16 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export function AuthForm({ mode }: { mode: "login" | "register" }) {
   const router = useRouter();
@@ -59,74 +69,79 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   }
 
   return (
-    <div className="panel auth-panel">
-      <div style={{ display: "grid", justifyItems: "center", gap: 12, textAlign: "center" }}>
-        <span className="brand-dot" />
-        <div>
-          <h1 style={{ fontSize: "1.4rem", marginBottom: 4 }}>
-            {isRegister ? "创建账号" : "登录 Messenger Cloud"}
-          </h1>
-          <p className="muted" style={{ fontSize: "0.9rem", margin: 0 }}>
-            {isRegister ? "注册后即可使用云同步与内置 AI 服务" : "使用邮箱与密码继续"}
-          </p>
-        </div>
-      </div>
-      <form className="form" onSubmit={handleSubmit}>
-        <div className="field">
-          <label htmlFor="email">邮箱</label>
-          <input
-            id="email"
-            className="input"
-            type="email"
-            required
-            autoComplete="email"
-            placeholder="you@example.com"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="password">密码</label>
-          <input
-            id="password"
-            className="input"
-            type="password"
-            required
-            minLength={8}
-            autoComplete={isRegister ? "new-password" : "current-password"}
-            placeholder={isRegister ? "至少 8 位" : "密码"}
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-        </div>
-        {isRegister ? (
-          <div className="field">
-            <label htmlFor="confirm">确认密码</label>
-            <input
-              id="confirm"
-              className="input"
+    <Card className="w-full max-w-sm">
+      <CardHeader className="items-center text-center">
+        <span className="mx-auto mb-1 size-2.5 rounded-[4px] bg-gradient-to-br from-blue-500 to-purple-500 shadow-[0_0_12px] shadow-blue-500/30" />
+        <CardTitle className="text-xl">{isRegister ? "创建账号" : "登录 Messenger Cloud"}</CardTitle>
+        <CardDescription>
+          {isRegister ? "注册后即可使用云同步与内置 AI 服务" : "使用邮箱与密码继续"}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form className="grid gap-4" onSubmit={handleSubmit}>
+          <div className="grid gap-2">
+            <Label htmlFor="email">邮箱</Label>
+            <Input
+              id="email"
+              type="email"
+              required
+              autoComplete="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="password">密码</Label>
+            <Input
+              id="password"
               type="password"
               required
               minLength={8}
-              autoComplete="new-password"
-              placeholder="再次输入密码"
-              value={confirm}
-              onChange={(event) => setConfirm(event.target.value)}
+              autoComplete={isRegister ? "new-password" : "current-password"}
+              placeholder={isRegister ? "至少 8 位" : "密码"}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
             />
           </div>
-        ) : null}
-        {error ? <p className="error">{error}</p> : null}
-        <button className="button" type="submit" disabled={busy}>
-          {busy ? "请稍候…" : isRegister ? "注册" : "登录"}
-        </button>
-      </form>
-      <p className="auth-switch">
-        {isRegister ? (
-          <>已有账号？<Link href="/login">直接登录</Link></>
-        ) : (
-          <>还没有账号？<Link href="/register">立即注册</Link></>
-        )}
-      </p>
-    </div>
+          {isRegister ? (
+            <div className="grid gap-2">
+              <Label htmlFor="confirm">确认密码</Label>
+              <Input
+                id="confirm"
+                type="password"
+                required
+                minLength={8}
+                autoComplete="new-password"
+                placeholder="再次输入密码"
+                value={confirm}
+                onChange={(event) => setConfirm(event.target.value)}
+              />
+            </div>
+          ) : null}
+          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          <Button type="submit" disabled={busy}>
+            {busy ? "请稍候…" : isRegister ? "注册" : "登录"}
+          </Button>
+        </form>
+        <p className="mt-5 text-center text-sm text-muted-foreground">
+          {isRegister ? (
+            <>
+              已有账号？
+              <Link className="font-medium text-foreground underline-offset-4 hover:underline" href="/login">
+                直接登录
+              </Link>
+            </>
+          ) : (
+            <>
+              还没有账号？
+              <Link className="font-medium text-foreground underline-offset-4 hover:underline" href="/register">
+                立即注册
+              </Link>
+            </>
+          )}
+        </p>
+      </CardContent>
+    </Card>
   );
 }

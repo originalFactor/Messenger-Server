@@ -16,6 +16,22 @@
 
 import { redirect } from "next/navigation";
 import { ApiKeyCard } from "@/components/console/api-key-card";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { requireUserSession } from "@/lib/auth";
 import { formatDateTime, formatTokens } from "@/lib/format";
 import { quotaState } from "@/lib/quota";
@@ -41,71 +57,88 @@ export default async function ConsoleOverviewPage() {
   const quota = quotaState(user.quotaBalance, user.quotaExpiresAt, now);
 
   return (
-    <>
-      <div className="topbar">
-        <h1 style={{ margin: 0, fontSize: "1.5rem" }}>概览</h1>
-        <span className="badge badge-accent">{user.role === "admin" ? "管理员" : "用户"}</span>
+    <div className="grid gap-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold tracking-tight">概览</h1>
+        <Badge variant="outline">{user.role === "admin" ? "管理员" : "用户"}</Badge>
       </div>
 
-      <div className="stats-grid">
-        <div className="panel">
-          <div className="stat-label">剩余额度</div>
-          <div className="stat-value">{formatTokens(quota.balance)}</div>
-          <div className="stat-sub">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card>
+          <CardHeader>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">剩余额度</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">
+              {formatTokens(quota.balance)}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground">
             {quota.available
               ? `有效期至 ${formatDateTime(quota.expiresAt ?? 0)}`
               : quota.reason === "expired"
                 ? "套餐已过期，请兑换新卡密"
                 : "暂无可用额度，请兑换卡密"}
-          </div>
-        </div>
-        <div className="panel">
-          <div className="stat-label">近 24 小时请求</div>
-          <div className="stat-value">{today.requests}</div>
-          <div className="stat-sub">消耗 {formatTokens(today.cost)} 额度</div>
-        </div>
-        <div className="panel">
-          <div className="stat-label">近 24 小时 tokens</div>
-          <div className="stat-value">{formatTokens(today.tokens)}</div>
-          <div className="stat-sub">按模型倍率折算</div>
-        </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">近 24 小时请求</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">{today.requests}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground">
+            消耗 {formatTokens(today.cost)} 额度
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">近 24 小时 tokens</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(today.tokens)}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground">按模型倍率折算</CardContent>
+        </Card>
       </div>
 
       <ApiKeyCard apiKey={user.aiApiKey} />
 
-      <div className="panel" style={{ marginTop: 20 }}>
-        <div className="kicker">近期用量</div>
-        {recentUsage.length === 0 ? (
-          <p className="muted">暂无调用记录。在 Messenger 中使用 Messenger Cloud AI 服务商发起对话后，这里会展示明细。</p>
-        ) : (
-          <div className="table-wrap" style={{ marginTop: 12 }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>时间</th>
-                  <th>模型</th>
-                  <th>输入</th>
-                  <th>输出</th>
-                  <th>消耗额度</th>
-                  <th>方式</th>
-                </tr>
-              </thead>
-              <tbody>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">近期用量</CardTitle>
+          <CardDescription>
+            在 Messenger 中使用 Messenger Cloud AI 服务商发起对话后，这里会展示明细。
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {recentUsage.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">暂无调用记录。</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>时间</TableHead>
+                  <TableHead>模型</TableHead>
+                  <TableHead>输入</TableHead>
+                  <TableHead>输出</TableHead>
+                  <TableHead>消耗额度</TableHead>
+                  <TableHead className="text-right">方式</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {recentUsage.map((log) => (
-                  <tr key={log._id}>
-                    <td>{formatDateTime(log.createdAt)}</td>
-                    <td className="mono">{log.modelId}</td>
-                    <td>{formatTokens(log.promptTokens)}</td>
-                    <td>{formatTokens(log.completionTokens)}</td>
-                    <td>{log.cost}</td>
-                    <td>{log.stream ? "流式" : "非流式"}</td>
-                  </tr>
+                  <TableRow key={log._id}>
+                    <TableCell className="whitespace-nowrap">{formatDateTime(log.createdAt)}</TableCell>
+                    <TableCell className="font-mono text-xs">{log.modelId}</TableCell>
+                    <TableCell className="tabular-nums">{formatTokens(log.promptTokens)}</TableCell>
+                    <TableCell className="tabular-nums">{formatTokens(log.completionTokens)}</TableCell>
+                    <TableCell className="tabular-nums">{log.cost}</TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      {log.stream ? "流式" : "非流式"}
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </>
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }

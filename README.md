@@ -6,6 +6,7 @@
 
 - Official website homepage with public plan/pricing display and web login/registration
 - Shared web console (`/console`) for users and administrators; the first registered user is automatically promoted to admin
+- Web UI built with Tailwind CSS v4 + shadcn/ui (radix base, nova preset) and Geist fonts
 - Email/password accounts with JWT cookie sessions
 - MongoDB-backed versioned entity synchronization with per-user monotonic watermarks and soft-delete tombstones
 - Card-key (卡密) plan system: admin-defined plans, batch card issuance, user redemption with quota and validity extension
