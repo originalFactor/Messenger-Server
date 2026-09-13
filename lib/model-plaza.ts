@@ -17,7 +17,7 @@
 /**
  * 模型广场：对每个可服务模型，逐上游解析生效倍率（与 /v1 代理的
  * resolveModelMeta 语义完全一致 —— override 开启用自定义值（缺失回退
- * models.dev），关闭用 models.dev，无数据置零），多上游倍率不一致时
+ * models.dev），关闭用 models.dev，倍率无数据默认 1x），多上游倍率不一致时
  * 聚合为区间展示。
  */
 
@@ -47,13 +47,13 @@ export async function getModelPlaza(): Promise<PlazaModel[]> {
       const resolved = custom?.override
         ? {
             contextWindow: custom.contextWindow ?? devContext ?? 0,
-            inputRate: custom.inputRate ?? devRate?.input ?? 0,
-            outputRate: custom.outputRate ?? devRate?.output ?? 0,
+            inputRate: custom.inputRate ?? devRate?.input ?? 1,
+            outputRate: custom.outputRate ?? devRate?.output ?? 1,
           }
         : {
             contextWindow: devContext ?? 0,
-            inputRate: devRate?.input ?? 0,
-            outputRate: devRate?.output ?? 0,
+            inputRate: devRate?.input ?? 1,
+            outputRate: devRate?.output ?? 1,
           };
       const entry = collected.get(modelId) ?? { contexts: [], inputs: [], outputs: [] };
       entry.contexts.push(resolved.contextWindow);

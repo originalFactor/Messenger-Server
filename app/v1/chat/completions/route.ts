@@ -92,8 +92,8 @@ interface ResolvedModelMeta {
 
 /**
  * 元数据解析（按模型）：该模型的 modelMeta.override 开启时使用其自定义值
- * （缺失字段回退 models.dev），否则直接使用 models.dev 元数据；无数据一律
- * 置零（contextWindow 0 = 不限制，倍率 0 = 不计费）。
+ * （缺失字段回退 models.dev），否则直接使用 models.dev 元数据；倍率无数据
+ * 时默认 1x（显式配置 0 = 不计费），contextWindow 0 = 不限制。
  */
 function resolveModelMeta(upstream: UpstreamDoc, model: string, defaults: SettleParams["defaults"]): ResolvedModelMeta {
   const devContext = defaults.contextSizes[model];
@@ -102,14 +102,14 @@ function resolveModelMeta(upstream: UpstreamDoc, model: string, defaults: Settle
   if (custom?.override) {
     return {
       contextWindow: custom.contextWindow ?? devContext ?? 0,
-      inputRate: custom.inputRate ?? devRate?.input ?? 0,
-      outputRate: custom.outputRate ?? devRate?.output ?? 0,
+      inputRate: custom.inputRate ?? devRate?.input ?? 1,
+      outputRate: custom.outputRate ?? devRate?.output ?? 1,
     };
   }
   return {
     contextWindow: devContext ?? 0,
-    inputRate: devRate?.input ?? 0,
-    outputRate: devRate?.output ?? 0,
+    inputRate: devRate?.input ?? 1,
+    outputRate: devRate?.output ?? 1,
   };
 }
 

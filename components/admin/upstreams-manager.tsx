@@ -427,9 +427,9 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       const dev = devMeta[modelId];
       const meta = upstream.modelMeta?.[modelId];
       if (meta?.override) {
-        return { inputRate: meta.inputRate ?? dev?.inputRate ?? 0, outputRate: meta.outputRate ?? dev?.outputRate ?? 0 };
+        return { inputRate: meta.inputRate ?? dev?.inputRate ?? 1, outputRate: meta.outputRate ?? dev?.outputRate ?? 1 };
       }
-      return { inputRate: dev?.inputRate ?? 0, outputRate: dev?.outputRate ?? 0 };
+      return { inputRate: dev?.inputRate ?? 1, outputRate: dev?.outputRate ?? 1 };
     };
     const cheapest = [...upstream.models].sort((a, b) => {
       const rateA = rateOf(a);
@@ -657,7 +657,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
               <div className="grid gap-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-xs text-muted-foreground">
-                    每个模型的元数据默认取自 models.dev（上下文 0 = 不限制，倍率 0 = 不计费）；
+                    每个模型的元数据默认取自 models.dev（上下文 0 = 不限制，倍率 0 = 不计费，
+                    models.dev 无数据的模型倍率默认 1x）；
                     在表格中打开「覆盖」后可为此上游单独自定义。
                   </p>
                   <Button type="button" variant="outline" size="sm" onClick={updateMetaFromModelsDev}>
