@@ -1138,6 +1138,16 @@ export async function getUserQuotaState(userId: string): Promise<QuotaState> {
   return quotaStateFromEntitlements(await activeQuotaEntitlements(db, userId));
 }
 
+/** 用户持有的全部套餐条目（管理端详情页用），按获得时间降序。 */
+export async function listUserQuotaEntitlements(userId: string, limit = 200): Promise<UserQuotaDoc[]> {
+  const db = await getDb();
+  return db.collection<UserQuotaDoc>("user_quotas")
+    .find({ userId })
+    .sort({ createdAt: -1, _id: -1 })
+    .limit(Math.min(Math.max(limit, 1), 1_000))
+    .toArray();
+}
+
 export interface GrantQuotaInput {
   amount: number;
   /** 不传或 0 = 不限有效期。 */

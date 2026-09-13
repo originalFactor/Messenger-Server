@@ -17,6 +17,7 @@
  */
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -171,7 +172,7 @@ export function UsersManager({ users, currentUserId }: { users: AdminUserView[];
                   <TableHead className="w-44">有效期至</TableHead>
                   <TableHead className="w-44">注册时间</TableHead>
                   <TableHead className="w-44">最近登录</TableHead>
-                  <TableHead className="w-24 text-right">操作</TableHead>
+                  <TableHead className="w-36 text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -197,9 +198,14 @@ export function UsersManager({ users, currentUserId }: { users: AdminUserView[];
                       {user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "—"}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="outline" size="sm" disabled={editingId === user._id} onClick={() => startEdit(user)}>
-                        调整
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" size="sm" asChild>
+                          <Link href={`/console/admin/users/${user._id}`}>详情</Link>
+                        </Button>
+                        <Button variant="outline" size="sm" disabled={editingId === user._id} onClick={() => startEdit(user)}>
+                          调整
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

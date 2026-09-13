@@ -67,7 +67,7 @@ export default async function ConsoleFinancePage() {
                   <TableHead>卡密</TableHead>
                   <TableHead>套餐</TableHead>
                   <TableHead>额度</TableHead>
-                  <TableHead className="text-right">有效期</TableHead>
+                  <TableHead className="text-right">有效期至</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -77,7 +77,9 @@ export default async function ConsoleFinancePage() {
                     <TableCell className="font-mono text-xs">{redemption.cardCode}</TableCell>
                     <TableCell>{redemption.planName}</TableCell>
                     <TableCell className="tabular-nums">+{formatTokens(redemption.quotaTokens)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{redemption.validityDays} 天</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {formatDateTime(redemption.createdAt + redemption.validityDays * 24 * 60 * 60 * 1000)}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
