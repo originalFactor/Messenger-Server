@@ -263,8 +263,13 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       const payload = (await response.json()) as {
         metadata?: Record<string, UpstreamModelMeta>;
       };
-      setDevMeta((meta) => ({ ...meta, ...payload.metadata ?? {} }));
-      toast.success("已从 models.dev 更新元数据");
+      const metadata = payload.metadata ?? {};
+      if (Object.keys(metadata).length === 0) {
+        toast.error("models.dev 无可用元数据（服务器可能无法访问 models.dev）");
+        return;
+      }
+      setDevMeta((meta) => ({ ...meta, ...metadata }));
+      toast.success(`已从 models.dev 更新 ${Object.keys(metadata).length} 个模型的元数据`);
     } catch {
       setFormError("网络错误，请稍后重试。");
     }

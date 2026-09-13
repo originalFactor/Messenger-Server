@@ -219,6 +219,11 @@ export async function getModelDefaults(forceRefresh = false): Promise<MetadataCa
   }
   inflight = fetchMetadata()
     .then((data) => {
+      // models.dev 完全不可达时不缓存空结果，避免一次瞬时故障把
+      // 24h 缓存投毒成全空（显示不限/0）；下次请求会重试。
+      if (Object.keys(data.contextSizes).length === 0 && Object.keys(data.rates).length === 0) {
+        throw new Error("models.dev returned no metadata");
+      }
       cache = data;
       return data;
     })
