@@ -1591,6 +1591,15 @@ export async function listEnabledUpstreamModels(): Promise<string[]> {
   return [...new Set(upstreams.flatMap((upstream) => upstream.models))].sort((a, b) => a.localeCompare(b));
 }
 
+/** 全部启用的上游文档（含 modelMeta），供模型广场做倍率聚合。 */
+export async function listEnabledUpstreams(): Promise<UpstreamDoc[]> {
+  const db = await getDb();
+  return db.collection<UpstreamDoc>("upstreams")
+    .find({ enabled: true })
+    .sort({ priority: 1, _id: 1 })
+    .toArray();
+}
+
 export async function recordUsage(log: Omit<UsageLogDoc, "_id" | "createdAt">, createdAt?: number): Promise<void> {
   const db = await getDb();
   await db.collection<UsageLogDoc>("usage_logs").insertOne({ ...log, _id: randomUUID(), createdAt: createdAt ?? Date.now() });

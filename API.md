@@ -515,6 +515,8 @@ interface SessionClaims {
 
 `/v1/*` 是面向用户 API Key（`Authorization: Bearer sk-…`）的 OpenAI 兼容代理。可用模型 = 所有启用上游可服务模型的并集；额度在响应完成后按 `ceil(promptTokens × 输入倍率 + completionTokens × 输出倍率)` 扣减（失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`）。元数据解析（按模型）：该模型的 `modelMeta.override` 开启时用其自定义值（缺失字段回退 models.dev），关闭时直接用 models.dev 元数据；无数据置零 —— contextWindow 0 = 不限制，倍率 0 = 不计费（双倍率为 0 时本条调用免费）。
 
+**模型广场**：公开页面 `GET /models`（无需登录，RSC 直读，`lib/model-plaza.ts`）按同一套解析语义展示全部可服务模型的上下文窗口与输入/输出倍率；同一模型被多个上游提供且倍率不同时显示 `min ~ max` 区间（0 显示为「免费」），并列出提供该模型的上游数量。
+
 ### GET /v1/models
 
 ```json

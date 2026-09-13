@@ -79,6 +79,9 @@ export default async function HomePage() {
             <Link className="hidden text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:block" href="#pricing">
               套餐
             </Link>
+            <Link className="hidden text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:block" href="/models">
+              模型广场
+            </Link>
             <Link className="hidden text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:block" href="https://github.com/ECSDevs/Messenger">
               GitHub
             </Link>
