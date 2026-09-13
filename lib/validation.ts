@@ -90,6 +90,12 @@ export const conversationSchema = z.object({
   overrideMaxTokens: z.number().int().nullable().optional(),
   overrideReasoningEffort: z.string().nullable().optional(),
   reasoningFormat: z.string().nullable().optional(),
+  // 客户端 80% 上下文自动摘要：折叠的历史摘要 + 摘要覆盖截止时间戳，
+  // 以及最近一次用量记账（token 数 + 记账时间戳）。旧客户端不发送这些键。
+  contextSummary: z.string().nullable().optional(),
+  contextSummaryUntil: z.number().int().nonnegative().nullable().optional(),
+  contextTokens: z.number().int().nonnegative().nullable().optional(),
+  contextTokensAt: z.number().int().nonnegative().nullable().optional(),
   messages: z.array(messageSchema).max(10_000),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
@@ -100,6 +106,8 @@ export const modelSchema = z.object({
   modelId: z.string().min(1).max(500),
   displayName: z.string(),
   isEnabled: z.boolean(),
+  // 模型上下文窗口（tokens），0 = 未知/不限。旧客户端不发送该键。
+  contextWindow: z.number().int().min(0).nullable().optional(),
   createdAt: z.number().int().nonnegative(),
 }).strict();
 

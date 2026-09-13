@@ -16,7 +16,7 @@
 
 import { authenticateAiKey, openAiError } from "@/lib/ai-proxy";
 import { jsonOk } from "@/lib/http";
-import { listEnabledUpstreamModels } from "@/lib/storage";
+import { getModelPlaza } from "@/lib/model-plaza";
 
 export const runtime = "nodejs";
 
@@ -26,14 +26,19 @@ export async function GET(request: Request) {
     return openAiError("Invalid API key.", 401, { type: "authentication_error", code: "invalid_api_key" });
   }
 
-  const models = await listEnabledUpstreamModels();
+  // 模型元数据（context_window / 倍率）与 /v1/chat/completions 的
+  // resolveModelMeta 语义一致：override 开启用自定义值（缺失回退
+  // models.dev），关闭用 models.dev，多上游不一致取最大上下文。
+  const plaza = await getModelPlaza();
+  const now = Math.floor(Date.now() / 1000);
   return jsonOk({
     object: "list",
-    data: models.map((modelId) => ({
-      id: modelId,
+    data: plaza.map((model) => ({
+      id: model.modelId,
       object: "model",
-      created: Math.floor(Date.now() / 1000),
+      created: now,
       owned_by: "messenger-cloud",
+      context_window: model.contextWindow,
     })),
   });
 }

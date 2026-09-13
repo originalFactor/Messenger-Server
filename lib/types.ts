@@ -234,6 +234,11 @@ export interface ConversationDoc {
   overrideMaxTokens?: number | null;
   overrideReasoningEffort?: string | null;
   reasoningFormat?: string | null;
+  /** 80% 上下文自动摘要：折叠摘要、覆盖截止时间戳与最近一次用量记账。 */
+  contextSummary?: string | null;
+  contextSummaryUntil?: number | null;
+  contextTokens?: number | null;
+  contextTokensAt?: number | null;
   messages: MessageEmbed[];
   createdAt: number;
   updatedAt: number;
@@ -246,6 +251,8 @@ export interface ModelEmbed {
   modelId: string;
   displayName: string;
   isEnabled: boolean;
+  /** 上下文窗口（tokens），0 = 未知/不限。 */
+  contextWindow?: number | null;
   createdAt: number;
 }
 
@@ -341,6 +348,11 @@ export interface ConversationUpsertInput {
   overrideMaxTokens?: number | null;
   overrideReasoningEffort?: string | null;
   reasoningFormat?: string | null;
+  /** 80% 上下文自动摘要：折叠摘要、覆盖截止时间戳与最近一次用量记账。 */
+  contextSummary?: string | null;
+  contextSummaryUntil?: number | null;
+  contextTokens?: number | null;
+  contextTokensAt?: number | null;
   messages: MessageEmbed[];
   createdAt: number;
   updatedAt: number;
