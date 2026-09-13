@@ -67,10 +67,13 @@ const emptyUpstreamForm: UpstreamFormState = {
 
 type ContextSizes = Record<string, number>;
 
-/** 展示形式：整数 K（1050000 → 1050K，四舍五入到最近的 K）。 */
+/** 展示形式：取能整除的最大单位（1000000 → 1M、1050000 → 1050K、500 → 500）。 */
 function formatContext(tokens: number): string {
-  if (tokens >= 1_000) {
-    return `${Math.round(tokens / 1_000)}K`;
+  if (tokens >= 1_000_000 && tokens % 1_000_000 === 0) {
+    return `${tokens / 1_000_000}M`;
+  }
+  if (tokens >= 1_000 && tokens % 1_000 === 0) {
+    return `${tokens / 1_000}K`;
   }
   return String(tokens);
 }
