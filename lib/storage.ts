@@ -1190,6 +1190,23 @@ export async function redeemCard(userId: string, rawCode: string): Promise<Redee
   return result;
 }
 
+/**
+ * 兑换前查询卡密信息（不消费）。卡内嵌创建时的套餐快照，
+ * 与 redeemCard 使用同一套状态与错误文案，预览通过即可兑换。
+ */
+export async function previewCard(rawCode: string): Promise<CardKeyDoc> {
+  const code = normalizeCardCode(rawCode);
+  const db = await getDb();
+  const card = await db.collection<CardKeyDoc>("card_keys").findOne({ code });
+  if (!card) {
+    throw new NotFoundError("卡密不存在，请检查输入是否正确。");
+  }
+  if (card.status !== "unused") {
+    throw new ConflictError(card.status === "redeemed" ? "该卡密已被使用。" : "该卡密已被停用。");
+  }
+  return card;
+}
+
 export async function listRedemptions(userId: string, limit = 50): Promise<RedemptionDoc[]> {
   const db = await getDb();
   return db.collection<RedemptionDoc>("redemptions")

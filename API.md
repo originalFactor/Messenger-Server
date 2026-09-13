@@ -118,6 +118,7 @@ interface SessionClaims {
 | PUT | `/api/auth/password` | 用户 | 修改密码 |
 | DELETE | `/api/auth/account` | 用户 | 永久注销账户 |
 | GET | `/api/console/overview` | 用户 | 控制台概览（额度 + 用量） |
+| POST | `/api/console/cards/preview` | 用户 | 兑换前查询卡密信息 |
 | POST | `/api/console/redeem` | 用户 | 兑换卡密 |
 | GET | `/api/console/redemptions` | 用户 | 历史兑换记录 |
 | POST | `/api/console/api-key` | 用户 | 重置 AI API Key |
@@ -340,6 +341,27 @@ interface SessionClaims {
   "recentUsage": [ /* UsageLogDoc[]，最近 10 条 */ ]
 }
 ```
+
+### POST /api/console/cards/preview
+
+兑换前查询卡密信息（卡内嵌创建时的套餐快照），不消费卡密。
+
+- 鉴权：用户会话
+- 请求体：`{ "code": "MS-XXXXX-XXXXX-XXXXX" }`
+- 响应 `200`：
+
+```jsonc
+{
+  "card": {
+    "code": "MS-XXXXX-XXXXX-XXXXX",
+    "planName": "入门套餐",
+    "quotaTokens": 100000,
+    "validityDays": 30
+  }
+}
+```
+
+- 错误：`400 请输入有效的卡密。`、`404 卡密不存在，请检查输入是否正确。`、`409 该卡密已被使用。` / `该卡密已被停用。`
 
 ### POST /api/console/redeem
 
