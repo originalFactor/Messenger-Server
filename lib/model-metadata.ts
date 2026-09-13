@@ -115,7 +115,7 @@ async function fetchMetadata(): Promise<MetadataCache> {
   // —— 上下文：来自扁平 models.json（含 vendor/model → 裸 ID 别名）——
   const contextSizes: ModelContextSizes = {};
   if (flatPayload) {
-    const flat = flatModelSchema.safeParse(flatPayload);
+    const flat = z.record(z.string(), flatModelSchema).safeParse(flatPayload);
     if (flat.success) {
       const entries = flat.data as unknown as Record<string, { limit?: { context?: number } }>;
       for (const [key, model] of Object.entries(entries)) {
@@ -136,7 +136,9 @@ async function fetchMetadata(): Promise<MetadataCache> {
   // —— 默认倍率：来自 api.json 的 cost，以基准模型归一化 ——
   const rates: ModelRateMap = {};
   if (apiPayload) {
-    const api = apiModelSchema.safeParse(apiPayload);
+    const api = z
+      .record(z.string(), z.object({ models: z.record(z.string(), apiModelSchema).optional() }))
+      .safeParse(apiPayload);
     if (api.success) {
       const providers = api.data as Record<
         string,
@@ -184,8 +186,20 @@ async function fetchMetadata(): Promise<MetadataCache> {
         return { input: chosen.input, output: chosen.output };
       };
 
-      const baseline =
-        pickCost(BASELINE_MODEL, BASELINE_PROVIDER) ?? pickCost(`${BASELINE_PROVIDER}/${BASELINE_MODEL}`);
+      // 基准候选链：数据源是活数据，条目会漂移，逐个回退直至命中。
+      // 官方 deepseek-v4-flash 与 v4.1-flash 同价，回退不改变基准值。
+      let baseline: ModelRates | null = null;
+      for (const candidate of [
+        BASELINE_MODEL,
+        `${BASELINE_PROVIDER}/${BASELINE_MODEL}`,
+        "deepseek-v4-flash",
+        `${BASELINE_PROVIDER}/deepseek-v4-flash`,
+      ]) {
+        baseline = pickCost(candidate, candidate.includes("/") ? undefined : BASELINE_PROVIDER);
+        if (baseline) {
+          break;
+        }
+      }
       if (baseline) {
         for (const entry of entries) {
           const rate: ModelRates = {
