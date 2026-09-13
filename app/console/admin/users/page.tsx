@@ -32,7 +32,7 @@ export default async function AdminUsersPage() {
   return (
     <div className="grid gap-6">
       <h1 className="text-xl font-semibold tracking-tight">用户管理</h1>
-      <UsersManager users={users} currentUserId={admin.claims.sub} />
+      <UsersManager users={users} />
     </div>
   );
 }

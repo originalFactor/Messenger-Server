@@ -17,6 +17,7 @@
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { UserAdjustPanel } from "@/components/admin/user-adjust-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -125,6 +126,13 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
           <CardContent className="text-xs text-muted-foreground">按条目独立计有效期</CardContent>
         </Card>
       </div>
+
+      <UserAdjustPanel
+        userId={user.id}
+        email={user.email}
+        role={user.role}
+        self={admin.claims.sub === user.id}
+      />
 
       <Card>
         <CardHeader>
