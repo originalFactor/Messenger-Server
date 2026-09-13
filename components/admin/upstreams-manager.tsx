@@ -362,15 +362,17 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
         outputRate: resolved.outputRate,
       };
     }
-    const payload = {
+    const payload: Record<string, unknown> = {
       name: form.name,
       baseUrl: form.baseUrl,
       apiKey: form.apiKey,
       models: selectedModels,
-      modelMeta: Object.keys(modelMeta).length > 0 ? modelMeta : null,
       priority: Number(form.priority) || 0,
       enabled: form.enabled === "1",
     };
+    if (Object.keys(modelMeta).length > 0) {
+      payload.modelMeta = modelMeta;
+    }
     setBusy(true);
     setFormError(null);
     try {

@@ -159,6 +159,7 @@ export const upstreamInputSchema = z.object({
         .strict(),
     )
     .refine((meta) => Object.keys(meta).length <= 1_000, "Too many model meta entries.")
+    .nullable()
     .optional(),
   priority: z.number().int().min(0).max(100_000),
   enabled: z.boolean(),
