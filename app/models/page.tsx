@@ -32,19 +32,20 @@ export const metadata = {
   title: "模型广场 - Messenger Cloud",
 };
 
-/** 倍率展示：0 = 不计费；小数最多保留 4 位并去掉尾零。 */
+/** 倍率展示：四舍五入到 0.1（区间先取整再比较，避免 0.2 ~ 0.2 这类退化）；0 = 不计费。 */
+function roundRate(rate: number): number {
+  return Math.round(rate * 10) / 10;
+}
+
 function formatRate(rate: number): string {
-  if (rate <= 0) {
-    return "免费";
-  }
-  return String(Number(rate.toFixed(4)));
+  const rounded = roundRate(rate);
+  return rounded <= 0 ? "免费" : rounded.toFixed(1);
 }
 
 function formatRateRange(min: number, max: number): string {
-  if (min === max) {
-    return formatRate(min);
-  }
-  return `${formatRate(min)} ~ ${formatRate(max)}`;
+  const lo = roundRate(min);
+  const hi = roundRate(max);
+  return lo === hi ? formatRate(lo) : `${formatRate(lo)} ~ ${formatRate(hi)}`;
 }
 
 /** 上下文展示：取能整除的最大单位（1000000 → 1M、1050000 → 1050K、500 → 500），0 = 不限。 */
