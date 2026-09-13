@@ -138,6 +138,7 @@ interface SessionClaims {
 | DELETE | `/api/admin/upstreams/{id}` | 管理员 | 删除上游 |
 | POST | `/api/admin/upstreams/probe` | 管理员 | 直接探测上游模型列表（无需先保存） |
 | POST | `/api/admin/upstreams/{id}/probe` | 管理员 | 探测已保存上游的模型列表 |
+| POST | `/api/admin/upstreams/test` | 管理员 | 测试上游单个模型（最小 chat completion） |
 | GET | `/api/plans` | 无 | 公开套餐列表（官网定价） |
 | GET | `/v1/models` | AI API Key | OpenAI 兼容模型列表 |
 | POST | `/v1/chat/completions` | AI API Key | OpenAI 兼容对话（流式/非流式，扣额度） |
@@ -466,6 +467,8 @@ interface SessionClaims {
 ```
 
 `POST /api/admin/upstreams/probe`：直探模式 —— 请求体 `{ "baseUrl": "https://api.example.com/v1", "apiKey": "…" }`，不要求上游已保存，供「新增/编辑上游」表单直接拉取模型列表；与 `{id}/probe` 共享 `lib/upstream-probe.ts` 实现，连接失败返回 `502`。两条探测路由的响应均内联 models.dev 的上下文数据：`{ "models": ["…"], "contextSizes": { "gpt-4o": 128000 } }`。
+
+`POST /api/admin/upstreams/test`：对单个上游模型发一次最小 chat completion（`"Hi"` + `max_tokens: 16`，30s 超时）。请求体 `{ "baseUrl": "…", "apiKey": "…", "model": "…" }`；响应 `200` 为 `{ "model": "…", "latencyMs": 832, "reply": "…" }`，失败返回上游的 `error.message`（`502`）。供「新增/编辑上游」表单的逐模型测试与整体测试（整体测试自动选已选模型中输入+输出倍率之和最低者）。
 
 ### GET /api/admin/models/metadata
 

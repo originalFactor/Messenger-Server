@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Activity, ArrowDownToLine, Plus, RefreshCw, X } from "lucide-react";
+import { Activity, ArrowDownToLine, Play, Plus, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -131,6 +131,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   const [overrideDrafts, setOverrideDrafts] = useState<Record<string, boolean>>({});
   const [probingId, setProbingId] = useState<string | null>(null);
   const [probeResults, setProbeResults] = useState<Record<string, string[]>>({});
+  const [testingModel, setTestingModel] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; text: string }>>({});
 
   // models.dev 元数据（含上下文与归一化倍率），页面加载时拉取一次。
   useEffect(() => {
@@ -163,6 +165,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setEditingModelMeta({});
     setMetaDrafts({});
     setOverrideDrafts({});
+    setTestResults({});
     setFormError(null);
     setShowForm(true);
     setError(null);
@@ -183,6 +186,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setEditingModelMeta(upstream.modelMeta ?? {});
     setMetaDrafts({});
     setOverrideDrafts({});
+    setTestResults({});
     setFormError(null);
     setShowForm(true);
     setError(null);
@@ -430,6 +434,62 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     }
   }
 
+  /** 对单个模型发一次最小 chat completion，结果内联显示在该行测试按钮下。 */
+  async function testModel(modelId: string): Promise<{ ok: boolean; text: string }> {
+    if (!form.baseUrl) {
+      setFormError("请先填写 Base URL。");
+      return { ok: false, text: "请先填写 Base URL。" };
+    }
+    setTestingModel(modelId);
+    setFormError(null);
+    try {
+      const response = await fetch("/api/admin/upstreams/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ baseUrl: form.baseUrl, apiKey: form.apiKey, model: modelId }),
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        latencyMs?: number;
+        error?: string;
+      } | null;
+      if (!response.ok || typeof payload?.latencyMs !== "number") {
+        const failed = { ok: false, text: payload?.error ?? "测试失败。" };
+        setTestResults((results) => ({ ...results, [modelId]: failed }));
+        return failed;
+      }
+      const passed = { ok: true, text: `${payload.latencyMs} ms` };
+      setTestResults((results) => ({ ...results, [modelId]: passed }));
+      return passed;
+    } catch {
+      const failed = { ok: false, text: "网络错误。" };
+      setTestResults((results) => ({ ...results, [modelId]: failed }));
+      return failed;
+    } finally {
+      setTestingModel(null);
+    }
+  }
+
+  /** 整体测试：在已选模型中自动挑选倍率（输入 + 输出之和）最低的一个发起测试。 */
+  async function testCheapestModel() {
+    if (selectedModels.length === 0) {
+      setFormError("请先勾选要测试的模型。");
+      return;
+    }
+    const cheapest = [...selectedModels].sort((a, b) => {
+      const rateA = resolvedMeta(a);
+      const rateB = resolvedMeta(b);
+      const sumA = rateA.inputRate + rateA.outputRate;
+      const sumB = rateB.inputRate + rateB.outputRate;
+      return sumA !== sumB ? sumA - sumB : a.localeCompare(b);
+    })[0];
+    const outcome = await testModel(cheapest);
+    if (outcome.ok) {
+      toast.success(`整体测试通过：${cheapest}（${outcome.text}）`);
+    } else {
+      toast.error(`整体测试失败（${cheapest}）：${outcome.text}`);
+    }
+  }
+
   const sortedDiscovered = [...discoveredModels].sort((a, b) => {
     const selectedFirst = Number(selectedModels.includes(b)) - Number(selectedModels.includes(a));
     return selectedFirst !== 0 ? selectedFirst : a.localeCompare(b);
@@ -587,10 +647,16 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                     每个模型的元数据默认取自 models.dev（上下文 0 = 不限制，倍率 0 = 不计费）；
                     在表格中打开「覆盖」后可为此上游单独自定义。
                   </p>
-                  <Button type="button" variant="outline" size="sm" onClick={updateMetaFromModelsDev}>
-                    <ArrowDownToLine />
-                    从 models.dev 更新元数据
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button type="button" variant="outline" size="sm" disabled={testingModel !== null} onClick={testCheapestModel}>
+                      <Play className={testingModel ? "animate-pulse" : undefined} />
+                      整体测试
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={updateMetaFromModelsDev}>
+                      <ArrowDownToLine />
+                      从 models.dev 更新元数据
+                    </Button>
+                  </div>
                 </div>
 
                 {discoveredModels.length > 0 ? (
@@ -612,6 +678,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                           <TableHead className="w-36">Context Window</TableHead>
                           <TableHead className="w-24">输入倍率</TableHead>
                           <TableHead className="w-24">输出倍率</TableHead>
+                          <TableHead className="w-32">测试</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -692,6 +759,32 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                     {meta.outputRate}
                                   </span>
                                 )}
+                              </TableCell>
+                              <TableCell onClick={(event) => event.stopPropagation()}>
+                                <div className="flex flex-col items-start gap-0.5">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 px-2.5 text-xs"
+                                    disabled={testingModel !== null}
+                                    onClick={() => void testModel(modelId)}
+                                  >
+                                    {testingModel === modelId ? "测试中…" : "测试"}
+                                  </Button>
+                                  {testResults[modelId] ? (
+                                    <span
+                                      title={testResults[modelId].text}
+                                      className={
+                                        testResults[modelId].ok
+                                          ? "max-w-32 truncate text-[10px] tabular-nums text-emerald-600"
+                                          : "max-w-32 truncate text-[10px] text-destructive"
+                                      }
+                                    >
+                                      {testResults[modelId].text}
+                                    </span>
+                                  ) : null}
+                                </div>
                               </TableCell>
                             </TableRow>
                           );

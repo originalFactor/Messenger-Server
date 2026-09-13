@@ -170,6 +170,12 @@ export const upstreamProbeSchema = z.object({
   apiKey: z.string().max(2_000),
 }).strict();
 
+export const upstreamTestSchema = z.object({
+  baseUrl: z.string().url().max(2_000),
+  apiKey: z.string().max(2_000),
+  model: z.string().trim().min(1).max(200),
+}).strict();
+
 export const MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024;
 
 const avatarContentTypes = {
