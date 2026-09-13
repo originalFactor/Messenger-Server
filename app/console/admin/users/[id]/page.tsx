@@ -37,7 +37,12 @@ import {
 } from "@/components/ui/table";
 import { requireAdminUser } from "@/lib/auth";
 import { formatDateTime, formatTokens } from "@/lib/format";
-import { getUserById, getUserQuotaState, listUserQuotaEntitlements } from "@/lib/storage";
+import {
+  getUserById,
+  getUserQuotaState,
+  getUserSyncSummary,
+  listUserQuotaEntitlements,
+} from "@/lib/storage";
 import type { UserQuotaDoc } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -50,12 +55,13 @@ const sourceLabels: Record<UserQuotaDoc["source"], string> = {
 
 /** 数据装配放在组件外的普通函数里，避免在渲染期间直接调用 Date.now()。 */
 async function loadUserDetail(userId: string) {
-  const [user, entitlements, quota] = await Promise.all([
+  const [user, entitlements, quota, sync] = await Promise.all([
     getUserById(userId),
     listUserQuotaEntitlements(userId),
     getUserQuotaState(userId),
+    getUserSyncSummary(userId),
   ]);
-  return { user, entitlements, quota, now: Date.now() };
+  return { user, entitlements, quota, sync, now: Date.now() };
 }
 
 export default async function AdminUserDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -65,7 +71,7 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
   }
 
   const { id } = await params;
-  const { user, entitlements, quota, now } = await loadUserDetail(id);
+  const { user, entitlements, quota, sync, now } = await loadUserDetail(id);
   if (!user) {
     redirect("/console/admin/users");
   }
@@ -126,6 +132,36 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
           <CardContent className="text-xs text-muted-foreground">按条目独立计有效期</CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Messenger Sync</CardTitle>
+          <CardDescription>
+            云同步的活跃数据（不含已删除的墓碑）
+            {sync.lastSyncAt ? ` · 最近同步 ${formatDateTime(sync.lastSyncAt)}` : " · 尚无同步数据"}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div>
+              <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">会话</p>
+              <p className="text-xl font-semibold tracking-tight tabular-nums">{formatTokens(sync.conversations)}</p>
+            </div>
+            <div>
+              <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">智能体</p>
+              <p className="text-xl font-semibold tracking-tight tabular-nums">{formatTokens(sync.agents)}</p>
+            </div>
+            <div>
+              <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">服务商</p>
+              <p className="text-xl font-semibold tracking-tight tabular-nums">{formatTokens(sync.providers)}</p>
+            </div>
+            <div>
+              <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">消息</p>
+              <p className="text-xl font-semibold tracking-tight tabular-nums">{formatTokens(sync.messages)}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <UserAdjustPanel
         userId={user.id}

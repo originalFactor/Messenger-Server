@@ -35,8 +35,10 @@ import type {
   ProviderUpsertInput,
   RedemptionDoc,
   SiteOverview,
+  SiteSyncOverview,
   StoredUser,
   SyncResponse,
+  SyncSummary,
   UpstreamDoc,
   UpstreamModelMeta,
   UsageLogDoc,
@@ -1640,6 +1642,92 @@ export async function sumUsage(userId: string | null, sinceTs: number): Promise<
  */
 export async function consumeQuota(userId: string, cost: number): Promise<void> {
   await deductUserQuota(userId, cost);
+}
+
+/** 单个用户的 Messenger Sync 概览：活跃实体计数 + 消息总数 + 最近同步时间。 */
+export async function getUserSyncSummary(userId: string): Promise<SyncSummary> {
+  const db = await getDb();
+  const countStage = { $match: { userId, deleted: false } };
+  const groupBase = { _id: null, count: { $sum: 1 }, last: { $max: "$updatedAt" } };
+  const [agents, conversations, providers] = await Promise.all([
+    db.collection<AgentDoc>("agents").aggregate<{ count: number; last: number | null }>([
+      countStage,
+      { $group: groupBase },
+    ]).next(),
+    db.collection<ConversationDoc>("conversations").aggregate<{
+      count: number;
+      last: number | null;
+      messages: number;
+    }>([
+      countStage,
+      {
+        $group: {
+          ...groupBase,
+          messages: { $sum: { $size: { $ifNull: ["$messages", []] } } },
+        },
+      },
+    ]).next(),
+    db.collection<ProviderDoc>("providers").aggregate<{ count: number; last: number | null }>([
+      countStage,
+      { $group: groupBase },
+    ]).next(),
+  ]);
+  const lastSyncAt = [agents?.last, conversations?.last, providers?.last]
+    .filter((value): value is number => typeof value === "number");
+  return {
+    agents: agents?.count ?? 0,
+    conversations: conversations?.count ?? 0,
+    providers: providers?.count ?? 0,
+    messages: conversations?.messages ?? 0,
+    lastSyncAt: lastSyncAt.length ? Math.max(...lastSyncAt) : null,
+  };
+}
+
+/** 全站 Messenger Sync 概览：活跃实体总量 + 有同步数据的用户数。 */
+export async function getSyncOverview(): Promise<SiteSyncOverview> {
+  const db = await getDb();
+  const [agents, conversations, providers] = await Promise.all([
+    db.collection<AgentDoc>("agents").aggregate<{ count: number; last: number | null; users: string[] }>([
+      { $match: { deleted: false } },
+      { $group: { _id: null, count: { $sum: 1 }, last: { $max: "$updatedAt" }, users: { $addToSet: "$userId" } } },
+    ]).next(),
+    db.collection<ConversationDoc>("conversations").aggregate<{
+      count: number;
+      last: number | null;
+      messages: number;
+      users: string[];
+    }>([
+      { $match: { deleted: false } },
+      {
+        $group: {
+          _id: null,
+          count: { $sum: 1 },
+          last: { $max: "$updatedAt" },
+          messages: { $sum: { $size: { $ifNull: ["$messages", []] } } },
+          users: { $addToSet: "$userId" },
+        },
+      },
+    ]).next(),
+    db.collection<ProviderDoc>("providers").aggregate<{ count: number; last: number | null; users: string[] }>([
+      { $match: { deleted: false } },
+      { $group: { _id: null, count: { $sum: 1 }, last: { $max: "$updatedAt" }, users: { $addToSet: "$userId" } } },
+    ]).next(),
+  ]);
+  const syncUsers = new Set<string>([
+    ...(agents?.users ?? []),
+    ...(conversations?.users ?? []),
+    ...(providers?.users ?? []),
+  ]);
+  const lastValues = [agents?.last, conversations?.last, providers?.last]
+    .filter((value): value is number => typeof value === "number");
+  return {
+    agents: agents?.count ?? 0,
+    conversations: conversations?.count ?? 0,
+    providers: providers?.count ?? 0,
+    messages: conversations?.messages ?? 0,
+    lastSyncAt: lastValues.length ? Math.max(...lastValues) : null,
+    syncUsers: syncUsers.size,
+  };
 }
 
 export async function getSiteOverview(): Promise<SiteOverview> {

@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/table";
 import { requireAdminUser } from "@/lib/auth";
 import { formatDateTime, formatTokens } from "@/lib/format";
-import { getSiteOverview } from "@/lib/storage";
+import { getSiteOverview, getSyncOverview } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +43,7 @@ export default async function AdminOverviewPage() {
     redirect("/console");
   }
 
-  const overview = await getSiteOverview();
+  const [overview, sync] = await Promise.all([getSiteOverview(), getSyncOverview()]);
 
   return (
     <div className="grid gap-6">
@@ -103,6 +103,17 @@ export default async function AdminOverviewPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">启用中 / 总数</CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">Messenger Sync</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(sync.conversations)}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground">
+            同步用户 {sync.syncUsers} · 会话 · 智能体 {formatTokens(sync.agents)} · 服务商 {formatTokens(sync.providers)} ·
+            消息 {formatTokens(sync.messages)}
+            {sync.lastSyncAt ? ` · 最近同步 ${formatDateTime(sync.lastSyncAt)}` : ""}
+          </CardContent>
         </Card>
       </div>
 

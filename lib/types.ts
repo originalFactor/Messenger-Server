@@ -363,6 +363,21 @@ export interface AdminRecentUser {
   createdAt: number;
 }
 
+/** Messenger Sync 数据概览：活跃（未删除）同步实体计数 + 最近同步时间。 */
+export interface SyncSummary {
+  agents: number;
+  conversations: number;
+  providers: number;
+  /** 活跃会话内嵌的消息总数。 */
+  messages: number;
+  lastSyncAt: number | null;
+}
+
+/** 全站 Sync 概览：在 SyncSummary 基础上增加有同步数据的用户数。 */
+export interface SiteSyncOverview extends SyncSummary {
+  syncUsers: number;
+}
+
 export interface SiteOverview {
   users: {
     total: number;

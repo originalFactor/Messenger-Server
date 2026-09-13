@@ -34,19 +34,20 @@ import {
 } from "@/components/ui/table";
 import { requireUserSession } from "@/lib/auth";
 import { formatDateTime, formatTokens } from "@/lib/format";
-import { getUserById, getUserQuotaState, listUsageLogs, sumUsage } from "@/lib/storage";
+import { getUserById, getUserQuotaState, getUserSyncSummary, listUsageLogs, sumUsage } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
 /** 数据装配放在组件外的普通函数里，避免在渲染期间直接调用 Date.now()。 */
 async function loadOverviewData(userId: string) {
   const now = Date.now();
-  const [today, recentUsage, quota] = await Promise.all([
+  const [today, recentUsage, quota, sync] = await Promise.all([
     sumUsage(userId, now - 24 * 60 * 60 * 1000),
     listUsageLogs(userId, 10),
     getUserQuotaState(userId),
+    getUserSyncSummary(userId),
   ]);
-  return { today, recentUsage, quota };
+  return { today, recentUsage, quota, sync };
 }
 
 export default async function ConsoleOverviewPage() {
@@ -59,7 +60,7 @@ export default async function ConsoleOverviewPage() {
     redirect("/login");
   }
 
-  const { today, recentUsage, quota } = await loadOverviewData(user.id);
+  const { today, recentUsage, quota, sync } = await loadOverviewData(user.id);
 
   return (
     <div className="grid gap-6">
@@ -68,7 +69,7 @@ export default async function ConsoleOverviewPage() {
         <Badge variant="outline">{user.role === "admin" ? "管理员" : "用户"}</Badge>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader>
             <CardDescription className="font-mono text-xs uppercase tracking-wider">剩余额度</CardDescription>
@@ -101,6 +102,16 @@ export default async function ConsoleOverviewPage() {
             <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(today.tokens)}</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">按模型倍率折算</CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">Messenger Sync</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(sync.conversations)}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground">
+            会话 · 智能体 {sync.agents} · 服务商 {sync.providers} · 消息 {formatTokens(sync.messages)}
+            {sync.lastSyncAt ? ` · 最近同步 ${formatDateTime(sync.lastSyncAt)}` : ""}
+          </CardContent>
         </Card>
       </div>
 
