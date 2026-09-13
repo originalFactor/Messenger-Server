@@ -253,6 +253,9 @@ export interface ModelEmbed {
   isEnabled: boolean;
   /** 上下文窗口（tokens），0 = 未知/不限。 */
   contextWindow?: number | null;
+  /** 相对基准的输入/输出倍率，0 = 免费；缺失 = 未知。 */
+  inputRate?: number | null;
+  outputRate?: number | null;
   createdAt: number;
 }
 

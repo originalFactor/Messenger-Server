@@ -108,6 +108,9 @@ export const modelSchema = z.object({
   isEnabled: z.boolean(),
   // 模型上下文窗口（tokens），0 = 未知/不限。旧客户端不发送该键。
   contextWindow: z.number().int().min(0).nullable().optional(),
+  // 模型倍率（相对基准的输入/输出倍率），0 = 免费。旧客户端不发送该键。
+  inputRate: z.number().finite().min(0).nullable().optional(),
+  outputRate: z.number().finite().min(0).nullable().optional(),
   createdAt: z.number().int().nonnegative(),
 }).strict();
 

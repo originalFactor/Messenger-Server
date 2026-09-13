@@ -29,6 +29,7 @@ export async function GET(request: Request) {
   // 模型元数据（context_window / 倍率）与 /v1/chat/completions 的
   // resolveModelMeta 语义一致：override 开启用自定义值（缺失回退
   // models.dev），关闭用 models.dev，多上游不一致取最大上下文。
+  // 倍率取各上游的最小值（最优惠价），0 = 该模型免费。
   const plaza = await getModelPlaza();
   const now = Math.floor(Date.now() / 1000);
   return jsonOk({
@@ -39,6 +40,8 @@ export async function GET(request: Request) {
       created: now,
       owned_by: "messenger-cloud",
       context_window: model.contextWindow,
+      input_rate: model.inputRateMin,
+      output_rate: model.outputRateMin,
     })),
   });
 }
