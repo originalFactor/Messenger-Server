@@ -27,10 +27,33 @@ export interface AdminUserView {
   _id: string;
   email: string;
   role: UserRole;
+  /** 未过期套餐条目的额度之和。 */
   quotaBalance: number;
+  /** 未过期条目中最晚的到期时间；quotaUnlimited 时为 null。 */
   quotaExpiresAt: number | null;
+  /** 是否持有不限有效期的条目（管理员直接授予）。 */
+  quotaUnlimited: boolean;
+  /** 未过期套餐条目数。 */
+  activeQuotaCount: number;
   createdAt: number;
   lastLoginAt?: number;
+}
+
+/**
+ * 用户持有的套餐条目：每次兑换 / 管理员授予各产生一条，
+ * 额度与有效期独立计算；消耗时按先过期先用扣减。
+ */
+export interface UserQuotaDoc {
+  _id: string;
+  userId: string;
+  source: "card" | "admin" | "migrated";
+  cardKeyId?: string | null;
+  planId?: string | null;
+  planName?: string | null;
+  balance: number;
+  /** null = 不限有效期。 */
+  expiresAt: number | null;
+  createdAt: number;
 }
 
 export interface StoredUser {

@@ -15,9 +15,10 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { type ClientSession, type Filter, MongoServerError } from "mongodb";
+import { type ClientSession, type Db, type Filter, MongoServerError } from "mongodb";
 import { renewAvatarLock, type AvatarLock } from "@/lib/avatar-locks";
 import { generateCardCode, normalizeCardCode } from "@/lib/apikeys";
+import { quotaStateFromEntitlements } from "@/lib/quota";
 import { getDb, getMongoClient } from "@/lib/mongo";
 import type {
   AdminRecentUser,
@@ -43,7 +44,10 @@ import type {
   UserDoc,
   UserRole,
 } from "@/lib/types";
-import type { AdminUserView } from "@/lib/types";
+import type { AdminUserView, UserQuotaDoc } from "@/lib/types";
+import type { QuotaEntitlementView, QuotaState } from "@/lib/quota";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export class NotFoundError extends Error {}
 export class ConflictError extends Error {}
@@ -1115,17 +1119,118 @@ export async function deleteCard(cardId: string): Promise<void> {
   }
 }
 
+/** 用户全部套餐条目的轻量视图（balance / expiresAt），供汇总计算。 */
+async function activeQuotaEntitlements(
+  db: Db,
+  userId: string,
+  session?: ClientSession,
+): Promise<QuotaEntitlementView[]> {
+  const docs = await db.collection<UserQuotaDoc>("user_quotas")
+    .find({ userId }, { session, projection: { balance: 1, expiresAt: 1 } })
+    .limit(1_000)
+    .toArray();
+  return docs.map((doc) => ({ balance: doc.balance ?? 0, expiresAt: doc.expiresAt ?? null }));
+}
+
+/** 用户当前可用额度状态（未过期条目汇总）。 */
+export async function getUserQuotaState(userId: string): Promise<QuotaState> {
+  const db = await getDb();
+  return quotaStateFromEntitlements(await activeQuotaEntitlements(db, userId));
+}
+
+export interface GrantQuotaInput {
+  amount: number;
+  /** 不传或 0 = 不限有效期。 */
+  validDays?: number;
+  source: UserQuotaDoc["source"];
+  cardKeyId?: string | null;
+  planId?: string | null;
+  planName?: string | null;
+}
+
+/** 授予一条独立的套餐条目（额度与有效期随条目各自计算）。 */
+export async function grantUserQuota(userId: string, input: GrantQuotaInput): Promise<UserQuotaDoc> {
+  if (!(input.amount > 0)) {
+    throw new Error("Grant amount must be positive.");
+  }
+  const db = await getDb();
+  const now = Date.now();
+  const entitlement: UserQuotaDoc = {
+    _id: randomUUID(),
+    userId,
+    source: input.source,
+    cardKeyId: input.cardKeyId ?? null,
+    planId: input.planId ?? null,
+    planName: input.planName ?? null,
+    balance: input.amount,
+    expiresAt: input.validDays && input.validDays > 0 ? now + input.validDays * DAY_MS : null,
+    createdAt: now,
+  };
+  await db.collection<UserQuotaDoc>("user_quotas").insertOne(entitlement);
+  return entitlement;
+}
+
+/**
+ * 按先过期先用扣减额度（事务内逐条原子扣减）：有限期条目按到期时间升序，
+ * 不限期条目最后消耗。返回实际扣减量（不足时扣到 0 为止，不产生负数）。
+ */
+export async function deductUserQuota(userId: string, amount: number): Promise<number> {
+  if (amount <= 0) {
+    return 0;
+  }
+  const db = await getDb();
+  const client = await getMongoClient();
+  const session = client.startSession();
+  let deducted = 0;
+  try {
+    await session.withTransaction(async () => {
+      const now = Date.now();
+      const docs = await db.collection<UserQuotaDoc>("user_quotas")
+        .find(
+          { userId, balance: { $gt: 0 }, $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] },
+          { session },
+        )
+        .toArray();
+      docs.sort((a, b) => {
+        const expiryA = a.expiresAt ?? Number.MAX_SAFE_INTEGER;
+        const expiryB = b.expiresAt ?? Number.MAX_SAFE_INTEGER;
+        return expiryA !== expiryB ? expiryA - expiryB : a.createdAt - b.createdAt;
+      });
+      let remaining = amount;
+      for (const doc of docs) {
+        if (remaining <= 0) {
+          break;
+        }
+        const take = Math.min(remaining, doc.balance);
+        if (take <= 0) {
+          continue;
+        }
+        await db.collection<UserQuotaDoc>("user_quotas").updateOne(
+          { _id: doc._id },
+          { $set: { balance: doc.balance - take } },
+          { session },
+        );
+        remaining -= take;
+        deducted += take;
+      }
+    });
+  } finally {
+    await session.endSession();
+  }
+  return deducted;
+}
+
 export interface RedeemResult {
   card: CardKeyDoc;
   redemption: RedemptionDoc;
-  quotaBalance: number;
-  quotaExpiresAt: number;
+  /** 兑换后的可用额度汇总（未过期条目之和 / 最晚到期时间）。 */
+  quota: QuotaState;
 }
 
 /**
  * 卡密兑换。原子占卡（status: unused → redeemed，唯一码 + 状态过滤），
- * 再在同一事务内累加额度并延长有效期，最后写入兑换记录。
- * 有效期语义：从「当前时刻与现有有效期的较大者」起加本套餐天数。
+ * 再在同一事务内插入一条独立的套餐条目（额度与有效期随卡各自计算）
+ * 并写入兑换记录。
  */
 export async function redeemCard(userId: string, rawCode: string): Promise<RedeemResult> {
   const code = normalizeCardCode(rawCode);
@@ -1158,14 +1263,18 @@ export async function redeemCard(userId: string, rawCode: string): Promise<Redee
         throw new NotFoundError("User not found.");
       }
 
-      const base = Math.max(now, user.quotaExpiresAt ?? 0);
-      const quotaExpiresAt = base + card.validityDays * 24 * 60 * 60 * 1000;
-      const quotaBalance = (user.quotaBalance ?? 0) + card.quotaTokens;
-      await db.collection<UserDoc>("users").updateOne(
-        { _id: userId },
-        { $set: { quotaBalance, quotaExpiresAt, updatedAt: now } },
-        { session },
-      );
+      const entitlement: UserQuotaDoc = {
+        _id: randomUUID(),
+        userId,
+        source: "card",
+        cardKeyId: card._id,
+        planId: card.planId,
+        planName: card.planName,
+        balance: card.quotaTokens,
+        expiresAt: now + card.validityDays * 24 * 60 * 60 * 1000,
+        createdAt: now,
+      };
+      await db.collection<UserQuotaDoc>("user_quotas").insertOne(entitlement, { session });
 
       const redemption: RedemptionDoc = {
         _id: randomUUID(),
@@ -1179,7 +1288,7 @@ export async function redeemCard(userId: string, rawCode: string): Promise<Redee
         createdAt: now,
       };
       await db.collection<RedemptionDoc>("redemptions").insertOne(redemption, { session });
-      result = { card, redemption, quotaBalance, quotaExpiresAt };
+      result = { card, redemption, quota: quotaStateFromEntitlements(await activeQuotaEntitlements(db, userId, session)) };
     });
   } finally {
     await session.endSession();
@@ -1230,33 +1339,65 @@ export async function updateUserAiApiKey(userId: string, apiKey: string): Promis
 
 export async function listUsers(limit = 200): Promise<AdminUserView[]> {
   const db = await getDb();
-  const users = await db.collection<UserDoc>("users")
-    .find({}, { projection: { email: 1, role: 1, quotaBalance: 1, quotaExpiresAt: 1, createdAt: 1, lastLoginAt: 1 } })
-    .sort({ createdAt: -1, _id: -1 })
-    .limit(Math.min(Math.max(limit, 1), 1_000))
-    .toArray();
-  return users.map((user) => ({
-    _id: user._id,
-    email: user.email,
-    role: user.role ?? "user",
-    quotaBalance: user.quotaBalance ?? 0,
-    quotaExpiresAt: user.quotaExpiresAt ?? null,
-    createdAt: user.createdAt,
-    lastLoginAt: user.lastLoginAt,
-  }));
+  const now = Date.now();
+  const [users, quotaRows] = await Promise.all([
+    db.collection<UserDoc>("users")
+      .find({}, { projection: { email: 1, role: 1, createdAt: 1, lastLoginAt: 1 } })
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(Math.min(Math.max(limit, 1), 1_000))
+      .toArray(),
+    db.collection<UserQuotaDoc>("user_quotas").aggregate<{
+      _id: string;
+      balance: number;
+      count: number;
+      unlimited: number;
+      maxExpiry?: number;
+    }>([
+      { $match: { $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] } },
+      {
+        $group: {
+          _id: "$userId",
+          balance: { $sum: "$balance" },
+          count: { $sum: 1 },
+          unlimited: { $max: { $cond: [{ $eq: ["$expiresAt", null] }, 1, 0] } },
+          maxExpiry: { $max: "$expiresAt" },
+        },
+      },
+    ]).toArray(),
+  ]);
+  const quotaByUser = new Map(quotaRows.map((row) => [row._id, row]));
+  return users.map((user) => {
+    const quota = quotaByUser.get(user._id);
+    const unlimited = (quota?.unlimited ?? 0) === 1;
+    return {
+      _id: user._id,
+      email: user.email,
+      role: user.role ?? "user",
+      quotaBalance: quota?.balance ?? 0,
+      quotaExpiresAt: unlimited ? null : quota?.maxExpiry ?? null,
+      quotaUnlimited: unlimited,
+      activeQuotaCount: quota?.count ?? 0,
+      createdAt: user.createdAt,
+      lastLoginAt: user.lastLoginAt,
+    };
+  });
 }
 
 export interface AdminUserPatch {
   /** 额度增减（正数充值 / 负数扣减），结果下限 0。 */
   quotaDelta?: number;
-  /** 有效期顺延天数，与卡密兑换同语义：max(now, 现有有效期) + 天数。 */
+  /** 充值条目的有效天数（0 = 不限），仅 quotaDelta > 0 时生效。 */
+  quotaValidDays?: number;
+  /** 有效期顺延天数，作用于所有已设到期时间的未过期条目。 */
   quotaExtendDays?: number;
   role?: UserRole;
 }
 
 /**
  * 管理员修改用户（角色 / 额度 / 有效期）。禁止修改自己的角色，
- * 避免误操作把唯一管理员降级导致锁死。
+ * 避免误操作把唯一管理员降级导致锁死。额度操作作用于独立的套餐条目：
+ * 正数充值生成新条目（可设有效天数，0 = 不限），负数按先过期先用扣减，
+ * 顺延天数作用于所有已设到期时间的未过期条目（不限期条目保持不限）。
  */
 export async function adminUpdateUser(
   operatorId: string,
@@ -1273,33 +1414,41 @@ export async function adminUpdateUser(
   }
 
   const now = Date.now();
-  const update: Partial<UserDoc> = { updatedAt: now };
-  if (patch.role !== undefined) {
-    update.role = patch.role;
-  }
-  if (patch.quotaDelta !== undefined) {
-    update.quotaBalance = Math.max(0, (user.quotaBalance ?? 0) + patch.quotaDelta);
+  if (patch.quotaDelta !== undefined && patch.quotaDelta > 0) {
+    await grantUserQuota(userId, {
+      amount: patch.quotaDelta,
+      validDays: patch.quotaValidDays,
+      source: "admin",
+    });
+  } else if (patch.quotaDelta !== undefined && patch.quotaDelta < 0) {
+    await deductUserQuota(userId, -patch.quotaDelta);
   }
   if (patch.quotaExtendDays !== undefined && patch.quotaExtendDays > 0) {
-    update.quotaExpiresAt = Math.max(now, user.quotaExpiresAt ?? 0) + patch.quotaExtendDays * 24 * 60 * 60 * 1000;
+    await db.collection<UserQuotaDoc>("user_quotas").updateMany(
+      { userId, expiresAt: { $ne: null, $gt: now } },
+      { $inc: { expiresAt: patch.quotaExtendDays * DAY_MS } },
+    );
+  }
+  if (patch.role !== undefined) {
+    await db.collection<UserDoc>("users").updateOne(
+      { _id: userId },
+      { $set: { role: patch.role, updatedAt: now } },
+    );
   }
 
-  const updated = await db.collection<UserDoc>("users").findOneAndUpdate(
-    { _id: userId },
-    { $set: update },
-    { returnDocument: "after", includeResultMetadata: false },
-  );
-  if (!updated) {
-    throw new NotFoundError("User not found.");
-  }
+  const entitlements = await activeQuotaEntitlements(db, userId);
+  const state = quotaStateFromEntitlements(entitlements);
+  const activeCount = entitlements.filter((entry) => entry.expiresAt === null || entry.expiresAt > Date.now()).length;
   return {
-    _id: updated._id,
-    email: updated.email,
-    role: updated.role ?? "user",
-    quotaBalance: updated.quotaBalance ?? 0,
-    quotaExpiresAt: updated.quotaExpiresAt ?? null,
-    createdAt: updated.createdAt,
-    lastLoginAt: updated.lastLoginAt,
+    _id: user._id,
+    email: user.email,
+    role: patch.role ?? user.role ?? "user",
+    quotaBalance: state.balance,
+    quotaExpiresAt: state.expiresAt,
+    quotaUnlimited: state.available && state.expiresAt === null,
+    activeQuotaCount: activeCount,
+    createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt,
   };
 }
 
@@ -1476,25 +1625,11 @@ export async function sumUsage(userId: string | null, sinceTs: number): Promise<
 }
 
 /**
- * 扣减额度（下限 0）。流水线更新在服务端原子完成，并发的 AI 请求
- * 不会把余额扣成负数。
+ * 扣减额度（AI 计费）。按先过期先用从用户的套餐条目中扣减，
+ * 事务内原子完成，余额不足时扣到 0 为止，不产生负数。
  */
 export async function consumeQuota(userId: string, cost: number): Promise<void> {
-  if (cost <= 0) {
-    return;
-  }
-  const db = await getDb();
-  await db.collection<UserDoc>("users").updateOne(
-    { _id: userId },
-    [
-      {
-        $set: {
-          quotaBalance: { $max: [0, { $subtract: ["$quotaBalance", cost] }] },
-          updatedAt: Date.now(),
-        },
-      },
-    ],
-  );
+  await deductUserQuota(userId, cost);
 }
 
 export async function getSiteOverview(): Promise<SiteOverview> {

@@ -16,8 +16,7 @@
 
 import { requireUserSession } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
-import { quotaState } from "@/lib/quota";
-import { getUserById, listUsageLogs, sumUsage } from "@/lib/storage";
+import { getUserById, getUserQuotaState, listUsageLogs, sumUsage } from "@/lib/storage";
 
 export const runtime = "nodejs";
 
@@ -33,13 +32,14 @@ export async function GET() {
   }
 
   const now = Date.now();
-  const [today, recentUsage] = await Promise.all([
+  const [today, recentUsage, quota] = await Promise.all([
     sumUsage(user.id, now - 24 * 60 * 60 * 1000),
     listUsageLogs(user.id, 10),
+    getUserQuotaState(user.id),
   ]);
 
   return jsonOk({
-    quota: quotaState(user.quotaBalance, user.quotaExpiresAt, now),
+    quota,
     usage: { today },
     recentUsage,
   });

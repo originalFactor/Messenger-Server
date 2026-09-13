@@ -177,9 +177,11 @@ export const upstreamTestSchema = z.object({
 }).strict();
 
 export const adminUserPatchSchema = z.object({
-  /** 额度增减（正数充值 / 负数扣减），结果下限 0。 */
+  /** 额度增减（正数充值 / 负数扣减）。正数生成新条目，负数按先过期先用扣减，结果下限 0。 */
   quotaDelta: z.number().int().min(-1_000_000_000_000).max(1_000_000_000_000).optional(),
-  /** 有效期顺延天数（与卡密兑换同语义：max(now, 现有) + 天数）。 */
+  /** 充值条目的有效天数（0 = 不限），仅 quotaDelta > 0 时生效。 */
+  quotaValidDays: z.number().int().min(0).max(3_650).optional(),
+  /** 有效期顺延天数：作用于所有已设到期时间的未过期条目。 */
   quotaExtendDays: z.number().int().min(0).max(3_650).optional(),
   role: z.enum(["user", "admin"]).optional(),
 }).strict().refine((patch) => Object.keys(patch).length > 0, "Patch must not be empty.");

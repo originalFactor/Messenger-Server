@@ -43,8 +43,8 @@ export async function POST(request: Request) {
         redeemedAt: result.redemption.createdAt,
       },
       quota: {
-        balance: result.quotaBalance,
-        expiresAt: result.quotaExpiresAt,
+        balance: result.quota.balance,
+        expiresAt: result.quota.expiresAt,
       },
     });
   } catch (error) {

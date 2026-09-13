@@ -14,9 +14,11 @@
  * limitations under the License.
  */
 
+import { randomUUID } from "node:crypto";
 import { Db, MongoClient } from "mongodb";
 import { generateAiApiKey } from "@/lib/apikeys";
 import { env } from "@/lib/env";
+import type { UserQuotaDoc } from "@/lib/types";
 
 declare global {
   var messengerMongoClientPromise: Promise<MongoClient> | undefined;
@@ -66,9 +68,12 @@ async function ensureIndexesFor(database: Db): Promise<void> {
       database.collection("redemptions").createIndex({ userId: 1, createdAt: -1, _id: 1 }),
       database.collection("usage_logs").createIndex({ userId: 1, createdAt: -1, _id: 1 }),
       database.collection("usage_logs").createIndex({ createdAt: -1, _id: 1 }),
+      database.collection("user_quotas").createIndex({ userId: 1, expiresAt: 1 }),
+      database.collection("user_quotas").createIndex({ userId: 1, createdAt: -1, _id: 1 }),
     ]).then(() => undefined);
     globalThis.messengerMongoIndexesPromise = indexes
       .then(() => ensureUserDocumentBackfill(database))
+      .then(() => ensureQuotaEntitlementMigration(database))
       .catch((error: unknown) => {
         globalThis.messengerMongoIndexesPromise = undefined;
         throw error;
@@ -135,6 +140,61 @@ async function ensureUserDocumentBackfill(database: Db): Promise<void> {
     });
   } catch (error) {
     console.error("Unable to run the user document backfill migration.", error);
+  }
+}
+
+interface LegacyQuotaUserDoc {
+  _id: string;
+  quotaBalance?: number;
+  quotaExpiresAt?: number | null;
+}
+
+/**
+ * 多套餐条目迁移：把旧「单一额度 + 单一有效期」的用户字段转换为一条
+ * source="migrated" 的 user_quotas 条目，然后清零旧字段。只在用户还没有
+ * 任何条目时执行（迁移中断后重跑不会重复授予，残留旧字段不再被读取）。
+ */
+async function ensureQuotaEntitlementMigration(database: Db): Promise<void> {
+  try {
+    const users = database.collection<LegacyQuotaUserDoc>("users");
+    const legacy = await users.find(
+      {
+        $and: [
+          { $or: [{ quotaBalance: { $gt: 0 } }, { quotaExpiresAt: { $ne: null, $exists: true } }] },
+        ],
+      },
+      { projection: { quotaBalance: 1, quotaExpiresAt: 1 } },
+    ).toArray();
+    for (const user of legacy) {
+      const balance = user.quotaBalance ?? 0;
+      const expiresAt = user.quotaExpiresAt ?? null;
+      const quotas = database.collection<UserQuotaDoc>("user_quotas");
+      const existing = await quotas.findOne({ userId: user._id }, { projection: { _id: 1 } });
+      if (existing) {
+        await users.updateOne(
+          { _id: user._id },
+          { $set: { quotaBalance: 0, quotaExpiresAt: null, updatedAt: Date.now() } },
+        );
+        continue;
+      }
+      await quotas.insertOne({
+        _id: randomUUID(),
+        userId: user._id,
+        source: "migrated",
+        cardKeyId: null,
+        planId: null,
+        planName: null,
+        balance,
+        expiresAt,
+        createdAt: Date.now(),
+      });
+      await users.updateOne(
+        { _id: user._id },
+        { $set: { quotaBalance: 0, quotaExpiresAt: null, updatedAt: Date.now() } },
+      );
+    }
+  } catch (error) {
+    console.error("Unable to run the quota entitlement migration.", error);
   }
 }
 

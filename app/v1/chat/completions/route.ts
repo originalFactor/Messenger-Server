@@ -16,8 +16,8 @@
 
 import { NextResponse } from "next/server";
 import { authenticateAiKey, estimatePromptTokens, joinUpstreamUrl, openAiError } from "@/lib/ai-proxy";
-import { computeCost, quotaState } from "@/lib/quota";
-import { consumeQuota, listUpstreamsForModel, recordUsage } from "@/lib/storage";
+import { computeCost } from "@/lib/quota";
+import { consumeQuota, getUserQuotaState, listUpstreamsForModel, recordUsage } from "@/lib/storage";
 import { getModelDefaults } from "@/lib/model-metadata";
 import type { UpstreamDoc } from "@/lib/types";
 
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
   const model = body.model;
   const stream = body.stream === true;
 
-  const quota = quotaState(user.quotaBalance, user.quotaExpiresAt);
+  const quota = await getUserQuotaState(user.id);
   if (!quota.available) {
     return openAiError(
       quota.reason === "expired"

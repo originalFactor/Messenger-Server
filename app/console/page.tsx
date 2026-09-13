@@ -34,19 +34,19 @@ import {
 } from "@/components/ui/table";
 import { requireUserSession } from "@/lib/auth";
 import { formatDateTime, formatTokens } from "@/lib/format";
-import { quotaState } from "@/lib/quota";
-import { getUserById, listUsageLogs, sumUsage } from "@/lib/storage";
+import { getUserById, getUserQuotaState, listUsageLogs, sumUsage } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
 /** 数据装配放在组件外的普通函数里，避免在渲染期间直接调用 Date.now()。 */
-async function loadOverviewData(userId: string, balance: number, expiresAt: number | null) {
+async function loadOverviewData(userId: string) {
   const now = Date.now();
-  const [today, recentUsage] = await Promise.all([
+  const [today, recentUsage, quota] = await Promise.all([
     sumUsage(userId, now - 24 * 60 * 60 * 1000),
     listUsageLogs(userId, 10),
+    getUserQuotaState(userId),
   ]);
-  return { today, recentUsage, quota: quotaState(balance, expiresAt, now) };
+  return { today, recentUsage, quota };
 }
 
 export default async function ConsoleOverviewPage() {
@@ -59,11 +59,7 @@ export default async function ConsoleOverviewPage() {
     redirect("/login");
   }
 
-  const { today, recentUsage, quota } = await loadOverviewData(
-    user.id,
-    user.quotaBalance,
-    user.quotaExpiresAt,
-  );
+  const { today, recentUsage, quota } = await loadOverviewData(user.id);
 
   return (
     <div className="grid gap-6">
@@ -82,7 +78,9 @@ export default async function ConsoleOverviewPage() {
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
             {quota.available
-              ? `有效期至 ${formatDateTime(quota.expiresAt ?? 0)}`
+              ? quota.expiresAt === null
+                ? "有效期不限"
+                : `有效期至 ${formatDateTime(quota.expiresAt)}`
               : quota.reason === "expired"
                 ? "套餐已过期，请兑换新卡密"
                 : "暂无可用额度，请兑换卡密"}

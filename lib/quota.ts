@@ -52,15 +52,33 @@ export interface QuotaState {
   reason: "no_quota" | "expired" | null;
 }
 
-export function quotaState(balance: number, expiresAt: number | null, now = Date.now()): QuotaState {
-  if (expiresAt === null) {
-    return { balance, expiresAt, available: false, reason: "no_quota" };
+export interface QuotaEntitlementView {
+  balance: number;
+  /** null = 不限有效期。 */
+  expiresAt: number | null;
+}
+
+/**
+ * 多套餐条目的可用状态：只统计未过期条目（expiresAt 为 null = 不限），
+ * balance 为条目余额之和，expiresAt 取未过期条目中最晚的到期时间
+ * （全部不限期时为 null）。
+ */
+export function quotaStateFromEntitlements(
+  entitlements: QuotaEntitlementView[],
+  now = Date.now(),
+): QuotaState {
+  if (entitlements.length === 0) {
+    return { balance: 0, expiresAt: null, available: false, reason: "no_quota" };
   }
-  if (expiresAt <= now) {
-    return { balance, expiresAt, available: false, reason: "expired" };
+  const active = entitlements.filter((entry) => entry.expiresAt === null || entry.expiresAt > now);
+  const balance = active.reduce((sum, entry) => sum + Math.max(0, entry.balance), 0);
+  if (balance > 0) {
+    const withExpiry = active.filter((entry) => entry.expiresAt !== null) as Array<QuotaEntitlementView & { expiresAt: number }>;
+    return { balance, expiresAt: withExpiry.length ? Math.max(...withExpiry.map((e) => e.expiresAt)) : null, available: true, reason: null };
   }
-  if (balance <= 0) {
-    return { balance, expiresAt, available: false, reason: "no_quota" };
+  if (active.length > 0) {
+    return { balance: 0, expiresAt: null, available: false, reason: "no_quota" };
   }
-  return { balance, expiresAt, available: true, reason: null };
+  const expired = entitlements.filter((entry) => entry.expiresAt !== null) as Array<QuotaEntitlementView & { expiresAt: number }>;
+  return { balance: 0, expiresAt: expired.length ? Math.max(...expired.map((e) => e.expiresAt)) : null, available: false, reason: "expired" };
 }

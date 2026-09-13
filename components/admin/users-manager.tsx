@@ -53,6 +53,7 @@ export function UsersManager({ users, currentUserId }: { users: AdminUserView[];
   const [filter, setFilter] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [quotaDelta, setQuotaDelta] = useState("");
+  const [validDays, setValidDays] = useState("");
   const [extendDays, setExtendDays] = useState("");
   const [role, setRole] = useState<"user" | "admin">("user");
   const [busy, setBusy] = useState(false);
@@ -69,6 +70,7 @@ export function UsersManager({ users, currentUserId }: { users: AdminUserView[];
   function startEdit(user: AdminUserView) {
     setEditingId(user._id);
     setQuotaDelta("");
+    setValidDays("");
     setExtendDays("");
     setRole(user.role);
     setError(null);
@@ -81,9 +83,14 @@ export function UsersManager({ users, currentUserId }: { users: AdminUserView[];
 
   async function save(user: AdminUserView) {
     const delta = quotaDelta.trim() === "" ? undefined : Number(quotaDelta);
+    const grantedDays = validDays.trim() === "" ? undefined : Number(validDays);
     const days = extendDays.trim() === "" ? undefined : Number(extendDays);
     if (delta !== undefined && (!Number.isFinite(delta) || !Number.isInteger(delta))) {
       setError("额度增减必须是整数。");
+      return;
+    }
+    if (grantedDays !== undefined && (!Number.isFinite(grantedDays) || !Number.isInteger(grantedDays) || grantedDays < 0)) {
+      setError("新条目有效天数必须是不小于 0 的整数。");
       return;
     }
     if (days !== undefined && (!Number.isFinite(days) || !Number.isInteger(days) || days < 0)) {
@@ -93,6 +100,9 @@ export function UsersManager({ users, currentUserId }: { users: AdminUserView[];
     const payload: Record<string, unknown> = {};
     if (delta !== undefined && delta !== 0) {
       payload.quotaDelta = delta;
+      if (delta > 0 && grantedDays !== undefined && grantedDays > 0) {
+        payload.quotaValidDays = grantedDays;
+      }
     }
     if (days !== undefined && days > 0) {
       payload.quotaExtendDays = days;
@@ -131,7 +141,10 @@ export function UsersManager({ users, currentUserId }: { users: AdminUserView[];
     <Card>
       <CardHeader>
         <CardTitle className="text-base">用户列表（{users.length}）</CardTitle>
-        <CardDescription>调整额度为增减操作（正数充值、负数扣减，下限 0）；有效期顺延与卡密兑换同语义。</CardDescription>
+        <CardDescription>
+          用户可同时持有多个套餐条目，各自额度与有效期独立计算；列表显示未过期条目的汇总。
+          正数充值生成新条目（可设有效天数），负数按先过期先用扣减；顺延作用于所有未过期条目。
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="mb-4">
@@ -154,6 +167,7 @@ export function UsersManager({ users, currentUserId }: { users: AdminUserView[];
                   <TableHead>邮箱</TableHead>
                   <TableHead className="w-20">角色</TableHead>
                   <TableHead className="w-28">额度</TableHead>
+                  <TableHead className="w-16">条目</TableHead>
                   <TableHead className="w-44">有效期至</TableHead>
                   <TableHead className="w-44">注册时间</TableHead>
                   <TableHead className="w-44">最近登录</TableHead>
@@ -170,8 +184,13 @@ export function UsersManager({ users, currentUserId }: { users: AdminUserView[];
                       </Badge>
                     </TableCell>
                     <TableCell className="tabular-nums">{formatTokens(user.quotaBalance)}</TableCell>
+                    <TableCell className="tabular-nums">{user.activeQuotaCount}</TableCell>
                     <TableCell className="whitespace-nowrap tabular-nums">
-                      {user.quotaExpiresAt ? formatDateTime(user.quotaExpiresAt) : "—"}
+                      {user.quotaUnlimited
+                        ? "不限"
+                        : user.quotaExpiresAt
+                          ? formatDateTime(user.quotaExpiresAt)
+                          : "—"}
                     </TableCell>
                     <TableCell className="whitespace-nowrap tabular-nums">{formatDateTime(user.createdAt)}</TableCell>
                     <TableCell className="whitespace-nowrap tabular-nums">
@@ -202,7 +221,7 @@ export function UsersManager({ users, currentUserId }: { users: AdminUserView[];
                   调整 {user.email}
                   {self ? <span className="ml-2 text-xs text-muted-foreground">（不能修改自己的角色）</span> : null}
                 </p>
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <div className="grid gap-2">
                     <Label htmlFor="user-quota-delta">额度增减</Label>
                     <Input
@@ -212,6 +231,17 @@ export function UsersManager({ users, currentUserId }: { users: AdminUserView[];
                       className="font-mono text-xs tabular-nums"
                       value={quotaDelta}
                       onChange={(event) => setQuotaDelta(event.target.value)}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="user-valid-days">新条目有效天数</Label>
+                    <Input
+                      id="user-valid-days"
+                      inputMode="numeric"
+                      placeholder="留空 = 不限"
+                      className="font-mono text-xs tabular-nums"
+                      value={validDays}
+                      onChange={(event) => setValidDays(event.target.value)}
                     />
                   </div>
                   <div className="grid gap-2">

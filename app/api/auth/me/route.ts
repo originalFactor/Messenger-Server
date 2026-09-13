@@ -17,7 +17,7 @@
 import { requireUserSession } from "@/lib/auth";
 import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
-import { getUserById } from "@/lib/storage";
+import { getUserById, getUserQuotaState } from "@/lib/storage";
 
 export const runtime = "nodejs";
 
@@ -32,14 +32,17 @@ export async function GET(request: Request) {
     return jsonError("User not found.", 404);
   }
 
+  // 多套餐条目模型：额度为未过期条目之和，到期时间取其中最晚者（不限期为 null）。
+  const quota = await getUserQuotaState(user.id);
+
   return jsonOk({
     user: {
       id: user.id,
       email: user.email,
       role: user.role,
       aiApiKey: user.aiApiKey,
-      quotaBalance: user.quotaBalance,
-      quotaExpiresAt: user.quotaExpiresAt,
+      quotaBalance: quota.balance,
+      quotaExpiresAt: quota.expiresAt,
       avatarUrl: user.avatarUrl ? appUrl("/api/avatars/user") : null,
       avatarVersion: user.avatarVersion ?? null,
       syncVersion: user.syncVersion,

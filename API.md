@@ -271,7 +271,7 @@ interface SessionClaims {
 ```
 
 - `aiApiKey`：用户级 AI API Key，调用 `/v1/*` 时作为 Bearer Token；`POST /api/console/api-key` 可重置。
-- `quotaBalance` / `quotaExpiresAt`：剩余额度（整数）与有效期；`quotaExpiresAt` 为 `null` 表示从未兑换。
+- `quotaBalance` / `quotaExpiresAt`：未过期套餐条目的额度之和与其中最晚的到期时间；用户可同时持有多个套餐条目（每次兑换/授予各一条，额度与有效期独立计算，消耗按先过期先用），`quotaExpiresAt` 为 `null` 表示无未过期条目或持有不限期条目。
 
 - 错误：`401 Unauthorized.`、`404 User not found.`（账号已被删但 Cookie 未过期）
 
@@ -368,7 +368,7 @@ interface SessionClaims {
 
 ### POST /api/console/redeem
 
-兑换卡密。原子占卡（`unused → redeemed`）+ 额度累加 + 有效期顺延在同一事务内完成。
+兑换卡密。原子占卡（`unused → redeemed`）+ 生成一条独立套餐条目（额度与有效期随卡计算：到期 = 兑换时刻 + 套餐天数）+ 写入兑换记录在同一事务内完成。用户可同时持有多个套餐条目。
 
 - 鉴权：用户会话
 - 请求体：
@@ -453,10 +453,11 @@ interface SessionClaims {
 
 管理端用户管理。
 
-- `GET /api/admin/users`：响应 `200` 为 `{ "users": [ /* AdminUserView[]，createdAt 降序，默认 200 条 */ ] }`；`AdminUserView` 为 `{ _id, email, role, quotaBalance, quotaExpiresAt, createdAt, lastLoginAt }`，不含 `passwordHash` / `aiApiKey` 等敏感字段。支持 `?limit=N`（1–1000）。
-- `PATCH /api/admin/users/{id}`：请求体为以下字段的任意非空组合 —— `{ "quotaDelta": 100000, "quotaExtendDays": 30, "role": "admin" }`：
-  - `quotaDelta`：整数，正数充值 / 负数扣减，结果下限 0；
-  - `quotaExtendDays`：有效期顺延天数，与卡密兑换同语义（`max(now, 现有有效期) + 天数`）；
+- `GET /api/admin/users`：响应 `200` 为 `{ "users": [ /* AdminUserView[]，createdAt 降序，默认 200 条 */ ] }`；`AdminUserView` 为 `{ _id, email, role, quotaBalance, quotaExpiresAt, quotaUnlimited, activeQuotaCount, createdAt, lastLoginAt }` —— 额度/到期时间为未过期条目的汇总（`quotaUnlimited` = 持有不限期条目，`activeQuotaCount` = 未过期条目数），不含 `passwordHash` / `aiApiKey` 等敏感字段。支持 `?limit=N`（1–1000）。
+- `PATCH /api/admin/users/{id}`：请求体为以下字段的任意非空组合 —— `{ "quotaDelta": 100000, "quotaValidDays": 30, "quotaExtendDays": 15, "role": "admin" }`：
+  - `quotaDelta`：整数，正数充值（生成一条新的套餐条目）/ 负数扣减（按先过期先用，结果下限 0）；
+  - `quotaValidDays`：充值条目的有效天数（0 = 不限），仅 `quotaDelta > 0` 时生效；
+  - `quotaExtendDays`：有效期顺延天数，作用于所有已设到期时间的未过期条目（不限期条目保持不限）；
   - `role`：`"user" | "admin"`；禁止修改自己的角色（`409 不能修改自己的角色。`），避免把唯一管理员降级锁死。
 - 响应 `200`：`{ "user": AdminUserView }`；错误：`400` 载荷无效、`404` 用户不存在。
 
@@ -1011,8 +1012,9 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 | `passwordHash` | string | argon 风格哈希 |
 | `role` | `"user"` \| `"admin"` | 管理权限；首个注册用户自动晋升 |
 | `aiApiKey` | string | AI API Key（`sk-…`），有索引 |
-| `quotaBalance` | number | 剩余额度（整数） |
-| `quotaExpiresAt` | number \| null | 额度有效期；null 表示从未兑换 |
+| `quotaBalance` | number | 旧单一额度字段（迁移后置 0，仅作存档） |
+| `quotaExpiresAt` | number \| null | 旧单一有效期字段（迁移后置 null，仅作存档） |
+| `user_quotas` | 集合 | 套餐条目：`{ userId, source: "card"\|"admin"\|"migrated", cardKeyId?, planId?, planName?, balance, expiresAt\|null, createdAt }`，额度与有效期随条目独立；消耗按先过期先用 |
 | `avatarUrl` | string \| null | 头像 Blob 私有 URL（由头像端点管理） |
 | `avatarVersion` | number \| null | 头像版本 |
 | `syncVersion` | number | 用户级单调水位线 |
