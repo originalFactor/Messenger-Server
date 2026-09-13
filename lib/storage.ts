@@ -1220,8 +1220,13 @@ export async function getAiModel(modelId: string): Promise<AiModelDoc | null> {
   return db.collection<AiModelDoc>("ai_models").findOne({ _id: modelId });
 }
 
-/** 模型目录导入：已存在的模型保持原倍率，新模型以 1.0 倍率启用。 */
-export async function importAiModels(modelIds: string[]): Promise<AiModelDoc[]> {
+/** 模型目录导入：已存在的模型保持原倍率，新模型以 1.0 倍率启用；
+ * 传入 contextSizes（如来自 models.dev）时为新模型填充上下文窗口，
+ * 并回填已存在但上下文为空的模型。 */
+export async function importAiModels(
+  modelIds: string[],
+  contextSizes?: Record<string, number>,
+): Promise<AiModelDoc[]> {
   const db = await getDb();
   const now = Date.now();
   const unique = [...new Set(modelIds.map((id) => id.trim()).filter(Boolean))];
@@ -1231,6 +1236,7 @@ export async function importAiModels(modelIds: string[]): Promise<AiModelDoc[]> 
         _id: modelId,
         displayName: null,
         rate: 1,
+        contextWindow: contextSizes?.[modelId] ?? null,
         enabled: true,
         createdAt: now,
         updatedAt: now,
@@ -1239,6 +1245,18 @@ export async function importAiModels(modelIds: string[]): Promise<AiModelDoc[]> 
       if (!isDuplicateKeyError(error)) {
         throw error;
       }
+    }
+  }
+  if (contextSizes) {
+    for (const modelId of unique) {
+      const contextWindow = contextSizes[modelId];
+      if (!contextWindow) {
+        continue;
+      }
+      await db.collection<AiModelDoc>("ai_models").updateOne(
+        { _id: modelId, contextWindow: null },
+        { $set: { contextWindow, updatedAt: Date.now() } },
+      );
     }
   }
   if (unique.length === 0) {
@@ -1251,6 +1269,7 @@ export interface AiModelPatch {
   rate?: number;
   enabled?: boolean;
   displayName?: string | null;
+  contextWindow?: number | null;
 }
 
 export async function updateAiModel(modelId: string, patch: AiModelPatch): Promise<AiModelDoc> {
@@ -1264,6 +1283,9 @@ export async function updateAiModel(modelId: string, patch: AiModelPatch): Promi
   }
   if (patch.displayName !== undefined) {
     set.displayName = patch.displayName;
+  }
+  if (patch.contextWindow !== undefined) {
+    set.contextWindow = patch.contextWindow;
   }
   const updated = await db.collection<AiModelDoc>("ai_models").findOneAndUpdate(
     { _id: modelId },

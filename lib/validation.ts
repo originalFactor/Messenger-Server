@@ -149,6 +149,7 @@ export const aiModelPatchSchema = z.object({
   rate: z.number().finite().positive().max(100_000).optional(),
   enabled: z.boolean().optional(),
   displayName: z.string().trim().max(200).nullable().optional(),
+  contextWindow: z.number().int().positive().max(1_000_000_000).nullable().optional(),
 }).strict();
 
 export const upstreamInputSchema = z.object({

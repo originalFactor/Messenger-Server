@@ -16,6 +16,7 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
+import { getModelContextSizes } from "@/lib/model-metadata";
 import { UpstreamProbeError, fetchUpstreamModelIds } from "@/lib/upstream-probe";
 import { upstreamProbeSchema } from "@/lib/validation";
 
@@ -23,7 +24,8 @@ export const runtime = "nodejs";
 
 /**
  * 直接探测上游：不要求上游已保存，表单里填好 Base URL / API Key 即可
- * 拉取其 /v1/models，供「新增/编辑上游」的模型列表勾选。
+ * 拉取其 /v1/models，供「新增/编辑上游」的模型列表勾选。响应内联
+ * models.dev 的上下文窗口数据，拉取时即可填充。
  */
 export async function POST(request: Request) {
   const admin = await requireAdminUser();
@@ -38,7 +40,11 @@ export async function POST(request: Request) {
 
   try {
     const models = await fetchUpstreamModelIds(parsed.data.baseUrl, parsed.data.apiKey);
-    return jsonOk({ models });
+    const allSizes = await getModelContextSizes();
+    const contextSizes = Object.fromEntries(
+      models.map((modelId) => [modelId, allSizes[modelId]]).filter(([, size]) => typeof size === "number"),
+    );
+    return jsonOk({ models, contextSizes });
   } catch (error) {
     if (error instanceof UpstreamProbeError) {
       return jsonError(error.message, error.status);

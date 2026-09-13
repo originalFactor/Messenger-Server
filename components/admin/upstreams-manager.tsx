@@ -67,12 +67,33 @@ const emptyUpstreamForm: UpstreamFormState = {
 
 type ContextSizes = Record<string, number>;
 
+/** 展示形式：272K / 1M（向上取整到一位小数并去尾零）。 */
 function formatContext(tokens: number): string {
   if (tokens >= 1_000_000) {
-    const millions = tokens / 1_000_000;
-    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`;
+    return `${parseFloat((tokens / 1_000_000).toFixed(1))}M`;
   }
-  return `${Math.round(tokens / 1000)}k`;
+  if (tokens >= 1_000) {
+    return `${parseFloat((tokens / 1_000).toFixed(1))}K`;
+  }
+  return String(tokens);
+}
+
+/** 编辑形式：接受 272K / 1M / 200000（不区分大小写），空串表示清除。 */
+function parseContextInput(input: string): number | null | "invalid" {
+  const trimmed = input.trim().toUpperCase();
+  if (!trimmed) {
+    return null;
+  }
+  const match = /^([0-9]*\.?[0-9]+)\s*(K|M)?$/.exec(trimmed);
+  if (!match) {
+    return "invalid";
+  }
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) {
+    return "invalid";
+  }
+  const tokens = Math.round(value * (match[2] === "K" ? 1_000 : match[2] === "M" ? 1_000_000 : 1));
+  return tokens > 0 ? tokens : "invalid";
 }
 
 export function UpstreamsManager({
@@ -100,7 +121,7 @@ export function UpstreamsManager({
   const [importingId, setImportingId] = useState<string | null>(null);
 
   const [newModelId, setNewModelId] = useState("");
-  const [modelEdits, setModelEdits] = useState<Record<string, { rate: string; enabled: boolean }>>({});
+  const [modelEdits, setModelEdits] = useState<Record<string, { rate: string; context: string; enabled: boolean }>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -197,10 +218,17 @@ export function UpstreamsManager({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ baseUrl: form.baseUrl, apiKey: form.apiKey }),
       });
-      const payload = (await response.json().catch(() => null)) as { models?: string[]; error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as {
+        models?: string[];
+        contextSizes?: ContextSizes;
+        error?: string;
+      } | null;
       if (!response.ok || !payload?.models) {
         setFormError(payload?.error ?? "拉取失败，请稍后重试。");
         return;
+      }
+      if (payload.contextSizes) {
+        setContextSizes((sizes) => ({ ...sizes, ...payload.contextSizes }));
       }
       setDiscoveredModels((models_) =>
         [...new Set([...models_, ...payload.models ?? []])].sort((a, b) => a.localeCompare(b)),
@@ -267,10 +295,17 @@ export function UpstreamsManager({
     setError(null);
     try {
       const response = await fetch(`/api/admin/upstreams/${upstream._id}/probe`, { method: "POST" });
-      const payload = (await response.json().catch(() => null)) as { models?: string[]; error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as {
+        models?: string[];
+        contextSizes?: ContextSizes;
+        error?: string;
+      } | null;
       if (!response.ok || !payload?.models) {
         setError(payload?.error ?? "探测失败。");
         return;
+      }
+      if (payload.contextSizes) {
+        setContextSizes((sizes) => ({ ...sizes, ...payload.contextSizes }));
       }
       setProbeResults((results) => ({ ...results, [upstream._id]: payload.models ?? [] }));
     } catch {
@@ -315,13 +350,22 @@ export function UpstreamsManager({
       setError("倍率必须是正数。");
       return;
     }
+    const context = parseContextInput(edit.context);
+    if (context === "invalid") {
+      setError("上下文格式无效，请使用 272K / 1M 等形式。");
+      return;
+    }
+    const baselineContext = model.contextWindow ?? contextSizes[model._id] ?? null;
+    if (rate === model.rate && edit.enabled === model.enabled && context === baselineContext) {
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const response = await fetch(`/api/admin/models/${encodeURIComponent(model._id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rate, enabled: edit.enabled }),
+        body: JSON.stringify({ rate, enabled: edit.enabled, contextWindow: context }),
       });
       if (!response.ok) {
         setError("保存失败。");
@@ -572,7 +616,7 @@ export function UpstreamsManager({
                               ) : null}
                             </TableCell>
                             <TableCell className="text-right font-mono text-xs text-muted-foreground">
-                              {contextLabel(modelId) ? `${contextLabel(modelId)} tokens` : "—"}
+                              {contextLabel(modelId) ?? "—"}
                             </TableCell>
                           </TableRow>
                         ))}
@@ -733,21 +777,41 @@ export function UpstreamsManager({
               <TableHeader>
                 <TableRow>
                   <TableHead>模型 ID</TableHead>
-                  <TableHead className="w-28">上下文</TableHead>
-                  <TableHead className="w-32">倍率</TableHead>
+                  <TableHead className="w-36">上下文</TableHead>
+                  <TableHead className="w-28">倍率</TableHead>
                   <TableHead className="w-32">状态</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {models.map((model) => {
-                  const edit = modelEdits[model._id] ?? { rate: String(model.rate), enabled: model.enabled };
-                  const dirty = Number(edit.rate) !== model.rate || edit.enabled !== model.enabled;
+                  const baselineContext = model.contextWindow ?? contextSizes[model._id] ?? null;
+                  const edit = modelEdits[model._id] ?? {
+                    rate: String(model.rate),
+                    context: baselineContext ? formatContext(baselineContext) : "",
+                    enabled: model.enabled,
+                  };
+                  const context = parseContextInput(edit.context);
+                  const contextDirty = context !== (model.contextWindow ?? contextSizes[model._id] ?? null);
+                  const dirty =
+                    Number(edit.rate) !== model.rate ||
+                    edit.enabled !== model.enabled ||
+                    (context !== "invalid" && contextDirty);
                   return (
                     <TableRow key={model._id}>
                       <TableCell className="font-mono text-xs">{model._id}</TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {contextLabel(model._id) ? `${contextLabel(model._id)} tokens` : "—"}
+                      <TableCell>
+                        <Input
+                          placeholder="272K / 1M"
+                          className="font-mono text-xs uppercase"
+                          value={edit.context}
+                          onChange={(event) =>
+                            setModelEdits((edits) => ({
+                              ...edits,
+                              [model._id]: { ...edit, context: event.target.value },
+                            }))
+                          }
+                        />
                       </TableCell>
                       <TableCell>
                         <Input

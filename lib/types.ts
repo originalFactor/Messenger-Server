@@ -103,6 +103,8 @@ export interface AiModelDoc {
   displayName?: string | null;
   /** 消耗倍率：cost = ceil(totalTokens × rate)。 */
   rate: number;
+  /** 上下文窗口（tokens），来自 models.dev 或管理员手填，仅用于展示。 */
+  contextWindow?: number | null;
   enabled: boolean;
   createdAt: number;
   updatedAt: number;

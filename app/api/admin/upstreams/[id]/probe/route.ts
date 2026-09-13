@@ -16,6 +16,7 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
+import { getModelContextSizes } from "@/lib/model-metadata";
 import { getUpstreamById } from "@/lib/storage";
 import { UpstreamProbeError, fetchUpstreamModelIds } from "@/lib/upstream-probe";
 
@@ -24,8 +25,8 @@ export const runtime = "nodejs";
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**
- * 探测已保存的上游：服务端请求上游的 GET /models，返回可用模型 ID 列表，
- * 供控制台一键导入模型目录。
+ * 探测已保存的上游：服务端请求上游的 GET /models，返回可用模型 ID 列表
+ * （内联 models.dev 上下文窗口数据），供控制台勾选与一键导入模型目录。
  */
 export async function POST(_request: Request, context: RouteContext) {
   const admin = await requireAdminUser();
@@ -41,7 +42,11 @@ export async function POST(_request: Request, context: RouteContext) {
 
   try {
     const models = await fetchUpstreamModelIds(upstream.baseUrl, upstream.apiKey);
-    return jsonOk({ upstreamId: upstream._id, models });
+    const allSizes = await getModelContextSizes();
+    const contextSizes = Object.fromEntries(
+      models.map((modelId) => [modelId, allSizes[modelId]]).filter(([, size]) => typeof size === "number"),
+    );
+    return jsonOk({ upstreamId: upstream._id, models, contextSizes });
   } catch (error) {
     if (error instanceof UpstreamProbeError) {
       return jsonError(error.message, error.status);

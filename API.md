@@ -424,8 +424,8 @@ interface SessionClaims {
 
 模型倍率目录（`ai_models` 集合）。
 
-- `POST`：`{ "modelIds": ["gpt-4o", …] }` 批量导入；已存在的保持原倍率，新模型默认 `rate: 1.0` 且启用。
-- `PUT /{id}`：`{ "rate": 1.5, "enabled": true, "displayName": null }`（均可选的部分更新）。
+- `POST`：`{ "modelIds": ["gpt-4o", …] }` 批量导入；已存在的保持原倍率，新模型默认 `rate: 1.0` 且启用；上下文窗口由服务端从 models.dev 元数据填充（新模型直接写入，已存在但为空的回填）。
+- `PUT /{id}`：`{ "rate": 1.5, "enabled": true, "displayName": null, "contextWindow": 272000 }`（均为可选的部分更新；`contextWindow` 传 `null` 清除）。
 - `DELETE /{id}`：从目录移除（不影响上游配置中的引用）。
 
 ### GET|POST /api/admin/upstreams、PUT|DELETE /api/admin/upstreams/{id}、POST /api/admin/upstreams/{id}/probe
@@ -443,7 +443,7 @@ interface SessionClaims {
 }
 ```
 
-`POST /api/admin/upstreams/probe`：直探模式 —— 请求体 `{ "baseUrl": "https://api.example.com/v1", "apiKey": "…" }`，不要求上游已保存，供「新增/编辑上游」表单直接拉取模型列表；与 `{id}/probe` 共享 `lib/upstream-probe.ts` 实现，连接失败返回 `502`。
+`POST /api/admin/upstreams/probe`：直探模式 —— 请求体 `{ "baseUrl": "https://api.example.com/v1", "apiKey": "…" }`，不要求上游已保存，供「新增/编辑上游」表单直接拉取模型列表；与 `{id}/probe` 共享 `lib/upstream-probe.ts` 实现，连接失败返回 `502`。两条探测路由的响应均内联 models.dev 的上下文数据：`{ "models": ["…"], "contextSizes": { "gpt-4o": 128000 } }`。
 
 ### GET /api/admin/models/metadata
 
