@@ -385,7 +385,19 @@ export function UpstreamsManager({
     }
   }
 
-  const discoveredNotSelected = discoveredModels.filter((modelId) => !selectedModels.includes(modelId));
+  const sortedDiscovered = [...discoveredModels].sort((a, b) => {
+    const selectedFirst = Number(selectedModels.includes(b)) - Number(selectedModels.includes(a));
+    return selectedFirst !== 0 ? selectedFirst : a.localeCompare(b);
+  });
+  const selectedDiscoveredCount = discoveredModels.filter((modelId) => selectedModels.includes(modelId)).length;
+  const allDiscoveredSelected = discoveredModels.length > 0 && selectedDiscoveredCount === discoveredModels.length;
+  const someDiscoveredSelected = selectedDiscoveredCount > 0 && !allDiscoveredSelected;
+
+  function toggleAllDiscovered() {
+    setSelectedModels(
+      allDiscoveredSelected ? [] : [...discoveredModels].sort((a, b) => a.localeCompare(b)),
+    );
+  }
 
   return (
     <div className="grid gap-4">
@@ -520,22 +532,52 @@ export function UpstreamsManager({
                   </div>
                 )}
 
-                {discoveredNotSelected.length > 0 ? (
-                  <div className="max-h-60 overflow-y-auto rounded-lg border p-1.5">
-                    {discoveredNotSelected.map((modelId) => (
-                      <label
-                        key={modelId}
-                        className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/60"
-                      >
-                        <Checkbox onCheckedChange={() => toggleFormModel(modelId)} />
-                        <span className="font-mono text-xs">{modelId}</span>
-                        {contextLabel(modelId) ? (
-                          <span className="ml-auto font-mono text-xs text-muted-foreground">
-                            {contextLabel(modelId)} tokens
-                          </span>
-                        ) : null}
-                      </label>
-                    ))}
+                {discoveredModels.length > 0 ? (
+                  <div className="max-h-72 overflow-y-auto rounded-lg border">
+                    <Table>
+                      <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_var(--border)]">
+                        <TableRow>
+                          <TableHead className="w-10">
+                            <Checkbox
+                              checked={
+                                allDiscoveredSelected ? true : someDiscoveredSelected ? "indeterminate" : false
+                              }
+                              onCheckedChange={toggleAllDiscovered}
+                              aria-label="全选/取消全选"
+                            />
+                          </TableHead>
+                          <TableHead>模型 ID</TableHead>
+                          <TableHead className="text-right">Context Window</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {sortedDiscovered.map((modelId) => (
+                          <TableRow
+                            key={modelId}
+                            className="cursor-pointer"
+                            onClick={() => toggleFormModel(modelId)}
+                          >
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              <Checkbox
+                                checked={selectedModels.includes(modelId)}
+                                onCheckedChange={() => toggleFormModel(modelId)}
+                              />
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {modelId}
+                              {selectedModels.includes(modelId) ? (
+                                <Badge variant="secondary" className="ml-2 font-sans text-[10px]">
+                                  已选
+                                </Badge>
+                              ) : null}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                              {contextLabel(modelId) ? `${contextLabel(modelId)} tokens` : "—"}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
                 ) : null}
               </div>
