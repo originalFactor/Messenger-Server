@@ -146,12 +146,12 @@ export const upstreamInputSchema = z.object({
   baseUrl: z.string().url().max(2_000),
   apiKey: z.string().max(2_000),
   models: z.array(z.string().trim().min(1).max(200)).max(1_000),
-  metaOverride: z.boolean().optional(),
   modelMeta: z
     .record(
       z.string().max(200),
       z
         .object({
+          override: z.boolean().optional(),
           contextWindow: z.number().int().min(0).max(1_000_000_000).nullable().optional(),
           inputRate: z.number().finite().min(0).max(100_000).nullable().optional(),
           outputRate: z.number().finite().min(0).max(100_000).nullable().optional(),

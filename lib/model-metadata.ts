@@ -208,12 +208,14 @@ async function fetchMetadata(): Promise<MetadataCache> {
   return { fetchedAt: Date.now(), contextSizes, rates };
 }
 
-export async function getModelDefaults(): Promise<MetadataCache> {
-  if (cache && Date.now() - cache.fetchedAt < METADATA_TTL_MS) {
-    return cache;
-  }
-  if (inflight) {
-    return inflight;
+export async function getModelDefaults(forceRefresh = false): Promise<MetadataCache> {
+  if (!forceRefresh) {
+    if (cache && Date.now() - cache.fetchedAt < METADATA_TTL_MS) {
+      return cache;
+    }
+    if (inflight) {
+      return inflight;
+    }
   }
   inflight = fetchMetadata()
     .then((data) => {

@@ -434,9 +434,9 @@ interface SessionClaims {
   "baseUrl": "https://api.example.com/v1",   // OpenAI 兼容根地址（含 /v1）
   "apiKey": "上游密钥",
   "models": ["gpt-4o", "deepseek-chat"],     // 可服务的模型 ID
-  "metaOverride": false,                      // 元数据覆盖开关：开启时使用 modelMeta，关闭时使用 models.dev
-  "modelMeta": {                              // 按上游自定义的模型元数据（仅 metaOverride 开启时生效）
-    "gpt-4o": { "contextWindow": 128000, "inputRate": 16.6667, "outputRate": 16.6667 }
+  "modelMeta": {                              // 按上游自定义的模型元数据（按模型粒度）
+    "gpt-4o": { "override": true, "contextWindow": 128000, "inputRate": 16.6667, "outputRate": 16.6667 },
+    "deepseek-chat": { "override": false }
   },
   "priority": 0,                              // 越小越优先；同模型多上游自动故障转移
   "enabled": true
@@ -474,7 +474,7 @@ interface SessionClaims {
 
 ## AI API（OpenAI 兼容代理）
 
-`/v1/*` 是面向用户 API Key（`Authorization: Bearer sk-…`）的 OpenAI 兼容代理。可用模型 = 所有启用上游可服务模型的并集；额度在响应完成后按 `ceil(promptTokens × 输入倍率 + completionTokens × 输出倍率)` 扣减（失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`）。元数据解析：上游开启 `metaOverride` 时用其 `modelMeta` 自定义值（缺失字段回退 models.dev），关闭时直接用 models.dev 元数据；无数据置零 —— contextWindow 0 = 不限制，倍率 0 = 不计费（双倍率为 0 时本条调用免费）。
+`/v1/*` 是面向用户 API Key（`Authorization: Bearer sk-…`）的 OpenAI 兼容代理。可用模型 = 所有启用上游可服务模型的并集；额度在响应完成后按 `ceil(promptTokens × 输入倍率 + completionTokens × 输出倍率)` 扣减（失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`）。元数据解析（按模型）：该模型的 `modelMeta.override` 开启时用其自定义值（缺失字段回退 models.dev），关闭时直接用 models.dev 元数据；无数据置零 —— contextWindow 0 = 不限制，倍率 0 = 不计费（双倍率为 0 时本条调用免费）。
 
 ### GET /v1/models
 
@@ -1117,7 +1117,7 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 | `createdAt` | number | |
 | `redeemedByUserId` / `redeemedAt` | string / number \| null | 兑换信息 |
 
-### RedemptionDoc（兑换记录）、UpstreamDoc（上游，含 modelMeta 元数据覆盖）、UsageLogDoc（用量）
+### RedemptionDoc（兑换记录）、UpstreamDoc（上游，含按模型 modelMeta 元数据覆盖）、UsageLogDoc（用量）
 
 - `RedemptionDoc`: `{ _id, userId, cardKeyId, cardCode, planId, planName, quotaTokens, validityDays, createdAt }`
 - `UpstreamDoc`: `{ _id, name, baseUrl(含 /v1), apiKey, models: 可服务模型ID[], priority(小者先), enabled, createdAt, updatedAt }`

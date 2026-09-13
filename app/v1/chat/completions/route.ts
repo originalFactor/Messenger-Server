@@ -91,19 +91,19 @@ interface ResolvedModelMeta {
 }
 
 /**
- * 元数据解析：上游开启元数据覆盖时使用其自定义值（缺失字段回退
- * models.dev），关闭时直接使用 models.dev 元数据；无数据一律置零
- * （contextWindow 0 = 不限制，倍率 0 = 不计费）。
+ * 元数据解析（按模型）：该模型的 modelMeta.override 开启时使用其自定义值
+ * （缺失字段回退 models.dev），否则直接使用 models.dev 元数据；无数据一律
+ * 置零（contextWindow 0 = 不限制，倍率 0 = 不计费）。
  */
 function resolveModelMeta(upstream: UpstreamDoc, model: string, defaults: SettleParams["defaults"]): ResolvedModelMeta {
   const devContext = defaults.contextSizes[model];
   const devRate = defaults.rates[model];
-  if (upstream.metaOverride) {
-    const custom = upstream.modelMeta?.[model];
+  const custom = upstream.modelMeta?.[model];
+  if (custom?.override) {
     return {
-      contextWindow: custom?.contextWindow ?? devContext ?? 0,
-      inputRate: custom?.inputRate ?? devRate?.input ?? 0,
-      outputRate: custom?.outputRate ?? devRate?.output ?? 0,
+      contextWindow: custom.contextWindow ?? devContext ?? 0,
+      inputRate: custom.inputRate ?? devRate?.input ?? 0,
+      outputRate: custom.outputRate ?? devRate?.output ?? 0,
     };
   }
   return {

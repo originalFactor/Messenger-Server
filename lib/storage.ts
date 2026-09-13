@@ -1217,7 +1217,6 @@ export interface UpstreamInput {
   baseUrl: string;
   apiKey: string;
   models: string[];
-  metaOverride?: boolean;
   modelMeta?: Record<string, UpstreamModelMeta> | null;
   priority: number;
   enabled: boolean;
@@ -1234,6 +1233,9 @@ function normalizeUpstreamModelMeta(
     const id = modelId.trim();
     if (!id || !meta) continue;
     const entry: UpstreamModelMeta = {};
+    if (typeof meta.override === 'boolean') {
+      entry.override = meta.override;
+    }
     if (typeof meta.contextWindow === 'number' && Number.isFinite(meta.contextWindow) && meta.contextWindow >= 0) {
       entry.contextWindow = Math.round(meta.contextWindow);
     }
@@ -1284,7 +1286,6 @@ export async function createUpstream(input: UpstreamInput): Promise<UpstreamDoc>
     baseUrl: input.baseUrl,
     apiKey: input.apiKey,
     models: normalizeUpstreamModels(input.models),
-    metaOverride: input.metaOverride ?? false,
     modelMeta: normalizeUpstreamModelMeta(input.modelMeta),
     priority: input.priority,
     enabled: input.enabled,
@@ -1305,7 +1306,6 @@ export async function updateUpstream(upstreamId: string, input: UpstreamInput): 
         baseUrl: input.baseUrl,
         apiKey: input.apiKey,
         models: normalizeUpstreamModels(input.models),
-        metaOverride: input.metaOverride ?? false,
         modelMeta: normalizeUpstreamModelMeta(input.modelMeta),
         priority: input.priority,
         enabled: input.enabled,

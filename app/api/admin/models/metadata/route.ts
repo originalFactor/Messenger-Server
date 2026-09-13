@@ -22,16 +22,18 @@ export const runtime = "nodejs";
 
 /**
  * models.dev 模型元数据（实例内存缓存 24h）：modelId →
- * { contextWindow?, inputRate?, outputRate? }。倍率以
+ * { override?, contextWindow?, inputRate?, outputRate? }。倍率以
  * deepseek-v4.1-flash 成本为基准归一化；models.dev 不可用时返回空映射。
+ * 传 ?refresh=1 时绕过缓存强制重新拉取（控制台「更新元数据」入口）。
  */
-export async function GET() {
+export async function GET(request: Request) {
   const admin = await requireAdminUser();
   if (!admin) {
     return jsonError("Forbidden.", 403);
   }
 
-  const { contextSizes, rates } = await getModelDefaults();
+  const forceRefresh = new URL(request.url).searchParams.get("refresh") === "1";
+  const { contextSizes, rates } = await getModelDefaults(forceRefresh);
   const ids = new Set([...Object.keys(contextSizes), ...Object.keys(rates)]);
   const metadata: Record<string, { contextWindow?: number; inputRate?: number; outputRate?: number }> = {};
   for (const modelId of ids) {

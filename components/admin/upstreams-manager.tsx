@@ -57,7 +57,6 @@ interface UpstreamFormState {
   apiKey: string;
   priority: string;
   enabled: string;
-  metaOverride: boolean;
 }
 
 const emptyUpstreamForm: UpstreamFormState = {
@@ -66,7 +65,6 @@ const emptyUpstreamForm: UpstreamFormState = {
   apiKey: "",
   priority: "0",
   enabled: "1",
-  metaOverride: false,
 };
 
 type DevMeta = Record<string, UpstreamModelMeta>;
@@ -130,6 +128,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   const [devMeta, setDevMeta] = useState<DevMeta>({});
   const [editingModelMeta, setEditingModelMeta] = useState<Record<string, UpstreamModelMeta>>({});
   const [metaDrafts, setMetaDrafts] = useState<Record<string, MetaDraft>>({});
+  const [overrideDrafts, setOverrideDrafts] = useState<Record<string, boolean>>({});
   const [probingId, setProbingId] = useState<string | null>(null);
   const [probeResults, setProbeResults] = useState<Record<string, string[]>>({});
 
@@ -163,6 +162,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setManualModel("");
     setEditingModelMeta({});
     setMetaDrafts({});
+    setOverrideDrafts({});
     setFormError(null);
     setShowForm(true);
     setError(null);
@@ -176,13 +176,13 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       apiKey: upstream.apiKey,
       priority: String(upstream.priority),
       enabled: upstream.enabled ? "1" : "0",
-      metaOverride: upstream.metaOverride ?? false,
     });
     setSelectedModels([...upstream.models].sort((a, b) => a.localeCompare(b)));
     setDiscoveredModels([...upstream.models].sort((a, b) => a.localeCompare(b)));
     setManualModel("");
     setEditingModelMeta(upstream.modelMeta ?? {});
     setMetaDrafts({});
+    setOverrideDrafts({});
     setFormError(null);
     setShowForm(true);
     setError(null);
@@ -250,11 +250,12 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     }
   }
 
-  /** 从 models.dev 更新元数据：填充自定义元数据草稿并开启覆盖开关。 */
+  /** 从 models.dev 更新元数据：强制刷新服务端 24h 缓存并更新本页显示，
+   *  不改变任何模型的覆盖开关。 */
   async function updateMetaFromModelsDev() {
     setFormError(null);
     try {
-      const response = await fetch("/api/admin/models/metadata");
+      const response = await fetch("/api/admin/models/metadata?refresh=1");
       if (!response.ok) {
         setFormError("元数据拉取失败，请稍后重试。");
         return;
@@ -262,23 +263,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       const payload = (await response.json()) as {
         metadata?: Record<string, UpstreamModelMeta>;
       };
-      const metadata = payload.metadata ?? {};
-      setDevMeta((meta) => ({ ...meta, ...metadata }));
-      setMetaDrafts((drafts) => {
-        const next = { ...drafts };
-        for (const modelId of discoveredModels) {
-          if (next[modelId]) continue;
-          const dev = metadata[modelId];
-          next[modelId] = {
-            context: dev?.contextWindow ? formatContext(dev.contextWindow) : "0",
-            inputRate: dev?.inputRate != null ? String(dev.inputRate) : "0",
-            outputRate: dev?.outputRate != null ? String(dev.outputRate) : "0",
-          };
-        }
-        return next;
-      });
-      setForm((value) => ({ ...value, metaOverride: true }));
-      toast.success("已从 models.dev 拉取元数据（已开启自定义覆盖）");
+      setDevMeta((meta) => ({ ...meta, ...payload.metadata ?? {} }));
+      toast.success("已从 models.dev 更新元数据");
     } catch {
       setFormError("网络错误，请稍后重试。");
     }
@@ -294,10 +280,20 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     );
   }
 
-  /** 生效元数据：覆盖开启时 草稿 > 自定义 > models.dev > 0；关闭时 models.dev > 0。 */
+  /** 按模型覆盖开关：行草稿 > 已存自定义 > 默认关闭（用 models.dev）。 */
+  function rowOverride(modelId: string): boolean {
+    return overrideDrafts[modelId] ?? editingModelMeta[modelId]?.override ?? false;
+  }
+
+  function setRowOverride(modelId: string, override: boolean) {
+    setOverrideDrafts((drafts) => ({ ...drafts, [modelId]: override }));
+  }
+
+  /** 生效元数据（按模型）：覆盖开启时 草稿 > 自定义 > models.dev > 0；
+   *  关闭时 models.dev > 0。 */
   function resolvedMeta(modelId: string): { contextWindow: number; inputRate: number; outputRate: number } {
     const dev = devMeta[modelId];
-    if (!form.metaOverride) {
+    if (!rowOverride(modelId)) {
       return { contextWindow: dev?.contextWindow ?? 0, inputRate: dev?.inputRate ?? 0, outputRate: dev?.outputRate ?? 0 };
     }
     const stored = editingModelMeta[modelId];
@@ -333,34 +329,40 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    let modelMeta: Record<string, UpstreamModelMeta> | null = null;
-    if (form.metaOverride) {
-      modelMeta = {};
-      for (const [modelId, draft] of Object.entries(metaDrafts)) {
-        const context = parseContextInput(draft.context);
-        if (context === "invalid") {
-          setFormError(`模型 ${modelId} 的上下文格式无效，请使用 272K / 1M 等形式。`);
-          return;
-        }
-        const inputRate = parseRateInput(draft.inputRate);
-        const outputRate = parseRateInput(draft.outputRate);
-        if (inputRate === "invalid" || outputRate === "invalid") {
-          setFormError(`模型 ${modelId} 的倍率必须是数字。`);
-          return;
-        }
-        modelMeta[modelId] = { contextWindow: context, inputRate, outputRate };
+    // 草稿格式校验：无效输入阻止提交。
+    for (const [modelId, draft] of Object.entries(metaDrafts)) {
+      if (parseContextInput(draft.context) === "invalid") {
+        setFormError(`模型 ${modelId} 的上下文格式无效，请使用 272K / 1M 等形式。`);
+        return;
       }
-      if (Object.keys(modelMeta).length === 0) {
-        modelMeta = null;
+      if (parseRateInput(draft.inputRate) === "invalid" || parseRateInput(draft.outputRate) === "invalid") {
+        setFormError(`模型 ${modelId} 的倍率必须是数字。`);
+        return;
       }
+    }
+    const modelMeta: Record<string, UpstreamModelMeta> = {};
+    for (const modelId of discoveredModels) {
+      if (overrideDrafts[modelId] === undefined && editingModelMeta[modelId] === undefined) {
+        continue;
+      }
+      if (!rowOverride(modelId)) {
+        modelMeta[modelId] = { override: false };
+        continue;
+      }
+      const resolved = resolvedMeta(modelId);
+      modelMeta[modelId] = {
+        override: true,
+        contextWindow: resolved.contextWindow,
+        inputRate: resolved.inputRate,
+        outputRate: resolved.outputRate,
+      };
     }
     const payload = {
       name: form.name,
       baseUrl: form.baseUrl,
       apiKey: form.apiKey,
       models: selectedModels,
-      metaOverride: form.metaOverride,
-      modelMeta,
+      modelMeta: Object.keys(modelMeta).length > 0 ? modelMeta : null,
       priority: Number(form.priority) || 0,
       enabled: form.enabled === "1",
     };
@@ -574,20 +576,10 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
 
               <div className="grid gap-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="grid gap-1">
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        id="meta-override"
-                        checked={form.metaOverride}
-                        onCheckedChange={(checked) => setForm((value) => ({ ...value, metaOverride: checked }))}
-                      />
-                      <Label htmlFor="meta-override">自定义元数据（覆盖 models.dev）</Label>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      关闭时直接使用 models.dev 元数据（上下文 0 / 倍率 0 = 不限制 / 不计费）；
-                      开启后可在下方表格按此上游自定义。
-                    </p>
-                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    每个模型的元数据默认取自 models.dev（上下文 0 = 不限制，倍率 0 = 不计费）；
+                    在表格中打开「覆盖」后可为此上游单独自定义。
+                  </p>
                   <Button type="button" variant="outline" size="sm" onClick={updateMetaFromModelsDev}>
                     <ArrowDownToLine />
                     从 models.dev 更新元数据
@@ -609,6 +601,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                             />
                           </TableHead>
                           <TableHead>模型 ID</TableHead>
+                          <TableHead className="w-16">覆盖</TableHead>
                           <TableHead className="w-36">Context Window</TableHead>
                           <TableHead className="w-24">输入倍率</TableHead>
                           <TableHead className="w-24">输出倍率</TableHead>
@@ -617,7 +610,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                       <TableBody>
                         {sortedDiscovered.map((modelId) => {
                           const meta = resolvedMeta(modelId);
-                          const editable = form.metaOverride;
+                          const editable = rowOverride(modelId);
                           const draft = metaDraftOf(modelId);
                           const setDraft = (field: keyof MetaDraft, value: string) =>
                             setMetaDrafts((drafts) => ({
@@ -643,6 +636,13 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                     已选
                                   </Badge>
                                 ) : null}
+                              </TableCell>
+                              <TableCell onClick={(event) => event.stopPropagation()}>
+                                <Switch
+                                  checked={rowOverride(modelId)}
+                                  onCheckedChange={(checked) => setRowOverride(modelId, checked)}
+                                  aria-label={"覆盖 " + modelId}
+                                />
                               </TableCell>
                               <TableCell onClick={(event) => event.stopPropagation()}>
                                 {editable ? (
@@ -757,9 +757,16 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={upstream.metaOverride ? "default" : "secondary"}>
-                        {upstream.metaOverride ? "自定义" : "models.dev"}
-                      </Badge>
+                      {(() => {
+                        const overrideCount = Object.values(upstream.modelMeta ?? {}).filter(
+                          (meta) => meta.override,
+                        ).length;
+                        return (
+                          <Badge variant={overrideCount > 0 ? "default" : "secondary"}>
+                            {overrideCount > 0 ? overrideCount + " 项覆盖" : "models.dev"}
+                          </Badge>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell>
                       <Badge variant={upstream.enabled ? "default" : "secondary"}>

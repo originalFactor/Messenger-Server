@@ -99,6 +99,8 @@ export interface RedemptionDoc {
 }
 
 export interface UpstreamModelMeta {
+  /** 覆盖开关：开启时本条自定义元数据生效，关闭时使用 models.dev 元数据。 */
+  override?: boolean;
   /** 上下文窗口（tokens），0 = 不限制。 */
   contextWindow?: number | null;
   /** 输入倍率，0 = 不计费。 */
@@ -115,9 +117,7 @@ export interface UpstreamDoc {
   apiKey: string;
   /** 该上游可服务的模型 ID 列表。 */
   models: string[];
-  /** 元数据覆盖开关：开启时使用 modelMeta 自定义值，关闭时使用 models.dev 元数据。 */
-  metaOverride?: boolean;
-  /** 按上游自定义的模型元数据（仅 metaOverride 开启时生效）。 */
+  /** 按上游自定义的模型元数据；仅 override 开启的条目生效，其余用 models.dev 元数据。 */
   modelMeta?: Record<string, UpstreamModelMeta> | null;
   /** 路由优先级，数字越小越优先。 */
   priority: number;
