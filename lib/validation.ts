@@ -152,6 +152,18 @@ export const aiModelPatchSchema = z.object({
   contextWindow: z.number().int().positive().max(1_000_000_000).nullable().optional(),
 }).strict();
 
+export const aiModelContextBatchSchema = z.object({
+  models: z
+    .array(
+      z.object({
+        id: z.string().trim().min(1).max(200),
+        contextWindow: z.number().int().positive().max(1_000_000_000).nullable(),
+      }),
+    )
+    .min(1)
+    .max(500),
+}).strict();
+
 export const upstreamInputSchema = z.object({
   name: z.string().trim().min(1).max(100),
   baseUrl: z.string().url().max(2_000),

@@ -1272,6 +1272,29 @@ export interface AiModelPatch {
   contextWindow?: number | null;
 }
 
+/** 批量写入模型上下文窗口（不存在则按默认倍率 1.0 建档）。 */
+export async function upsertModelContexts(
+  entries: { modelId: string; contextWindow: number | null }[],
+): Promise<void> {
+  const db = await getDb();
+  const now = Date.now();
+  for (const { modelId, contextWindow } of entries) {
+    await db.collection<AiModelDoc>("ai_models").updateOne(
+      { _id: modelId },
+      {
+        $set: { contextWindow, updatedAt: now },
+        $setOnInsert: {
+          displayName: null,
+          rate: 1,
+          enabled: true,
+          createdAt: now,
+        },
+      },
+      { upsert: true },
+    );
+  }
+}
+
 export async function updateAiModel(modelId: string, patch: AiModelPatch): Promise<AiModelDoc> {
   const db = await getDb();
   const set: Record<string, unknown> = { updatedAt: Date.now() };

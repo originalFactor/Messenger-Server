@@ -134,6 +134,7 @@ interface SessionClaims {
 | POST | `/api/admin/models` | 管理员 | 批量导入模型（默认 1.0 倍率） |
 | PUT | `/api/admin/models/{id}` | 管理员 | 更新模型倍率/启停 |
 | DELETE | `/api/admin/models/{id}` | 管理员 | 删除模型 |
+| PUT | `/api/admin/models/context` | 管理员 | 批量写入模型上下文窗口（不存在则建档） |
 | GET | `/api/admin/models/metadata` | 管理员 | models.dev 模型元数据（上下文大小） |
 | GET | `/api/admin/upstreams` | 管理员 | 上游列表 |
 | POST | `/api/admin/upstreams` | 管理员 | 新增上游 |
@@ -426,6 +427,7 @@ interface SessionClaims {
 
 - `POST`：`{ "modelIds": ["gpt-4o", …] }` 批量导入；已存在的保持原倍率，新模型默认 `rate: 1.0` 且启用；上下文窗口由服务端从 models.dev 元数据填充（新模型直接写入，已存在但为空的回填）。
 - `PUT /{id}`：`{ "rate": 1.5, "enabled": true, "displayName": null, "contextWindow": 272000 }`（均为可选的部分更新；`contextWindow` 传 `null` 清除）。
+- `PUT /api/admin/models/context`：`{ "models": [{ "id": "gpt-4o", "contextWindow": 128000 }] }` 批量写入上下文（`contextWindow` 可为 `null` 清除；模型不存在时以默认倍率 1.0 建档）。
 - `DELETE /{id}`：从目录移除（不影响上游配置中的引用）。
 
 ### GET|POST /api/admin/upstreams、PUT|DELETE /api/admin/upstreams/{id}、POST /api/admin/upstreams/{id}/probe

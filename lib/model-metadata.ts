@@ -31,9 +31,11 @@ const METADATA_TIMEOUT_MS = 10_000;
 const modelsDevSchema = z.record(
   z.string(),
   z.object({
+    // 部分条目（图像模型等）的 context 为 0，校验放宽为任意数字，
+    // 构建映射时跳过非正值。
     limit: z
       .object({
-        context: z.number().positive(),
+        context: z.number(),
       })
       .partial()
       .optional(),

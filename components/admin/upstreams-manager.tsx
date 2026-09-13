@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Activity, Plus, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
@@ -122,6 +122,7 @@ export function UpstreamsManager({
 
   const [newModelId, setNewModelId] = useState("");
   const [modelEdits, setModelEdits] = useState<Record<string, { rate: string; context: string; enabled: boolean }>>({});
+  const [contextDrafts, setContextDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -149,12 +150,28 @@ export function UpstreamsManager({
     };
   }, []);
 
+  // 上下文展示优先级：模型目录中已保存的值 > models.dev 元数据。
+  const catalogSizes = useMemo(() => {
+    const sizes: ContextSizes = {};
+    for (const model of models) {
+      if (model.contextWindow) {
+        sizes[model._id] = model.contextWindow;
+      }
+    }
+    return sizes;
+  }, [models]);
+
+  const contextOf = useCallback(
+    (modelId: string): number | null => catalogSizes[modelId] ?? contextSizes[modelId] ?? null,
+    [catalogSizes, contextSizes],
+  );
+
   const contextLabel = useCallback(
     (modelId: string): string | null => {
-      const context = contextSizes[modelId];
+      const context = contextOf(modelId);
       return context ? formatContext(context) : null;
     },
-    [contextSizes],
+    [contextOf],
   );
 
   function startCreate() {
@@ -163,6 +180,7 @@ export function UpstreamsManager({
     setSelectedModels([]);
     setDiscoveredModels([]);
     setManualModel("");
+    setContextDrafts({});
     setFormError(null);
     setShowForm(true);
     setError(null);
@@ -180,6 +198,7 @@ export function UpstreamsManager({
     setSelectedModels([...upstream.models].sort((a, b) => a.localeCompare(b)));
     setDiscoveredModels([...upstream.models].sort((a, b) => a.localeCompare(b)));
     setManualModel("");
+    setContextDrafts({});
     setFormError(null);
     setShowForm(true);
     setError(null);
@@ -243,6 +262,15 @@ export function UpstreamsManager({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    const contextEntries: { id: string; contextWindow: number | null }[] = [];
+    for (const [modelId, draft] of Object.entries(contextDrafts)) {
+      const parsed = parseContextInput(draft);
+      if (parsed === "invalid") {
+        setFormError(`模型 ${modelId} 的上下文格式无效，请使用 272K / 1M 等形式。`);
+        return;
+      }
+      contextEntries.push({ id: modelId, contextWindow: parsed });
+    }
     const payload = {
       name: form.name,
       baseUrl: form.baseUrl,
@@ -263,6 +291,21 @@ export function UpstreamsManager({
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
         setFormError(body?.error ?? "保存失败，请稍后重试。");
         return;
+      }
+      if (contextEntries.length > 0) {
+        try {
+          const contextResponse = await fetch("/api/admin/models/context", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ models: contextEntries }),
+          });
+          if (!contextResponse.ok) {
+            toast.error("上游已保存，但上下文窗口写入模型目录失败。");
+          }
+        } catch {
+          toast.error("上游已保存，但上下文窗口写入模型目录失败。");
+        }
+        setContextDrafts({});
       }
       setShowForm(false);
       router.refresh();
@@ -577,9 +620,9 @@ export function UpstreamsManager({
                 )}
 
                 {discoveredModels.length > 0 ? (
-                  <div className="max-h-72 overflow-y-auto rounded-lg border">
+                  <div className="overflow-hidden rounded-lg border">
                     <Table>
-                      <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_var(--border)]">
+                      <TableHeader>
                         <TableRow>
                           <TableHead className="w-10">
                             <Checkbox
@@ -591,7 +634,7 @@ export function UpstreamsManager({
                             />
                           </TableHead>
                           <TableHead>模型 ID</TableHead>
-                          <TableHead className="text-right">Context Window</TableHead>
+                          <TableHead className="w-40">Context Window</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -615,8 +658,18 @@ export function UpstreamsManager({
                                 </Badge>
                               ) : null}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs text-muted-foreground">
-                              {contextLabel(modelId) ?? "—"}
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              <Input
+                                placeholder="272K / 1M"
+                                className="h-8 font-mono text-xs uppercase"
+                                value={contextDrafts[modelId] ?? contextLabel(modelId) ?? ""}
+                                onChange={(event) =>
+                                  setContextDrafts((drafts) => ({
+                                    ...drafts,
+                                    [modelId]: event.target.value,
+                                  }))
+                                }
+                              />
                             </TableCell>
                           </TableRow>
                         ))}
