@@ -67,24 +67,21 @@ const emptyUpstreamForm: UpstreamFormState = {
 
 type ContextSizes = Record<string, number>;
 
-/** 展示形式：272K / 1M（向上取整到一位小数并去尾零）。 */
+/** 展示形式：整数 K（1050000 → 1050K，四舍五入到最近的 K）。 */
 function formatContext(tokens: number): string {
-  if (tokens >= 1_000_000) {
-    return `${parseFloat((tokens / 1_000_000).toFixed(1))}M`;
-  }
   if (tokens >= 1_000) {
-    return `${parseFloat((tokens / 1_000).toFixed(1))}K`;
+    return `${Math.round(tokens / 1_000)}K`;
   }
   return String(tokens);
 }
 
-/** 编辑形式：接受 272K / 1M / 200000（不区分大小写），空串表示清除。 */
+/** 编辑形式：接受 1M / 1.05M / 272K / 200000（不区分大小写，最多两位小数），空串表示清除。 */
 function parseContextInput(input: string): number | null | "invalid" {
   const trimmed = input.trim().toUpperCase();
   if (!trimmed) {
     return null;
   }
-  const match = /^([0-9]*\.?[0-9]+)\s*(K|M)?$/.exec(trimmed);
+  const match = /^([0-9]+(\.[0-9]{1,2})?)\s*(K|M)?$/.exec(trimmed);
   if (!match) {
     return "invalid";
   }
