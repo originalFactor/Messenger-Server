@@ -425,8 +425,8 @@ interface SessionClaims {
 
 模型倍率目录（`ai_models` 集合）。
 
-- `POST`：`{ "modelIds": ["gpt-4o", …] }` 批量导入；已存在的保持原倍率，新模型默认 `rate: 1.0` 且启用；上下文窗口由服务端从 models.dev 元数据填充（新模型直接写入，已存在但为空的回填）。
-- `PUT /{id}`：`{ "rate": 1.5, "enabled": true, "displayName": null, "contextWindow": 272000 }`（均为可选的部分更新；`contextWindow` 传 `null` 清除）。
+- `POST`：`{ "modelIds": ["gpt-4o", …] }` 批量导入；已存在的保持原倍率，新模型默认启用；输入/输出倍率与上下文窗口由服务端从 models.dev 元数据填充（倍率以 deepseek-v4.1-flash 的成本为基准归一化）。
+- `PUT /{id}`：`{ "inputRate": 16.6667, "outputRate": 16.6667, "enabled": true, "displayName": null, "contextWindow": 272000 }`（均为可选的部分更新；`contextWindow` 传 `null` 清除）。
 - `PUT /api/admin/models/context`：`{ "models": [{ "id": "gpt-4o", "contextWindow": 128000 }] }` 批量写入上下文（`contextWindow` 可为 `null` 清除；模型不存在时以默认倍率 1.0 建档）。
 - `DELETE /{id}`：从目录移除（不影响上游配置中的引用）。
 
@@ -440,6 +440,9 @@ interface SessionClaims {
   "baseUrl": "https://api.example.com/v1",   // OpenAI 兼容根地址（含 /v1）
   "apiKey": "上游密钥",
   "models": ["gpt-4o", "deepseek-chat"],     // 可服务的模型 ID（对应 ai_models._id）
+  "modelRates": {                             // 可选：按上游差异化的倍率覆盖
+    "gpt-4o": { "inputRate": 16.6667, "outputRate": 16.6667 }
+  },
   "priority": 0,                              // 越小越优先；同模型多上游自动故障转移
   "enabled": true
 }
@@ -476,7 +479,7 @@ interface SessionClaims {
 
 ## AI API（OpenAI 兼容代理）
 
-`/v1/*` 是面向用户 API Key（`Authorization: Bearer sk-…`）的 OpenAI 兼容代理。可用模型 = 启用的模型目录 ∩ 至少一个启用上游可服务；额度在响应完成后按 `ceil(totalTokens × 模型倍率)` 扣减（下限 1，失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`）。
+`/v1/*` 是面向用户 API Key（`Authorization: Bearer sk-…`）的 OpenAI 兼容代理。可用模型 = 启用的模型目录 ∩ 至少一个启用上游可服务；额度在响应完成后按 `ceil(promptTokens × 输入倍率 + completionTokens × 输出倍率)` 扣减（下限 1，失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`）。倍率解析顺序：上游对模型的覆盖值（`upstreams.modelRates`）→ 目录默认值（`ai_models.inputRate/outputRate`，源自 models.dev 定价、以 deepseek-v4.1-flash 归一化）→ 1.0。
 
 ### GET /v1/models
 

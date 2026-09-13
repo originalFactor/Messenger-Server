@@ -17,82 +17,224 @@
 import { z } from "zod";
 
 /**
- * models.dev 公开模型元数据（https://models.dev/models.json）：以模型 ID
- * 为键的扁平映射（如 "openai/gpt-4o"），limit.context 即上下文窗口。
- * 上游 /v1/models 返回的是裸 ID（"gpt-4o"），因此除完整键外同时登记
- * "/" 后的短键，命中优先取完整键。结果在实例内存中缓存 24 小时；
- * 拉取失败时回退到上一次缓存，永远不抛出（元数据仅用于展示）。
+ * models.dev 公开模型元数据：
+ * - https://models.dev/models.json：以模型 ID 为键的扁平映射（limit.context
+ *   即上下文窗口），用于上下文大小；
+ * - https://models.dev/api.json：按供应商嵌套，条目带 cost（每百万 token
+ *   的美元成本），用于推导默认输入/输出倍率 —— 以
+ *   deepseek/deepseek-v4.1-flash 的成本为基准归一化（其倍率恰为 1.0），
+ *   单位在比值中抵消。
+ * models.json 里的个别条目 context 为 0，校验放宽并在建映射时跳过。
+ * 两个载荷在实例内存中缓存 24 小时；拉取失败回退上一次缓存，永不抛出。
  */
 
-const MODELS_DEV_URL = "https://models.dev/models.json";
+const FLAT_URL = "https://models.dev/models.json";
+const API_URL = "https://models.dev/api.json";
 const METADATA_TTL_MS = 24 * 60 * 60 * 1000;
 const METADATA_TIMEOUT_MS = 10_000;
 
-const modelsDevSchema = z.record(
-  z.string(),
-  z.object({
-    // 部分条目（图像模型等）的 context 为 0，校验放宽为任意数字，
-    // 构建映射时跳过非正值。
-    limit: z
-      .object({
-        context: z.number(),
-      })
-      .partial()
-      .optional(),
-  }),
-);
+/** 倍率基准：deepseek-v4.1-flash（先试官方供应商，再退回裸 ID 查找）。 */
+const BASELINE_PROVIDER = "deepseek";
+const BASELINE_MODEL = "deepseek-v4.1-flash";
+
+/** 裸 ID 的成本在多家供应商重复出现时，优先采信官方/一线供应商。 */
+const CANONICAL_PROVIDERS = new Set([
+  BASELINE_PROVIDER,
+  "openai",
+  "anthropic",
+  "google",
+  "zhipu",
+  "moonshot",
+  "moonshotai",
+  "alibaba",
+  "qwen",
+  "minimax",
+  "xai",
+  "mistral",
+  "meta",
+  "microsoft",
+  "amazon",
+]);
+
+const flatModelSchema = z.object({
+  limit: z
+    .object({
+      context: z.number(),
+    })
+    .partial()
+    .optional(),
+});
+
+const apiModelSchema = z.object({
+  limit: z
+    .object({
+      context: z.number(),
+    })
+    .partial()
+    .optional(),
+  cost: z
+    .object({
+      input: z.number(),
+      output: z.number(),
+    })
+    .partial()
+    .optional(),
+});
+
+export interface ModelRates {
+  input: number;
+  output: number;
+}
 
 export type ModelContextSizes = Record<string, number>;
+export type ModelRateMap = Record<string, ModelRates>;
 
 interface MetadataCache {
-  data: ModelContextSizes;
   fetchedAt: number;
+  contextSizes: ModelContextSizes;
+  rates: ModelRateMap;
 }
 
 let cache: MetadataCache | null = null;
-let inflight: Promise<ModelContextSizes> | null = null;
+let inflight: Promise<MetadataCache> | null = null;
 
-export async function getModelContextSizes(): Promise<ModelContextSizes> {
+function round4(value: number): number {
+  return Math.round(value * 10_000) / 10_000;
+}
+
+async function fetchMetadata(): Promise<MetadataCache> {
+  const [flatPayload, apiPayload] = await Promise.all([
+    fetch(FLAT_URL, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(METADATA_TIMEOUT_MS) })
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`models.json ${response.status}`))))
+      .catch(() => null),
+    fetch(API_URL, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(METADATA_TIMEOUT_MS) })
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`api.json ${response.status}`))))
+      .catch(() => null),
+  ]);
+
+  // —— 上下文：来自扁平 models.json（含 vendor/model → 裸 ID 别名）——
+  const contextSizes: ModelContextSizes = {};
+  if (flatPayload) {
+    const flat = flatModelSchema.safeParse(flatPayload);
+    if (flat.success) {
+      const entries = flat.data as unknown as Record<string, { limit?: { context?: number } }>;
+      for (const [key, model] of Object.entries(entries)) {
+        const context = model.limit?.context;
+        if (!context || context <= 0) {
+          continue;
+        }
+        contextSizes[key] = Math.max(contextSizes[key] ?? 0, context);
+        const separator = key.indexOf("/");
+        if (separator > 0) {
+          const bareId = key.slice(separator + 1);
+          contextSizes[bareId] = Math.max(contextSizes[bareId] ?? 0, context);
+        }
+      }
+    }
+  }
+
+  // —— 默认倍率：来自 api.json 的 cost，以基准模型归一化 ——
+  const rates: ModelRateMap = {};
+  if (apiPayload) {
+    const api = apiModelSchema.safeParse(apiPayload);
+    if (api.success) {
+      const providers = api.data as Record<
+        string,
+        { models?: Record<string, { cost?: { input?: number; output?: number } } | undefined> | undefined }
+      >;
+
+      // 两遍扫描：先收集所有有效 cost 条目，再解析基准与裸 ID 别名。
+      interface CostEntry {
+        provider: string;
+        modelId: string;
+        input: number;
+        output: number;
+        canonical: boolean;
+      }
+      const entries: CostEntry[] = [];
+      for (const [providerName, provider] of Object.entries(providers)) {
+        for (const [modelId, model] of Object.entries(provider.models ?? {})) {
+          if (!model) continue;
+          const cost = model.cost;
+          if (typeof cost?.input !== "number" || typeof cost?.output !== "number") continue;
+          if (cost.input <= 0 || cost.output <= 0) continue;
+          entries.push({
+            provider: providerName,
+            modelId,
+            input: cost.input,
+            output: cost.output,
+            canonical: CANONICAL_PROVIDERS.has(providerName),
+          });
+        }
+      }
+
+      const pickCost = (modelId: string, preferredProvider?: string): ModelRates | null => {
+        if (preferredProvider) {
+          const direct = entries.find((entry) => entry.modelId === modelId && entry.provider === preferredProvider);
+          if (direct) {
+            return { input: direct.input, output: direct.output };
+          }
+        }
+        const matches = entries.filter((entry) => entry.modelId === modelId);
+        if (matches.length === 0) {
+          return null;
+        }
+        // 一线供应商优先（如 deepseek 官方），否则取输入成本最低的报价。
+        const chosen = matches.find((entry) => entry.canonical) ?? matches.reduce((a, b) => (b.input < a.input ? b : a));
+        return { input: chosen.input, output: chosen.output };
+      };
+
+      const baseline =
+        pickCost(BASELINE_MODEL, BASELINE_PROVIDER) ?? pickCost(`${BASELINE_PROVIDER}/${BASELINE_MODEL}`);
+      if (baseline) {
+        for (const entry of entries) {
+          const rate: ModelRates = {
+            input: round4(entry.input / baseline.input),
+            output: round4(entry.output / baseline.output),
+          };
+          rates[`${entry.provider}/${entry.modelId}`] = rate;
+          const existing = rates[entry.modelId];
+          if (!existing) {
+            rates[entry.modelId] = rate;
+          } else if (entry.canonical || rate.input < existing.input) {
+            // 裸 ID 别名：一线供应商覆盖任意报价，非一线之间取更便宜的。
+            rates[entry.modelId] = rate;
+          }
+        }
+      }
+    }
+  }
+
+  return { fetchedAt: Date.now(), contextSizes, rates };
+}
+
+export async function getModelDefaults(): Promise<MetadataCache> {
   if (cache && Date.now() - cache.fetchedAt < METADATA_TTL_MS) {
-    return cache.data;
+    return cache;
   }
   if (inflight) {
     return inflight;
   }
   inflight = fetchMetadata()
     .then((data) => {
-      cache = { data, fetchedAt: Date.now() };
+      cache = data;
       return data;
     })
-    .catch(() => cache?.data ?? ({} as ModelContextSizes))
+    .catch(() => ({
+      fetchedAt: cache?.fetchedAt ?? 0,
+      contextSizes: cache?.contextSizes ?? ({} as ModelContextSizes),
+      rates: cache?.rates ?? ({} as ModelRateMap),
+    }))
     .finally(() => {
       inflight = null;
     });
   return inflight;
 }
 
-async function fetchMetadata(): Promise<ModelContextSizes> {
-  const response = await fetch(MODELS_DEV_URL, {
-    headers: { accept: "application/json" },
-    signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    throw new Error(`models.dev returned ${response.status}`);
-  }
-  const parsed = modelsDevSchema.parse(await response.json());
+export async function getModelContextSizes(): Promise<ModelContextSizes> {
+  return (await getModelDefaults()).contextSizes;
+}
 
-  const sizes: ModelContextSizes = {};
-  for (const [key, model] of Object.entries(parsed)) {
-    const context = model.limit?.context;
-    if (!context) {
-      continue;
-    }
-    sizes[key] = Math.max(sizes[key] ?? 0, context);
-    const separator = key.indexOf("/");
-    if (separator > 0) {
-      const bareId = key.slice(separator + 1);
-      sizes[bareId] = Math.max(sizes[bareId] ?? 0, context);
-    }
-  }
-  return sizes;
+export async function getModelRates(): Promise<ModelRateMap> {
+  return (await getModelDefaults()).rates;
 }

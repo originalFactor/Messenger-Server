@@ -121,8 +121,10 @@ export function UpstreamsManager({
   const [importingId, setImportingId] = useState<string | null>(null);
 
   const [newModelId, setNewModelId] = useState("");
-  const [modelEdits, setModelEdits] = useState<Record<string, { rate: string; context: string; enabled: boolean }>>({});
+  const [modelEdits, setModelEdits] = useState<Record<string, { context: string; inputRate: string; outputRate: string; enabled: boolean }>>({});
   const [contextDrafts, setContextDrafts] = useState<Record<string, string>>({});
+  const [rateDrafts, setRateDrafts] = useState<Record<string, { input: string; output: string }>>({});
+  const [editingModelRates, setEditingModelRates] = useState<Record<string, { inputRate: number; outputRate: number }>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -161,6 +163,18 @@ export function UpstreamsManager({
     return sizes;
   }, [models]);
 
+  // 目录默认倍率（models.dev 归一化；旧文档回退 legacy 单一倍率，再回退 1）。
+  const catalogRates = useMemo(() => {
+    const rates: Record<string, { input: number; output: number }> = {};
+    for (const model of models) {
+      rates[model._id] = {
+        input: model.inputRate ?? model.rate ?? 1,
+        output: model.outputRate ?? model.rate ?? 1,
+      };
+    }
+    return rates;
+  }, [models]);
+
   const contextOf = useCallback(
     (modelId: string): number | null => catalogSizes[modelId] ?? contextSizes[modelId] ?? null,
     [catalogSizes, contextSizes],
@@ -181,6 +195,8 @@ export function UpstreamsManager({
     setDiscoveredModels([]);
     setManualModel("");
     setContextDrafts({});
+    setRateDrafts({});
+    setEditingModelRates({});
     setFormError(null);
     setShowForm(true);
     setError(null);
@@ -199,6 +215,8 @@ export function UpstreamsManager({
     setDiscoveredModels([...upstream.models].sort((a, b) => a.localeCompare(b)));
     setManualModel("");
     setContextDrafts({});
+    setRateDrafts({});
+    setEditingModelRates(upstream.modelRates ?? {});
     setFormError(null);
     setShowForm(true);
     setError(null);
@@ -271,11 +289,22 @@ export function UpstreamsManager({
       }
       contextEntries.push({ id: modelId, contextWindow: parsed });
     }
+    const modelRates: Record<string, { inputRate: number; outputRate: number }> = { ...editingModelRates };
+    for (const [modelId, draft] of Object.entries(rateDrafts)) {
+      const input = Number(draft.input);
+      const output = Number(draft.output);
+      if (!Number.isFinite(input) || input <= 0 || !Number.isFinite(output) || output <= 0) {
+        setFormError(`模型 ${modelId} 的倍率必须是正数。`);
+        return;
+      }
+      modelRates[modelId] = { inputRate: input, outputRate: output };
+    }
     const payload = {
       name: form.name,
       baseUrl: form.baseUrl,
       apiKey: form.apiKey,
       models: selectedModels,
+      modelRates,
       priority: Number(form.priority) || 0,
       enabled: form.enabled === "1",
     };
@@ -306,6 +335,7 @@ export function UpstreamsManager({
           toast.error("上游已保存，但上下文窗口写入模型目录失败。");
         }
         setContextDrafts({});
+        setRateDrafts({});
       }
       setShowForm(false);
       router.refresh();
@@ -388,8 +418,9 @@ export function UpstreamsManager({
     if (!edit) {
       return;
     }
-    const rate = Number(edit.rate);
-    if (!Number.isFinite(rate) || rate <= 0) {
+    const inputRate = Number(edit.inputRate);
+    const outputRate = Number(edit.outputRate);
+    if (!Number.isFinite(inputRate) || inputRate <= 0 || !Number.isFinite(outputRate) || outputRate <= 0) {
       setError("倍率必须是正数。");
       return;
     }
@@ -399,7 +430,14 @@ export function UpstreamsManager({
       return;
     }
     const baselineContext = model.contextWindow ?? contextSizes[model._id] ?? null;
-    if (rate === model.rate && edit.enabled === model.enabled && context === baselineContext) {
+    const baselineInput = model.inputRate ?? model.rate ?? 1;
+    const baselineOutput = model.outputRate ?? model.rate ?? 1;
+    if (
+      context === baselineContext &&
+      inputRate === baselineInput &&
+      outputRate === baselineOutput &&
+      edit.enabled === model.enabled
+    ) {
       return;
     }
     setBusy(true);
@@ -408,7 +446,7 @@ export function UpstreamsManager({
       const response = await fetch(`/api/admin/models/${encodeURIComponent(model._id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rate, enabled: edit.enabled, contextWindow: context }),
+        body: JSON.stringify({ enabled: edit.enabled, contextWindow: context, inputRate, outputRate }),
       });
       if (!response.ok) {
         setError("保存失败。");
@@ -634,7 +672,9 @@ export function UpstreamsManager({
                             />
                           </TableHead>
                           <TableHead>模型 ID</TableHead>
-                          <TableHead className="w-40">Context Window</TableHead>
+                          <TableHead className="w-32">Context Window</TableHead>
+                          <TableHead className="w-24">输入倍率</TableHead>
+                          <TableHead className="w-24">输出倍率</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -667,6 +707,38 @@ export function UpstreamsManager({
                                   setContextDrafts((drafts) => ({
                                     ...drafts,
                                     [modelId]: event.target.value,
+                                  }))
+                                }
+                              />
+                            </TableCell>
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              <Input
+                                inputMode="decimal"
+                                className="h-8 font-mono text-xs tabular-nums"
+                                value={
+                                  rateDrafts[modelId]?.input ??
+                                  String(editingModelRates[modelId]?.inputRate ?? catalogRates[modelId]?.input ?? 1)
+                                }
+                                onChange={(event) =>
+                                  setRateDrafts((drafts) => ({
+                                    ...drafts,
+                                    [modelId]: { output: rateDrafts[modelId]?.output ?? String(editingModelRates[modelId]?.outputRate ?? catalogRates[modelId]?.output ?? 1), input: event.target.value },
+                                  }))
+                                }
+                              />
+                            </TableCell>
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              <Input
+                                inputMode="decimal"
+                                className="h-8 font-mono text-xs tabular-nums"
+                                value={
+                                  rateDrafts[modelId]?.output ??
+                                  String(editingModelRates[modelId]?.outputRate ?? catalogRates[modelId]?.output ?? 1)
+                                }
+                                onChange={(event) =>
+                                  setRateDrafts((drafts) => ({
+                                    ...drafts,
+                                    [modelId]: { input: rateDrafts[modelId]?.input ?? String(editingModelRates[modelId]?.inputRate ?? catalogRates[modelId]?.input ?? 1), output: event.target.value },
                                   }))
                                 }
                               />
@@ -803,7 +875,8 @@ export function UpstreamsManager({
             <CardTitle className="text-base">模型倍率目录</CardTitle>
             <CardDescription>
               只有目录中启用且至少一个启用上游可服务的模型，才会出现在 AI API 的 /v1/models
-              中。消耗额度 = ceil(tokens × 倍率)。
+              中。默认倍率来自 models.dev 定价（以 deepseek-v4.1-flash 为基准 1.0）；消耗额度
+              = ceil(输入 tokens × 输入倍率 + 输出 tokens × 输出倍率)，上游可按模型覆盖。
             </CardDescription>
           </div>
           <form className="flex items-end gap-2" onSubmit={addModel}>
@@ -831,7 +904,8 @@ export function UpstreamsManager({
                 <TableRow>
                   <TableHead>模型 ID</TableHead>
                   <TableHead className="w-36">上下文</TableHead>
-                  <TableHead className="w-28">倍率</TableHead>
+                  <TableHead className="w-24">输入倍率</TableHead>
+                  <TableHead className="w-24">输出倍率</TableHead>
                   <TableHead className="w-32">状态</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
@@ -839,17 +913,24 @@ export function UpstreamsManager({
               <TableBody>
                 {models.map((model) => {
                   const baselineContext = model.contextWindow ?? contextSizes[model._id] ?? null;
+                  const baselineInput = model.inputRate ?? model.rate ?? 1;
+                  const baselineOutput = model.outputRate ?? model.rate ?? 1;
                   const edit = modelEdits[model._id] ?? {
-                    rate: String(model.rate),
                     context: baselineContext ? formatContext(baselineContext) : "",
+                    inputRate: String(baselineInput),
+                    outputRate: String(baselineOutput),
                     enabled: model.enabled,
                   };
                   const context = parseContextInput(edit.context);
-                  const contextDirty = context !== (model.contextWindow ?? contextSizes[model._id] ?? null);
+                  const inputRate = Number(edit.inputRate);
+                  const outputRate = Number(edit.outputRate);
+                  const ratesValid =
+                    Number.isFinite(inputRate) && inputRate > 0 && Number.isFinite(outputRate) && outputRate > 0;
+                  const ratesDirty = ratesValid && (inputRate !== baselineInput || outputRate !== baselineOutput);
                   const dirty =
-                    Number(edit.rate) !== model.rate ||
                     edit.enabled !== model.enabled ||
-                    (context !== "invalid" && contextDirty);
+                    (context !== "invalid" && context !== baselineContext) ||
+                    ratesDirty;
                   return (
                     <TableRow key={model._id}>
                       <TableCell className="font-mono text-xs">{model._id}</TableCell>
@@ -868,14 +949,26 @@ export function UpstreamsManager({
                       </TableCell>
                       <TableCell>
                         <Input
-                          type="number"
-                          step="0.1"
-                          min={0.1}
-                          value={edit.rate}
+                          inputMode="decimal"
+                          className="font-mono text-xs tabular-nums"
+                          value={edit.inputRate}
                           onChange={(event) =>
                             setModelEdits((edits) => ({
                               ...edits,
-                              [model._id]: { ...edit, rate: event.target.value },
+                              [model._id]: { ...edit, inputRate: event.target.value },
+                            }))
+                          }
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          inputMode="decimal"
+                          className="font-mono text-xs tabular-nums"
+                          value={edit.outputRate}
+                          onChange={(event) =>
+                            setModelEdits((edits) => ({
+                              ...edits,
+                              [model._id]: { ...edit, outputRate: event.target.value },
                             }))
                           }
                         />

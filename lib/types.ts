@@ -101,13 +101,22 @@ export interface RedemptionDoc {
 export interface AiModelDoc {
   _id: string;
   displayName?: string | null;
-  /** 消耗倍率：cost = ceil(totalTokens × rate)。 */
-  rate: number;
+  /** @deprecated 旧版单一倍率，仅作为 inputRate/outputRate 缺失时的回退。 */
+  rate?: number;
+  /** 输入倍率：promptTokens × inputRate，缺省回退 rate 再回退 1。 */
+  inputRate?: number;
+  /** 输出倍率：completionTokens × outputRate，缺省回退 rate 再回退 1。 */
+  outputRate?: number;
   /** 上下文窗口（tokens），来自 models.dev 或管理员手填，仅用于展示。 */
   contextWindow?: number | null;
   enabled: boolean;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface UpstreamRateOverride {
+  inputRate: number;
+  outputRate: number;
 }
 
 export interface UpstreamDoc {
@@ -118,6 +127,8 @@ export interface UpstreamDoc {
   apiKey: string;
   /** 该上游可服务的模型 ID 列表（对应 ai_models._id）。 */
   models: string[];
+  /** 按上游差异化的倍率覆盖；缺失的模型回退目录默认值。 */
+  modelRates?: Record<string, UpstreamRateOverride> | null;
   /** 路由优先级，数字越小越优先。 */
   priority: number;
   enabled: boolean;

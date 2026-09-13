@@ -15,8 +15,8 @@
  */
 
 /**
- * 额度估算与计费。额度单位与 token 1:1，再乘以模型倍率：
- *   cost = max(1, ceil(totalTokens × rate))
+ * 额度估算与计费。额度单位与 token 1:1，输入/输出分别乘以各自倍率：
+ *   cost = max(1, ceil(promptTokens × inputRate + completionTokens × outputRate))
  * 上游未返回 usage 时按英文文本经验值（约 4 字符/token）估算。
  */
 
@@ -24,12 +24,23 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-export function computeCost(totalTokens: number, rate: number): number {
-  if (!Number.isFinite(totalTokens) || totalTokens <= 0) {
+function safeRate(rate: number | null | undefined): number {
+  return Number.isFinite(rate) && rate !== undefined && rate !== null && rate > 0 ? rate : 1;
+}
+
+export function computeCost(
+  promptTokens: number,
+  completionTokens: number,
+  inputRate: number | null | undefined,
+  outputRate: number | null | undefined,
+): number {
+  if ((!Number.isFinite(promptTokens) || promptTokens <= 0) && (!Number.isFinite(completionTokens) || completionTokens <= 0)) {
     return 0;
   }
-  const safeRate = Number.isFinite(rate) && rate > 0 ? rate : 1;
-  return Math.max(1, Math.ceil(totalTokens * safeRate));
+  const prompt = Number.isFinite(promptTokens) && promptTokens > 0 ? promptTokens : 0;
+  const completion = Number.isFinite(completionTokens) && completionTokens > 0 ? completionTokens : 0;
+  const cost = Math.ceil(prompt * safeRate(inputRate) + completion * safeRate(outputRate));
+  return Math.max(1, cost);
 }
 
 export interface QuotaState {

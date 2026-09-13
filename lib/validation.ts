@@ -146,10 +146,11 @@ export const aiModelImportSchema = z.object({
 }).strict();
 
 export const aiModelPatchSchema = z.object({
-  rate: z.number().finite().positive().max(100_000).optional(),
   enabled: z.boolean().optional(),
   displayName: z.string().trim().max(200).nullable().optional(),
   contextWindow: z.number().int().positive().max(1_000_000_000).nullable().optional(),
+  inputRate: z.number().finite().positive().max(100_000).optional(),
+  outputRate: z.number().finite().positive().max(100_000).optional(),
 }).strict();
 
 export const aiModelContextBatchSchema = z.object({
@@ -169,6 +170,16 @@ export const upstreamInputSchema = z.object({
   baseUrl: z.string().url().max(2_000),
   apiKey: z.string().max(2_000),
   models: z.array(z.string().trim().min(1).max(200)).max(1_000),
+  modelRates: z
+    .record(
+      z.string().max(200),
+      z.object({
+        inputRate: z.number().finite().positive().max(100_000),
+        outputRate: z.number().finite().positive().max(100_000),
+      }),
+    )
+    .refine((rates) => Object.keys(rates).length <= 1_000, "Too many model rates.")
+    .optional(),
   priority: z.number().int().min(0).max(100_000),
   enabled: z.boolean(),
 }).strict();

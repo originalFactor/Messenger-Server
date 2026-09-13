@@ -16,7 +16,7 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
-import { getModelContextSizes } from "@/lib/model-metadata";
+import { getModelDefaults } from "@/lib/model-metadata";
 import { importAiModels, listAiModels } from "@/lib/storage";
 import { aiModelImportSchema } from "@/lib/validation";
 
@@ -32,8 +32,8 @@ export async function GET() {
   return jsonOk({ models });
 }
 
-/** 批量导入模型目录（已存在的保持原倍率，新模型默认 1.0 倍率并启用；
- * 上下文窗口在服务端从 models.dev 元数据填充）。 */
+/** 批量导入模型目录（已存在的保持原倍率，新模型以 models.dev 归一化的
+ * 输入/输出倍率启用；上下文窗口同样在服务端从 models.dev 填充）。 */
 export async function POST(request: Request) {
   const admin = await requireAdminUser();
   if (!admin) {
@@ -45,7 +45,7 @@ export async function POST(request: Request) {
     return jsonError("Invalid model import payload.", 400);
   }
 
-  const contextSizes = await getModelContextSizes();
-  const models = await importAiModels(parsed.data.modelIds, contextSizes);
+  const { contextSizes, rates } = await getModelDefaults();
+  const models = await importAiModels(parsed.data.modelIds, contextSizes, rates);
   return jsonOk({ models }, 201);
 }

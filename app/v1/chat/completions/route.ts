@@ -70,8 +70,8 @@ export async function POST(request: Request) {
   const settle = {
     userId: user.id,
     modelId: model,
-    rate: aiModel.rate,
     promptTokens,
+    aiModel: { inputRate: aiModel.inputRate, outputRate: aiModel.outputRate, rate: aiModel.rate },
   };
 
   if (stream) {
@@ -83,8 +83,22 @@ export async function POST(request: Request) {
 interface SettleParams {
   userId: string;
   modelId: string;
-  rate: number;
   promptTokens: number;
+  aiModel: { inputRate?: number; outputRate?: number; rate?: number };
+}
+
+/**
+ * 倍率解析：优先该上游对此模型的覆盖值，回退目录默认值
+ * （目录默认来自 models.dev 定价，以 deepseek-v4.1-flash 归一化），
+ * 再回退 legacy 单一倍率，最后 1.0。
+ */
+function resolveRates(upstream: UpstreamDoc, aiModel: { inputRate?: number; outputRate?: number; rate?: number }, model: string) {
+  return {
+    inputRate:
+      upstream.modelRates?.[model]?.inputRate ?? aiModel.inputRate ?? aiModel.rate ?? 1,
+    outputRate:
+      upstream.modelRates?.[model]?.outputRate ?? aiModel.outputRate ?? aiModel.rate ?? 1,
+  };
 }
 
 /**
@@ -92,12 +106,24 @@ interface SettleParams {
  * 字符长度估算 completion tokens。失败只记日志，不影响响应送达。
  */
 async function settleUsage(
-  params: SettleParams & { upstreamId: string | null; usage: UsageShape | null; completionChars: number; stream: boolean },
+  params: SettleParams & {
+    inputRate: number;
+    outputRate: number;
+    upstreamId: string | null;
+    usage: UsageShape | null;
+    completionChars: number;
+    stream: boolean;
+  },
 ): Promise<void> {
   const usage = params.usage;
   const completionTokens = usage?.completion_tokens ?? Math.ceil(params.completionChars / 4);
   const totalTokens = usage?.total_tokens ?? (usage?.prompt_tokens ?? params.promptTokens) + completionTokens;
-  const cost = computeCost(totalTokens, params.rate);
+  const cost = computeCost(
+    usage?.prompt_tokens ?? params.promptTokens,
+    completionTokens,
+    params.inputRate,
+    params.outputRate,
+  );
   try {
     await consumeQuota(params.userId, cost);
     await recordUsage({
@@ -160,6 +186,7 @@ async function nonStreamProxy(
 
     await settleUsage({
       ...settle,
+      ...resolveRates(upstream, settle.aiModel, settle.modelId),
       upstreamId: upstream._id,
       usage: payload.usage ?? null,
       completionChars: extractCompletionChars(payload),
@@ -266,6 +293,7 @@ function buildStreamingResponse(response: Response, upstream: UpstreamDoc, settl
       }
       await settleUsage({
         ...settle,
+        ...resolveRates(upstream, settle.aiModel, settle.modelId),
         upstreamId: upstream._id,
         usage: sniffed.usage,
         completionChars: sniffed.completionChars,
