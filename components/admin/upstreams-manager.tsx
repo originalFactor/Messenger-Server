@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Activity, ArrowDownToLine, Play, Plus, RefreshCw, X } from "lucide-react";
+import { Activity, ArrowDownToLine, Plus, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -129,8 +129,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   const [editingModelMeta, setEditingModelMeta] = useState<Record<string, UpstreamModelMeta>>({});
   const [metaDrafts, setMetaDrafts] = useState<Record<string, MetaDraft>>({});
   const [overrideDrafts, setOverrideDrafts] = useState<Record<string, boolean>>({});
-  const [probingId, setProbingId] = useState<string | null>(null);
-  const [probeResults, setProbeResults] = useState<Record<string, string[]>>({});
+  const [listTestingId, setListTestingId] = useState<string | null>(null);
+  const [listTestResults, setListTestResults] = useState<Record<string, { ok: boolean; text: string }>>({});
   const [testingModel, setTestingModel] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; text: string }>>({});
 
@@ -416,21 +416,55 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     }
   }
 
-  async function probe(upstream: UpstreamDoc) {
-    setProbingId(upstream._id);
+  /** 上游列表的整体测试：自动挑该上游已配模型中倍率（输入 + 输出之和）最低者，
+   *  用存储的凭据对该模型发一次最小 chat completion。 */
+  async function overallTest(upstream: UpstreamDoc) {
+    if (upstream.models.length === 0) {
+      setError("该上游未配置模型。");
+      return;
+    }
+    const rateOf = (modelId: string): { inputRate: number; outputRate: number } => {
+      const dev = devMeta[modelId];
+      const meta = upstream.modelMeta?.[modelId];
+      if (meta?.override) {
+        return { inputRate: meta.inputRate ?? dev?.inputRate ?? 0, outputRate: meta.outputRate ?? dev?.outputRate ?? 0 };
+      }
+      return { inputRate: dev?.inputRate ?? 0, outputRate: dev?.outputRate ?? 0 };
+    };
+    const cheapest = [...upstream.models].sort((a, b) => {
+      const rateA = rateOf(a);
+      const rateB = rateOf(b);
+      const sumA = rateA.inputRate + rateA.outputRate;
+      const sumB = rateB.inputRate + rateB.outputRate;
+      return sumA !== sumB ? sumA - sumB : a.localeCompare(b);
+    })[0];
+    setListTestingId(upstream._id);
     setError(null);
     try {
-      const response = await fetch(`/api/admin/upstreams/${upstream._id}/probe`, { method: "POST" });
-      const payload = (await response.json().catch(() => null)) as { models?: string[]; error?: string } | null;
-      if (!response.ok || !payload?.models) {
-        setError(payload?.error ?? "探测失败。");
+      const response = await fetch("/api/admin/upstreams/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ baseUrl: upstream.baseUrl, apiKey: upstream.apiKey, model: cheapest }),
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        latencyMs?: number;
+        error?: string;
+      } | null;
+      if (!response.ok || typeof payload?.latencyMs !== "number") {
+        setListTestResults((results) => ({
+          ...results,
+          [upstream._id]: { ok: false, text: payload?.error ?? "测试失败。" },
+        }));
         return;
       }
-      setProbeResults((results) => ({ ...results, [upstream._id]: payload.models ?? [] }));
+      setListTestResults((results) => ({
+        ...results,
+        [upstream._id]: { ok: true, text: `${cheapest}（${payload.latencyMs} ms）` },
+      }));
     } catch {
-      setError("网络错误，请稍后重试。");
+      setListTestResults((results) => ({ ...results, [upstream._id]: { ok: false, text: "网络错误。" } }));
     } finally {
-      setProbingId(null);
+      setListTestingId(null);
     }
   }
 
@@ -466,27 +500,6 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       return failed;
     } finally {
       setTestingModel(null);
-    }
-  }
-
-  /** 整体测试：在已选模型中自动挑选倍率（输入 + 输出之和）最低的一个发起测试。 */
-  async function testCheapestModel() {
-    if (selectedModels.length === 0) {
-      setFormError("请先勾选要测试的模型。");
-      return;
-    }
-    const cheapest = [...selectedModels].sort((a, b) => {
-      const rateA = resolvedMeta(a);
-      const rateB = resolvedMeta(b);
-      const sumA = rateA.inputRate + rateA.outputRate;
-      const sumB = rateB.inputRate + rateB.outputRate;
-      return sumA !== sumB ? sumA - sumB : a.localeCompare(b);
-    })[0];
-    const outcome = await testModel(cheapest);
-    if (outcome.ok) {
-      toast.success(`整体测试通过：${cheapest}（${outcome.text}）`);
-    } else {
-      toast.error(`整体测试失败（${cheapest}）：${outcome.text}`);
     }
   }
 
@@ -647,16 +660,10 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                     每个模型的元数据默认取自 models.dev（上下文 0 = 不限制，倍率 0 = 不计费）；
                     在表格中打开「覆盖」后可为此上游单独自定义。
                   </p>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button type="button" variant="outline" size="sm" disabled={testingModel !== null} onClick={testCheapestModel}>
-                      <Play className={testingModel ? "animate-pulse" : undefined} />
-                      整体测试
-                    </Button>
-                    <Button type="button" variant="outline" size="sm" onClick={updateMetaFromModelsDev}>
-                      <ArrowDownToLine />
-                      从 models.dev 更新元数据
-                    </Button>
-                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={updateMetaFromModelsDev}>
+                    <ArrowDownToLine />
+                    从 models.dev 更新元数据
+                  </Button>
                 </div>
 
                 {discoveredModels.length > 0 ? (
@@ -881,11 +888,11 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled={probingId === upstream._id}
-                          onClick={() => probe(upstream)}
+                          disabled={listTestingId === upstream._id}
+                          onClick={() => overallTest(upstream)}
                         >
                           <Activity />
-                          {probingId === upstream._id ? "探测中…" : "测试"}
+                          {listTestingId === upstream._id ? "测试中…" : "整体测试"}
                         </Button>
                         <Button
                           variant="destructive"
@@ -903,12 +910,23 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
             </Table>
           )}
           {upstreams.map((upstream) =>
-            probeResults[upstream._id] ? (
-              <div key={`probe-${upstream._id}`} className="mt-4 grid gap-3 rounded-lg border bg-muted/40 p-4 first:mt-6">
-                <p className="text-sm font-medium">「{upstream.name}」发现 {probeResults[upstream._id].length} 个模型</p>
-                <div className="max-h-28 overflow-y-auto font-mono text-xs leading-relaxed text-muted-foreground">
-                  {probeResults[upstream._id].join(", ")}
-                </div>
+            listTestResults[upstream._id] ? (
+              <div
+                key={`test-${upstream._id}`}
+                className="mt-4 grid gap-1 rounded-lg border bg-muted/40 p-4 first:mt-6"
+              >
+                <p className="text-sm font-medium">
+                  「{upstream.name}」整体测试{listTestResults[upstream._id].ok ? "通过" : "失败"}
+                </p>
+                <p
+                  className={
+                    listTestResults[upstream._id].ok
+                      ? "font-mono text-xs text-muted-foreground"
+                      : "text-xs text-destructive"
+                  }
+                >
+                  {listTestResults[upstream._id].text}
+                </p>
               </div>
             ) : null,
           )}
