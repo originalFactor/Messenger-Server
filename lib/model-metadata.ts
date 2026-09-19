@@ -21,9 +21,10 @@ import { z } from "zod";
  * - https://models.dev/models.json：以模型 ID 为键的扁平映射（limit.context
  *   即上下文窗口），用于上下文大小；
  * - https://models.dev/api.json：按供应商嵌套，条目带 cost（每百万 token
- *   的美元成本），用于推导默认输入/输出倍率 —— 以
- *   deepseek/deepseek-v4.1-flash 的成本为基准归一化（其倍率恰为 1.0），
- *   单位在比值中抵消。
+ *   的美元成本），用于推导默认输入/输出倍率 —— 基准为
+ *   deepseek/deepseek-v4.1-flash 的峰时输出成本（其输出倍率恰为 1.0），
+ *   所有模型的输入、输出倍率（含 deepseek-v4.1-flash 自身的输入倍率）都
+ *   以该基准输出成本为分母折算，单位在比值中抵消。
  * models.json 里的个别条目 context 为 0，校验放宽并在建映射时跳过。
  * 两个载荷在实例内存中缓存 24 小时；拉取失败回退上一次缓存，永不抛出。
  */
@@ -36,6 +37,9 @@ const METADATA_TIMEOUT_MS = 10_000;
 /** 倍率基准：deepseek-v4.1-flash（先试官方供应商，再退回裸 ID 查找）。 */
 const BASELINE_PROVIDER = "deepseek";
 const BASELINE_MODEL = "deepseek-v4.1-flash";
+
+/** 基准取该模型峰时输出费率；输入/输出倍率统一以其为分母（输入也基于输出价，见下方归一化）。 */
+const BASELINE_RATE = "output" as const;
 
 /** 裸 ID 的成本在多家供应商重复出现时，优先采信官方/一线供应商。 */
 const CANONICAL_PROVIDERS = new Set([
@@ -133,7 +137,7 @@ async function fetchMetadata(): Promise<MetadataCache> {
     }
   }
 
-  // —— 默认倍率：来自 api.json 的 cost，以基准模型归一化 ——
+  // —— 默认倍率：来自 api.json 的 cost，以基准模型的峰时输出成本归一化 ——
   const rates: ModelRateMap = {};
   if (apiPayload) {
     const api = z
@@ -202,9 +206,12 @@ async function fetchMetadata(): Promise<MetadataCache> {
       }
       if (baseline) {
         for (const entry of entries) {
+          // 输入、输出倍率统一以基准峰时输出成本为分母：deepseek-v4.1-flash
+          // 输出倍率恰为 1.0，其输入倍率（及一切其他倍率）按该费率折算。
+          const base = baseline[BASELINE_RATE];
           const rate: ModelRates = {
-            input: round4(entry.input / baseline.input),
-            output: round4(entry.output / baseline.output),
+            input: round4(entry.input / base),
+            output: round4(entry.output / base),
           };
           rates[`${entry.provider}/${entry.modelId}`] = rate;
           const existing = rates[entry.modelId];

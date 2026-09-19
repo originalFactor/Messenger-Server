@@ -131,3 +131,15 @@
     @apply font-sans;
     }
 }
+
+/* 弹窗（Dialog）打开时，隐藏背景层 shadcn Table 自带容器的滚动条：
+   Table 组件用 overflow-x-auto 包裹，overflow-y 会被计算为 auto，
+   内容仅高出几像素也会渲染出一条细纵向滚动条，透过半透明遮罩与弹窗自身的
+   滚动条并排，形成“双层滚动条”。弹窗打开时背景不可交互，滚动条无意义。 */
+body:has([data-slot="dialog-content"]) [data-slot="table-container"] {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+body:has([data-slot="dialog-content"]) [data-slot="table-container"]::-webkit-scrollbar {
+    display: none;
+}

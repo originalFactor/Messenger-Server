@@ -20,6 +20,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowLeftRight,
+  Boxes,
   CreditCard,
   Globe,
   Layers,
@@ -100,6 +101,14 @@ export function ConsoleShell({ email, role, children }: ConsoleShellProps) {
                   <Link href="/console/finance">
                     <Wallet />
                     <span>财务</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={isActive("/models")}>
+                  <Link href="/models">
+                    <Boxes />
+                    <span>模型广场</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

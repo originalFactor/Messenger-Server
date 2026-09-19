@@ -44,7 +44,10 @@ export async function PUT(request: Request, context: RouteContext) {
 
   const parsed = agentSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return jsonError("Invalid agent payload.", 400);
+    const reason = parsed.error.issues[0];
+    const detail = reason ? `${reason.path.join(".") || "(body)"}: ${reason.message}` : "payload could not be read";
+    console.error("Invalid agent payload for", agentId, "->", detail, parsed.error.flatten());
+    return jsonError(`Invalid agent payload (${detail}).`, 400);
   }
   if (parsed.data.id !== agentId) {
     return jsonError("The agent ID must match the request path.", 400);

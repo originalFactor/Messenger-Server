@@ -23,7 +23,8 @@ export const runtime = "nodejs";
 /**
  * models.dev 模型元数据（实例内存缓存 24h）：modelId →
  * { override?, contextWindow?, inputRate?, outputRate? }。倍率以
- * deepseek-v4.1-flash 成本为基准归一化；models.dev 不可用时返回空映射。
+ * deepseek-v4.1-flash 峰时输出费率 1.0 为基准折算；models.dev 不可用时
+ * 返回空映射。
  * 传 ?refresh=1 时绕过缓存强制重新拉取（控制台「更新元数据」入口）。
  */
 export async function GET(request: Request) {

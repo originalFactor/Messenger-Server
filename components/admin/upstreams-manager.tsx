@@ -30,6 +30,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -298,12 +306,18 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setOverrideDrafts((drafts) => ({ ...drafts, [modelId]: override }));
   }
 
-  /** 生效元数据（按模型）：覆盖开启时 草稿 > 自定义 > models.dev > 0；
-   *  关闭时 models.dev > 0。 */
+  /** 生效元数据（按模型）：覆盖开启时 草稿 > 自定义 > models.dev > 0（0 = 不计费）；
+   *  关闭时（默认使用 models.dev 数据）models.dev 缺失或为 0 时按 1x 展示。 */
   function resolvedMeta(modelId: string): { contextWindow: number; inputRate: number; outputRate: number } {
     const dev = devMeta[modelId];
     if (!rowOverride(modelId)) {
-      return { contextWindow: dev?.contextWindow ?? 0, inputRate: dev?.inputRate ?? 0, outputRate: dev?.outputRate ?? 0 };
+      const devRate = dev?.inputRate;
+      const devOutRate = dev?.outputRate;
+      return {
+        contextWindow: dev?.contextWindow ?? 0,
+        inputRate: devRate && devRate > 0 ? devRate : 1,
+        outputRate: devOutRate && devOutRate > 0 ? devOutRate : 1,
+      };
     }
     const stored = editingModelMeta[modelId];
     const draft = metaDrafts[modelId];
@@ -532,290 +546,288 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
         </Button>
       </div>
 
-      {showForm ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">{editingId ? "编辑上游" : "新增上游"}</CardTitle>
-            <CardDescription>
+      <Dialog open={showForm} onOpenChange={setShowForm}>
+        <DialogContent className="max-h-[calc(100vh-6rem)] overflow-y-auto sm:max-w-5xl">
+          <DialogHeader className="pr-8">
+            <DialogTitle>{editingId ? "编辑上游" : "新增上游"}</DialogTitle>
+            <DialogDescription>
               Base URL 填 OpenAI 兼容根地址（含 /v1），例如{" "}
               <code className="font-mono text-xs">https://api.example.com/v1</code>
               ；优先级数字越小越优先，同模型多个上游时自动故障转移。
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form className="grid gap-4" onSubmit={submit}>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="upstream-name">名称</Label>
-                  <Input
-                    id="upstream-name"
-                    required
-                    value={form.name}
-                    onChange={(event) => setForm({ ...form, name: event.target.value })}
-                  />
-                </div>
-                <div className="grid gap-2 sm:col-span-2">
-                  <Label htmlFor="upstream-url">Base URL</Label>
-                  <Input
-                    id="upstream-url"
-                    required
-                    type="url"
-                    placeholder="https://api.example.com/v1"
-                    value={form.baseUrl}
-                    onChange={(event) => setForm({ ...form, baseUrl: event.target.value })}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="upstream-key">API Key</Label>
-                  <Input
-                    id="upstream-key"
-                    value={form.apiKey}
-                    onChange={(event) => setForm({ ...form, apiKey: event.target.value })}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="upstream-priority">优先级</Label>
-                  <Input
-                    id="upstream-priority"
-                    type="number"
-                    min={0}
-                    value={form.priority}
-                    onChange={(event) => setForm({ ...form, priority: event.target.value })}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="upstream-enabled">启用</Label>
-                  <Select value={form.enabled} onValueChange={(value) => setForm({ ...form, enabled: value })}>
-                    <SelectTrigger id="upstream-enabled" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1">启用</SelectItem>
-                      <SelectItem value="0">停用</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
+            </DialogDescription>
+          </DialogHeader>
+          <form id="upstream-form" className="grid gap-4" onSubmit={submit}>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="grid gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Label>可服务模型（{selectedModels.length}）</Label>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={fetchingModels || !form.baseUrl}
-                    onClick={fetchFormModels}
-                  >
-                    <RefreshCw className={fetchingModels ? "animate-spin" : undefined} />
-                    {fetchingModels ? "拉取中…" : "从 /v1/models 拉取"}
-                  </Button>
-                  <div className="flex items-center gap-1.5">
-                    <Input
-                      placeholder="手动添加 model-id"
-                      className="h-8 w-52 font-mono text-xs"
-                      value={manualModel}
-                      onChange={(event) => setManualModel(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          addManualModel();
-                        }
-                      }}
-                    />
-                    <Button type="button" variant="outline" size="sm" onClick={addManualModel} disabled={!manualModel.trim()}>
-                      添加
-                    </Button>
-                  </div>
-                </div>
+                <Label htmlFor="upstream-name">名称</Label>
+                <Input
+                  id="upstream-name"
+                  required
+                  value={form.name}
+                  onChange={(event) => setForm({ ...form, name: event.target.value })}
+                />
+              </div>
+              <div className="grid gap-2 sm:col-span-2">
+                <Label htmlFor="upstream-url">Base URL</Label>
+                <Input
+                  id="upstream-url"
+                  required
+                  type="url"
+                  placeholder="https://api.example.com/v1"
+                  value={form.baseUrl}
+                  onChange={(event) => setForm({ ...form, baseUrl: event.target.value })}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="upstream-key">API Key</Label>
+                <Input
+                  id="upstream-key"
+                  value={form.apiKey}
+                  onChange={(event) => setForm({ ...form, apiKey: event.target.value })}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="upstream-priority">优先级</Label>
+                <Input
+                  id="upstream-priority"
+                  type="number"
+                  min={0}
+                  value={form.priority}
+                  onChange={(event) => setForm({ ...form, priority: event.target.value })}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="upstream-enabled">启用</Label>
+                <Select value={form.enabled} onValueChange={(value) => setForm({ ...form, enabled: value })}>
+                  <SelectTrigger id="upstream-enabled" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">启用</SelectItem>
+                    <SelectItem value="0">停用</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
 
-                {selectedModels.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    尚未选择模型：填写 Base URL 后从上游拉取勾选，或手动添加。
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedModels.map((modelId) => (
-                      <Badge key={modelId} variant="secondary" className="gap-1.5 py-1 font-mono text-xs">
-                        {modelId}
-                        <button
-                          type="button"
-                          aria-label={`移除 ${modelId}`}
-                          className="rounded-sm opacity-60 transition-opacity hover:opacity-100"
-                          onClick={() => toggleFormModel(modelId)}
-                        >
-                          <X className="size-3" />
-                        </button>
-                      </Badge>
-                    ))}
-                  </div>
-                )}
+            <div className="grid gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Label>可服务模型（{selectedModels.length}）</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={fetchingModels || !form.baseUrl}
+                  onClick={fetchFormModels}
+                >
+                  <RefreshCw className={fetchingModels ? "animate-spin" : undefined} />
+                  {fetchingModels ? "拉取中…" : "从 /v1/models 拉取"}
+                </Button>
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    placeholder="手动添加 model-id"
+                    className="h-8 w-52 font-mono text-xs"
+                    value={manualModel}
+                    onChange={(event) => setManualModel(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        addManualModel();
+                      }
+                    }}
+                  />
+                  <Button type="button" variant="outline" size="sm" onClick={addManualModel} disabled={!manualModel.trim()}>
+                    添加
+                  </Button>
+                </div>
               </div>
 
-              <Separator />
-
-              <div className="grid gap-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-xs text-muted-foreground">
-                    每个模型的元数据默认取自 models.dev（上下文 0 = 不限制，倍率 0 = 不计费，
-                    models.dev 无数据的模型倍率默认 1x）；
-                    在表格中打开「覆盖」后可为此上游单独自定义。
-                  </p>
-                  <Button type="button" variant="outline" size="sm" onClick={updateMetaFromModelsDev}>
-                    <ArrowDownToLine />
-                    从 models.dev 更新元数据
-                  </Button>
+              {selectedModels.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  尚未选择模型：填写 Base URL 后从上游拉取勾选，或手动添加。
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedModels.map((modelId) => (
+                    <Badge key={modelId} variant="secondary" className="gap-1.5 py-1 font-mono text-xs">
+                      {modelId}
+                      <button
+                        type="button"
+                        aria-label={`移除 ${modelId}`}
+                        className="rounded-sm opacity-60 transition-opacity hover:opacity-100"
+                        onClick={() => toggleFormModel(modelId)}
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </Badge>
+                  ))}
                 </div>
+              )}
+            </div>
 
-                {discoveredModels.length > 0 ? (
-                  <div className="overflow-hidden rounded-lg border">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-10">
-                            <Checkbox
-                              checked={
-                                allDiscoveredSelected ? true : someDiscoveredSelected ? "indeterminate" : false
-                              }
-                              onCheckedChange={toggleAllDiscovered}
-                              aria-label="全选/取消全选"
-                            />
-                          </TableHead>
-                          <TableHead>模型 ID</TableHead>
-                          <TableHead className="w-16">覆盖</TableHead>
-                          <TableHead className="w-36">Context Window</TableHead>
-                          <TableHead className="w-24">输入倍率</TableHead>
-                          <TableHead className="w-24">输出倍率</TableHead>
-                          <TableHead className="w-32">测试</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {sortedDiscovered.map((modelId) => {
-                          const meta = resolvedMeta(modelId);
-                          const editable = rowOverride(modelId);
-                          const draft = metaDraftOf(modelId);
-                          const setDraft = (field: keyof MetaDraft, value: string) =>
-                            setMetaDrafts((drafts) => ({
-                              ...drafts,
-                              [modelId]: { ...metaDraftOf(modelId), [field]: value },
-                            }));
-                          return (
-                            <TableRow
-                              key={modelId}
-                              className="cursor-pointer"
-                              onClick={() => toggleFormModel(modelId)}
-                            >
-                              <TableCell onClick={(event) => event.stopPropagation()}>
-                                <Checkbox
-                                  checked={selectedModels.includes(modelId)}
-                                  onCheckedChange={() => toggleFormModel(modelId)}
+            <Separator />
+
+            <div className="grid gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-muted-foreground">
+                  每个模型的元数据默认取自 models.dev（上下文 0 = 不限制，倍率 0 = 不计费，
+                  models.dev 无数据的模型倍率默认 1x）；
+                  在表格中打开「覆盖」后可为此上游单独自定义。
+                </p>
+                <Button type="button" variant="outline" size="sm" onClick={updateMetaFromModelsDev}>
+                  <ArrowDownToLine />
+                  从 models.dev 更新元数据
+                </Button>
+              </div>
+
+              {discoveredModels.length > 0 ? (
+                <div className="overflow-hidden rounded-lg border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-10">
+                          <Checkbox
+                            checked={
+                              allDiscoveredSelected ? true : someDiscoveredSelected ? "indeterminate" : false
+                            }
+                            onCheckedChange={toggleAllDiscovered}
+                            aria-label="全选/取消全选"
+                          />
+                        </TableHead>
+                        <TableHead>模型 ID</TableHead>
+                        <TableHead className="w-16">覆盖</TableHead>
+                        <TableHead className="w-36">Context Window</TableHead>
+                        <TableHead className="w-24">输入倍率</TableHead>
+                        <TableHead className="w-24">输出倍率</TableHead>
+                        <TableHead className="w-32">测试</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {sortedDiscovered.map((modelId) => {
+                        const meta = resolvedMeta(modelId);
+                        const editable = rowOverride(modelId);
+                        const draft = metaDraftOf(modelId);
+                        const setDraft = (field: keyof MetaDraft, value: string) =>
+                          setMetaDrafts((drafts) => ({
+                            ...drafts,
+                            [modelId]: { ...metaDraftOf(modelId), [field]: value },
+                          }));
+                        return (
+                          <TableRow
+                            key={modelId}
+                            className="cursor-pointer"
+                            onClick={() => toggleFormModel(modelId)}
+                          >
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              <Checkbox
+                                checked={selectedModels.includes(modelId)}
+                                onCheckedChange={() => toggleFormModel(modelId)}
+                              />
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {modelId}
+                              {selectedModels.includes(modelId) ? (
+                                <Badge variant="secondary" className="ml-2 font-sans text-[10px]">
+                                  已选
+                                </Badge>
+                              ) : null}
+                            </TableCell>
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              <Switch
+                                checked={rowOverride(modelId)}
+                                onCheckedChange={(checked) => setRowOverride(modelId, checked)}
+                                aria-label={"覆盖 " + modelId}
+                              />
+                            </TableCell>
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              {editable ? (
+                                <Input
+                                  placeholder="272K / 1M"
+                                  className="h-8 font-mono text-xs uppercase"
+                                  value={draft.context}
+                                  onChange={(event) => setDraft("context", event.target.value)}
                                 />
-                              </TableCell>
-                              <TableCell className="font-mono text-xs">
-                                {modelId}
-                                {selectedModels.includes(modelId) ? (
-                                  <Badge variant="secondary" className="ml-2 font-sans text-[10px]">
-                                    已选
-                                  </Badge>
-                                ) : null}
-                              </TableCell>
-                              <TableCell onClick={(event) => event.stopPropagation()}>
-                                <Switch
-                                  checked={rowOverride(modelId)}
-                                  onCheckedChange={(checked) => setRowOverride(modelId, checked)}
-                                  aria-label={"覆盖 " + modelId}
+                              ) : (
+                                <span className="font-mono text-xs text-muted-foreground">
+                                  {contextDisplay(modelId)}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              {editable ? (
+                                <Input
+                                  inputMode="decimal"
+                                  className="h-8 font-mono text-xs tabular-nums"
+                                  value={draft.inputRate}
+                                  onChange={(event) => setDraft("inputRate", event.target.value)}
                                 />
-                              </TableCell>
-                              <TableCell onClick={(event) => event.stopPropagation()}>
-                                {editable ? (
-                                  <Input
-                                    placeholder="272K / 1M"
-                                    className="h-8 font-mono text-xs uppercase"
-                                    value={draft.context}
-                                    onChange={(event) => setDraft("context", event.target.value)}
-                                  />
-                                ) : (
-                                  <span className="font-mono text-xs text-muted-foreground">
-                                    {contextDisplay(modelId)}
-                                  </span>
-                                )}
-                              </TableCell>
-                              <TableCell onClick={(event) => event.stopPropagation()}>
-                                {editable ? (
-                                  <Input
-                                    inputMode="decimal"
-                                    className="h-8 font-mono text-xs tabular-nums"
-                                    value={draft.inputRate}
-                                    onChange={(event) => setDraft("inputRate", event.target.value)}
-                                  />
-                                ) : (
-                                  <span className="font-mono text-xs text-muted-foreground tabular-nums">
-                                    {meta.inputRate}
-                                  </span>
-                                )}
-                              </TableCell>
-                              <TableCell onClick={(event) => event.stopPropagation()}>
-                                {editable ? (
-                                  <Input
-                                    inputMode="decimal"
-                                    className="h-8 font-mono text-xs tabular-nums"
-                                    value={draft.outputRate}
-                                    onChange={(event) => setDraft("outputRate", event.target.value)}
-                                  />
-                                ) : (
-                                  <span className="font-mono text-xs text-muted-foreground tabular-nums">
-                                    {meta.outputRate}
-                                  </span>
-                                )}
-                              </TableCell>
-                              <TableCell onClick={(event) => event.stopPropagation()}>
-                                <div className="flex flex-col items-start gap-0.5">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-7 px-2.5 text-xs"
-                                    disabled={testingModel !== null}
-                                    onClick={() => void testModel(modelId)}
+                              ) : (
+                                <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                                  {meta.inputRate}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              {editable ? (
+                                <Input
+                                  inputMode="decimal"
+                                  className="h-8 font-mono text-xs tabular-nums"
+                                  value={draft.outputRate}
+                                  onChange={(event) => setDraft("outputRate", event.target.value)}
+                                />
+                              ) : (
+                                <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                                  {meta.outputRate}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              <div className="flex flex-col items-start gap-0.5">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 px-2.5 text-xs"
+                                  disabled={testingModel !== null}
+                                  onClick={() => void testModel(modelId)}
+                                >
+                                  {testingModel === modelId ? "测试中…" : "测试"}
+                                </Button>
+                                {testResults[modelId] ? (
+                                  <span
+                                    title={testResults[modelId].text}
+                                    className={
+                                      testResults[modelId].ok
+                                        ? "max-w-32 truncate text-[10px] tabular-nums text-emerald-600"
+                                        : "max-w-32 truncate text-[10px] text-destructive"
+                                    }
                                   >
-                                    {testingModel === modelId ? "测试中…" : "测试"}
-                                  </Button>
-                                  {testResults[modelId] ? (
-                                    <span
-                                      title={testResults[modelId].text}
-                                      className={
-                                        testResults[modelId].ok
-                                          ? "max-w-32 truncate text-[10px] tabular-nums text-emerald-600"
-                                          : "max-w-32 truncate text-[10px] text-destructive"
-                                      }
-                                    >
-                                      {testResults[modelId].text}
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : null}
-              </div>
+                                    {testResults[modelId].text}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : null}
+            </div>
 
-              {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
-              <div className="flex gap-2">
-                <Button type="submit" disabled={busy}>
-                  {editingId ? "保存" : "创建"}
-                </Button>
-                <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
-                  取消
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-      ) : null}
+            {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
+          </form>
+          <DialogFooter>
+            <Button type="submit" form="upstream-form" disabled={busy}>
+              {editingId ? "保存" : "创建"}
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
+              取消
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Card>
         <CardHeader>

@@ -40,7 +40,7 @@ export const agentSchema = z.object({
   name: z.string().trim().min(1).max(200),
   avatarUrl: z.string().url().nullable().optional(),
   systemPrompt: z.string(),
-  defaultModelId: entityIdSchema.nullable().optional(),
+  defaultModelId: z.string().min(1).max(500).nullable().optional(),
   temperature: z.number().finite(),
   topP: z.number().finite(),
   maxTokens: z.number().int().nullable().optional(),
