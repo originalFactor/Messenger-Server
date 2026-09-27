@@ -56,6 +56,8 @@ export const agentSchema = z.object({
   marketAgentVersion: z.number().int().nonnegative().nullable().optional(),
   marketAgentRole: z.enum(["publisher", "importer"]).nullable().optional(),
   role: z.enum(["chat", "title"]).nullable().optional(),
+  // 客户端工具开关（是否随请求声明内置工具）；旧客户端不发送该键。
+  toolsEnabled: z.boolean().nullable().optional(),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
 }).strict();

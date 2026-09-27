@@ -204,6 +204,8 @@ export interface AgentDoc {
   marketAgentRole?: "publisher" | "importer" | null;
   /** Agent 角色分类：chat=聊天（默认）、title=标题生成。缺省视为 chat。 */
   role?: "chat" | "title" | null;
+  /** 客户端工具开关（是否随请求声明内置工具）。缺省视为 false。 */
+  toolsEnabled?: boolean | null;
   createdAt: number;
   updatedAt: number;
   version: number;
@@ -313,6 +315,7 @@ export interface AgentUpsertInput {
   marketAgentVersion?: number | null;
   marketAgentRole?: "publisher" | "importer" | null;
   role?: "chat" | "title" | null;
+  toolsEnabled?: boolean | null;
   createdAt: number;
   updatedAt: number;
 }

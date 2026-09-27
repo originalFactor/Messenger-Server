@@ -414,6 +414,7 @@ export async function upsertAgent(userId: string, agent: AgentUpsertInput): Prom
           marketAgentVersion: agent.marketAgentVersion ?? null,
           marketAgentRole: agent.marketAgentRole ?? null,
           role: agent.role ?? null,
+          toolsEnabled: agent.toolsEnabled ?? false,
           createdAt: agent.createdAt,
           updatedAt: agent.updatedAt,
           version,
