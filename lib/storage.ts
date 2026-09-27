@@ -413,6 +413,7 @@ export async function upsertAgent(userId: string, agent: AgentUpsertInput): Prom
           marketAgentId: agent.marketAgentId ?? null,
           marketAgentVersion: agent.marketAgentVersion ?? null,
           marketAgentRole: agent.marketAgentRole ?? null,
+          role: agent.role ?? null,
           createdAt: agent.createdAt,
           updatedAt: agent.updatedAt,
           version,

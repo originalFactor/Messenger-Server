@@ -55,6 +55,7 @@ export const agentSchema = z.object({
   marketAgentId: entityIdSchema.nullable().optional(),
   marketAgentVersion: z.number().int().nonnegative().nullable().optional(),
   marketAgentRole: z.enum(["publisher", "importer"]).nullable().optional(),
+  role: z.enum(["chat", "title"]).nullable().optional(),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
 }).strict();
