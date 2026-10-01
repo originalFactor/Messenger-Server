@@ -58,6 +58,10 @@ export const agentSchema = z.object({
   role: z.enum(["chat", "title"]).nullable().optional(),
   // 客户端工具开关（是否随请求声明内置工具）；旧客户端不发送该键。
   toolsEnabled: z.boolean().nullable().optional(),
+  // 非默认 Agent 是否整体跟随默认 Agent 的工具配置；旧客户端不发送该键。
+  toolsFollowDefault: z.boolean().nullable().optional(),
+  // 每工具开关（键为工具函数名）；旧客户端不发送该键，缺失视为默认全开。
+  toolsConfig: z.record(z.string(), z.boolean()).nullable().optional(),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
 }).strict();
@@ -92,6 +96,10 @@ export const conversationSchema = z.object({
   overrideTopP: z.number().finite().nullable().optional(),
   overrideMaxTokens: z.number().int().nullable().optional(),
   overrideReasoningEffort: z.string().nullable().optional(),
+  // 会话级设置：工具总开关覆盖（null = 跟随 Agent 生效值）与 Agent 只读/可写
+  // 模式。旧客户端不发送这些键。
+  overrideToolsEnabled: z.boolean().nullable().optional(),
+  writable: z.boolean().nullable().optional(),
   reasoningFormat: z.string().nullable().optional(),
   // 客户端 80% 上下文自动摘要：折叠的历史摘要 + 摘要覆盖截止时间戳，
   // 以及最近一次用量记账（token 数 + 记账时间戳）。旧客户端不发送这些键。

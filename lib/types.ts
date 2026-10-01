@@ -206,6 +206,10 @@ export interface AgentDoc {
   role?: "chat" | "title" | null;
   /** 客户端工具开关（是否随请求声明内置工具）。缺省视为 false。 */
   toolsEnabled?: boolean | null;
+  /** 非默认 Agent 是否整体跟随默认 Agent 的工具配置。缺省视为 false。 */
+  toolsFollowDefault?: boolean | null;
+  /** 每工具开关（键为工具函数名）。缺省视为默认全开。 */
+  toolsConfig?: Record<string, boolean> | null;
   createdAt: number;
   updatedAt: number;
   version: number;
@@ -237,6 +241,10 @@ export interface ConversationDoc {
   overrideTopP?: number | null;
   overrideMaxTokens?: number | null;
   overrideReasoningEffort?: string | null;
+  /** 会话级工具总开关覆盖；缺省 null = 跟随 Agent 生效值。 */
+  overrideToolsEnabled?: boolean | null;
+  /** 会话级 Agent 模式（只读/可写）；缺省 false = 只读。 */
+  writable?: boolean | null;
   reasoningFormat?: string | null;
   /** 80% 上下文自动摘要：折叠摘要、覆盖截止时间戳与最近一次用量记账。 */
   contextSummary?: string | null;
@@ -316,6 +324,8 @@ export interface AgentUpsertInput {
   marketAgentRole?: "publisher" | "importer" | null;
   role?: "chat" | "title" | null;
   toolsEnabled?: boolean | null;
+  toolsFollowDefault?: boolean | null;
+  toolsConfig?: Record<string, boolean> | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -356,6 +366,10 @@ export interface ConversationUpsertInput {
   overrideTopP?: number | null;
   overrideMaxTokens?: number | null;
   overrideReasoningEffort?: string | null;
+  /** 会话级工具总开关覆盖；缺省 null = 跟随 Agent 生效值。 */
+  overrideToolsEnabled?: boolean | null;
+  /** 会话级 Agent 模式（只读/可写）；缺省 false = 只读。 */
+  writable?: boolean | null;
   reasoningFormat?: string | null;
   /** 80% 上下文自动摘要：折叠摘要、覆盖截止时间戳与最近一次用量记账。 */
   contextSummary?: string | null;
