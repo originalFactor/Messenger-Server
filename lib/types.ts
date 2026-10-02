@@ -243,6 +243,8 @@ export interface ConversationDoc {
   overrideReasoningEffort?: string | null;
   /** 会话级工具总开关覆盖；缺省 null = 跟随 Agent 生效值。 */
   overrideToolsEnabled?: boolean | null;
+  /** 会话级每工具开关覆盖（缺失键 = 开启）；缺省 null = 跟随 Agent。 */
+  overrideToolsConfig?: Record<string, boolean> | null;
   /** 会话级 Agent 模式（只读/可写）；缺省 false = 只读。 */
   writable?: boolean | null;
   reasoningFormat?: string | null;
@@ -368,6 +370,8 @@ export interface ConversationUpsertInput {
   overrideReasoningEffort?: string | null;
   /** 会话级工具总开关覆盖；缺省 null = 跟随 Agent 生效值。 */
   overrideToolsEnabled?: boolean | null;
+  /** 会话级每工具开关覆盖（缺失键 = 开启）；缺省 null = 跟随 Agent。 */
+  overrideToolsConfig?: Record<string, boolean> | null;
   /** 会话级 Agent 模式（只读/可写）；缺省 false = 只读。 */
   writable?: boolean | null;
   reasoningFormat?: string | null;

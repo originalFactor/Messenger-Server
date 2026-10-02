@@ -96,9 +96,10 @@ export const conversationSchema = z.object({
   overrideTopP: z.number().finite().nullable().optional(),
   overrideMaxTokens: z.number().int().nullable().optional(),
   overrideReasoningEffort: z.string().nullable().optional(),
-  // 会话级设置：工具总开关覆盖（null = 跟随 Agent 生效值）与 Agent 只读/可写
-  // 模式。旧客户端不发送这些键。
+  // 会话级设置：工具总开关覆盖（null = 跟随 Agent 生效值）、每工具开关覆盖
+  // （缺失键 = 开启）与 Agent 只读/可写模式。旧客户端不发送这些键。
   overrideToolsEnabled: z.boolean().nullable().optional(),
+  overrideToolsConfig: z.record(z.string(), z.boolean()).nullable().optional(),
   writable: z.boolean().nullable().optional(),
   reasoningFormat: z.string().nullable().optional(),
   // 客户端 80% 上下文自动摘要：折叠的历史摘要 + 摘要覆盖截止时间戳，

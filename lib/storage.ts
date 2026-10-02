@@ -645,6 +645,7 @@ export async function upsertConversation(userId: string, conversation: Conversat
           overrideMaxTokens: conversation.overrideMaxTokens ?? null,
           overrideReasoningEffort: conversation.overrideReasoningEffort ?? null,
           overrideToolsEnabled: conversation.overrideToolsEnabled ?? null,
+          overrideToolsConfig: conversation.overrideToolsConfig ?? null,
           writable: conversation.writable ?? false,
           reasoningFormat: conversation.reasoningFormat ?? null,
           contextSummary: conversation.contextSummary ?? null,
