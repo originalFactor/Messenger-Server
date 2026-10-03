@@ -398,6 +398,7 @@ export async function upsertAgent(userId: string, agent: AgentUpsertInput): Prom
           avatarUrl: existing?.avatarUrl ?? null,
           avatarVersion: existing?.avatarVersion ?? null,
           systemPrompt: agent.systemPrompt,
+          description: agent.description ?? "",
           defaultModelId: agent.defaultModelId ?? null,
           temperature: agent.temperature,
           topP: agent.topP,

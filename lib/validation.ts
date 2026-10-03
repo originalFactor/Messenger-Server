@@ -40,6 +40,8 @@ export const agentSchema = z.object({
   name: z.string().trim().min(1).max(200),
   avatarUrl: z.string().url().nullable().optional(),
   systemPrompt: z.string(),
+  // Agent 一句话描述（列表/编辑页展示用，不参与模型请求）；旧客户端不发送该键。
+  description: z.string().max(2_000).nullable().optional(),
   defaultModelId: z.string().min(1).max(500).nullable().optional(),
   temperature: z.number().finite(),
   topP: z.number().finite(),

@@ -187,6 +187,8 @@ export interface AgentDoc {
   avatarUrl?: string | null;
   avatarVersion?: number | null;
   systemPrompt: string;
+  /** Agent 一句话描述（列表/编辑页展示用）。缺省视为空串。 */
+  description?: string | null;
   defaultModelId?: string | null;
   temperature: number;
   topP: number;
@@ -309,6 +311,7 @@ export interface AgentUpsertInput {
   // Avatar URLs are server-managed by the avatar endpoints.
   avatarUrl?: string | null;
   systemPrompt: string;
+  description?: string | null;
   defaultModelId?: string | null;
   temperature: number;
   topP: number;
