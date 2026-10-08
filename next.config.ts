@@ -18,6 +18,19 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  async rewrites() {
+    return [
+      {
+        // Next.js does not resolve `public/app/index.html` for the directory
+        // path `/app` (and `trailingSlash: false` redirects `/app/` to `/app`),
+        // so the web client's URL needs an explicit rewrite. Without it the
+        // canonical URL 404s while the assets still resolve, which is the
+        // confusing half-working state.
+        source: "/app",
+        destination: "/app/index.html",
+      },
+    ];
+  },
   async headers() {
     return [
       {

@@ -193,6 +193,32 @@ pnpm start   # serves on $PORT (default 3000); put a reverse proxy in front for 
 
 Self-hosted deployments should use the `fs` blob backend (default when no Vercel token is configured) and point `BLOB_STORAGE_DIR` at a persistent disk. The AI streaming proxy has a `maxDuration` export that Vercel clamps per plan; self-hosted runtimes have no function timeout.
 
+### Web client (Compose Multiplatform) at /app
+
+The Messenger web client is a Kotlin/Wasm Compose application. Its output is **not** committed: `pnpm build` downloads the compiled bundle and unpacks it into `public/app/` before `next build` runs, so every deployment ships whatever the parent repository last published on `main`.
+
+It is consumed as a build artifact because this repository is the `server/` submodule of the Messenger repository — the Kotlin/Wasm toolchain that produces it is not available here.
+
+How the pieces connect:
+
+- **Producing side** — the parent repository's CI republishes a rolling GitHub Release tagged `web-client` with an asset `messenger-web-main.zip` on every push to `main` (`.github/workflows/ci.yml`).
+- **Consuming side** — `scripts/fetch-web-client.mjs` resolves that release, downloads the asset, and unpacks it into `public/app/`. It is wired into `pnpm build`, and can be run on its own with `pnpm web:client` (`--force` to re-download).
+
+`next.config.ts` rewrites `/app` to `/app/index.html` (Next.js does not serve a directory index from `public/`, and `/app/` is normalized back to `/app`), and injects a `<base href="/app/">` at unpack time so the client's relative asset references resolve under the mount path. `Cross-Origin-Opener-Policy`/`Cross-Origin-Embedder-Policy` are sent for `/app/:path*` only — the Compose renderer needs cross-origin isolation, but applying COEP site-wide would break third-party embeds.
+
+Configuration (all optional):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `WEB_CLIENT_REPO` | `ECSDevs/Messenger` | Repository to download the release asset from |
+| `WEB_CLIENT_TAG` | `web-client` | Release tag to use instead of the rolling one |
+| `WEB_CLIENT_URL` | — | Explicit archive URL; skips the release lookup |
+| `WEB_CLIENT_BASE_PATH` | `/app/` | Mount path written into the `<base>` tag |
+| `WEB_CLIENT_REQUIRED` | unset | `1` makes a download failure fail the build |
+| `GITHUB_TOKEN` | — | Only needed when the source repository is private |
+
+By default a download failure is a **warning**, not an error: the service still starts (the website, console, and API are unaffected) and only `/app` is missing. Set `WEB_CLIENT_REQUIRED=1` in an environment where shipping the web client is mandatory. The unpack replaces `public/app/` atomically — a failed download leaves the previous build in place.
+
 ## Local Development
 
 Use a MongoDB replica set locally, for example a single-node `mongod --replSet rs0`, then initialize it once with `rs.initiate()` in `mongosh`.

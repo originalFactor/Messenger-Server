@@ -7,8 +7,9 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "pnpm web:client && next build",
     "start": "next start",
+    "web:client": "node scripts/fetch-web-client.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
