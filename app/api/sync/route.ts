@@ -32,6 +32,7 @@ const ALLOWED_COLLECTIONS: ReadonlySet<SyncCollection> = new Set([
   "agents",
   "conversations",
   "providers",
+  "projects",
 ]);
 
 function rewriteAgentAvatars(agents: { _id: string; avatarUrl?: string | null }[]) {
@@ -72,7 +73,7 @@ export async function GET(request: Request) {
   }
 
   if (!ALLOWED_COLLECTIONS.has(collectionParam as SyncCollection)) {
-    return jsonError("collection must be one of: agents, conversations, providers.", 400);
+    return jsonError("collection must be one of: agents, conversations, providers, projects.", 400);
   }
   if (cursor !== null && cursor !== undefined && cursor === "") {
     return jsonError("cursor must not be empty.", 400);

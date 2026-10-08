@@ -250,6 +250,8 @@ export interface ConversationDoc {
   /** 会话级 Agent 模式（只读/可写）；缺省 false = 只读。 */
   writable?: boolean | null;
   reasoningFormat?: string | null;
+  /** 所属项目 id；缺省/空 = 普通会话（无工作区工具）。 */
+  projectId?: string | null;
   /** 80% 上下文自动摘要：折叠摘要、覆盖截止时间戳与最近一次用量记账。 */
   contextSummary?: string | null;
   contextSummaryUntil?: number | null;
@@ -288,10 +290,23 @@ export interface ProviderDoc {
   deleted: boolean;
 }
 
+export interface ProjectDoc {
+  _id: string;
+  userId: string;
+  name: string;
+  /** 项目工作区目录（绝对路径）。 */
+  workspace: string;
+  createdAt: number;
+  updatedAt: number;
+  version: number;
+  deleted: boolean;
+}
+
 export interface SyncResponse {
   agents: AgentDoc[];
   conversations: ConversationDoc[];
   providers: ProviderDoc[];
+  projects: ProjectDoc[];
   latestVersion: number;
 }
 
@@ -377,6 +392,8 @@ export interface ConversationUpsertInput {
   overrideToolsConfig?: Record<string, boolean> | null;
   /** 会话级 Agent 模式（只读/可写）；缺省 false = 只读。 */
   writable?: boolean | null;
+  /** 所属项目 id；缺省/空 = 普通会话（无工作区工具）。 */
+  projectId?: string | null;
   reasoningFormat?: string | null;
   /** 80% 上下文自动摘要：折叠摘要、覆盖截止时间戳与最近一次用量记账。 */
   contextSummary?: string | null;
@@ -394,6 +411,14 @@ export interface ProviderUpsertInput {
   baseUrl: string;
   apiKey: string;
   models: ModelEmbed[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProjectUpsertInput {
+  id: string;
+  name: string;
+  workspace: string;
   createdAt: number;
   updatedAt: number;
 }

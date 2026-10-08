@@ -103,6 +103,8 @@ export const conversationSchema = z.object({
   overrideToolsEnabled: z.boolean().nullable().optional(),
   overrideToolsConfig: z.record(z.string(), z.boolean()).nullable().optional(),
   writable: z.boolean().nullable().optional(),
+  // 所属项目（null = 普通会话，无工作区工具）。旧客户端不发送该键。
+  projectId: z.string().nullable().optional(),
   reasoningFormat: z.string().nullable().optional(),
   // 客户端 80% 上下文自动摘要：折叠的历史摘要 + 摘要覆盖截止时间戳，
   // 以及最近一次用量记账（token 数 + 记账时间戳）。旧客户端不发送这些键。
@@ -134,6 +136,15 @@ export const providerSchema = z.object({
   baseUrl: z.string().url().max(2_000),
   apiKey: z.string(),
   models: z.array(modelSchema),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+}).strict();
+
+export const projectSchema = z.object({
+  id: entityIdSchema,
+  name: z.string().trim().min(1).max(200),
+  // 工作区目录绝对路径（设备相关，但随项目一起同步）。
+  workspace: z.string().max(2_000),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
 }).strict();

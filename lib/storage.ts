@@ -33,6 +33,8 @@ import type {
   PlanDoc,
   ProviderDoc,
   ProviderUpsertInput,
+  ProjectDoc,
+  ProjectUpsertInput,
   RedemptionDoc,
   SiteOverview,
   SiteSyncOverview,
@@ -245,6 +247,7 @@ export async function deleteUserAccount(userId: string): Promise<{ agentIds: str
       await db.collection<AgentDoc>("agents").deleteMany({ userId }, { session });
       await db.collection<ConversationDoc>("conversations").deleteMany({ userId }, { session });
       await db.collection<ProviderDoc>("providers").deleteMany({ userId }, { session });
+      await db.collection<ProjectDoc>("projects").deleteMany({ userId }, { session });
       await db.collection<MarketAgentDoc>("market_agents").deleteMany({ ownerUserId: userId }, { session });
       await db.collection<RedemptionDoc>("redemptions").deleteMany({ userId }, { session });
       await db.collection<UsageLogDoc>("usage_logs").deleteMany({ userId }, { session });
@@ -312,7 +315,7 @@ async function getSyncVersion(userId: string): Promise<number> {
 // avatarUrl / avatarVersion），完整文档里的 messages（最多 10k 条）和
 // models 数组从不被读，所以统一投影掉，避免每次 upsert/delete 把整篇
 // 大字段从 MongoDB 拉到 serverless 实例。
-const OWNERSHIP_PROJECTIONS: Record<"agents" | "conversations" | "providers", Record<string, 0 | 1>> = {
+const OWNERSHIP_PROJECTIONS: Record<"agents" | "conversations" | "providers" | "projects", Record<string, 0 | 1>> = {
   agents: {
     _id: 1,
     userId: 1,
@@ -324,10 +327,11 @@ const OWNERSHIP_PROJECTIONS: Record<"agents" | "conversations" | "providers", Re
   },
   conversations: { _id: 1, userId: 1, deleted: 1, version: 1 },
   providers: { _id: 1, userId: 1, deleted: 1, version: 1 },
+  projects: { _id: 1, userId: 1, deleted: 1, version: 1 },
 };
 
 async function assertEntityOwnership<T extends { _id: string; userId: string }>(
-  collectionName: "agents" | "conversations" | "providers",
+  collectionName: "agents" | "conversations" | "providers" | "projects",
   userId: string,
   entityId: string,
   session?: ClientSession,
@@ -648,6 +652,7 @@ export async function upsertConversation(userId: string, conversation: Conversat
           overrideToolsEnabled: conversation.overrideToolsEnabled ?? null,
           overrideToolsConfig: conversation.overrideToolsConfig ?? null,
           writable: conversation.writable ?? false,
+          projectId: conversation.projectId ?? null,
           reasoningFormat: conversation.reasoningFormat ?? null,
           contextSummary: conversation.contextSummary ?? null,
           contextSummaryUntil: conversation.contextSummaryUntil ?? 0,
@@ -765,6 +770,59 @@ export async function listProvidersSince(userId: string, since: number, latestVe
     .toArray();
 }
 
+export async function upsertProject(userId: string, project: ProjectUpsertInput): Promise<number> {
+  return withVersionedWrite(userId, async (version, session) => {
+    await assertEntityOwnership<ProjectDoc>("projects", userId, project.id, session);
+    const db = await getDb();
+    await db.collection<ProjectDoc>("projects").updateOne(
+      { _id: project.id, userId },
+      {
+        $set: {
+          userId,
+          name: project.name,
+          workspace: project.workspace,
+          createdAt: project.createdAt,
+          updatedAt: project.updatedAt,
+          version,
+          deleted: false,
+        },
+      },
+      { upsert: true, session },
+    );
+  });
+}
+
+export async function softDeleteProject(userId: string, projectId: string): Promise<number> {
+  // 已删除早退：避免重复删除触发新的 syncVersion 递增。
+  const existing = await assertEntityOwnership<ProjectDoc>("projects", userId, projectId);
+  if (!existing) {
+    throw new NotFoundError("Project not found.");
+  }
+  if (existing.deleted) {
+    return existing.version;
+  }
+
+  return withVersionedWrite(userId, async (version, session) => {
+    const db = await getDb();
+    const result = await db.collection<ProjectDoc>("projects").updateOne(
+      { _id: projectId, userId, deleted: false },
+      { $set: { deleted: true, updatedAt: Date.now(), version } },
+      { session },
+    );
+    if (result.matchedCount !== 1) {
+      throw new NotFoundError("Project not found.");
+    }
+  });
+}
+
+export async function listProjectsSince(userId: string, since: number, latestVersion: number): Promise<ProjectDoc[]> {
+  const db = await getDb();
+  return db.collection<ProjectDoc>("projects")
+    .find({ userId, version: { $gt: since, $lte: latestVersion } })
+    .sort({ version: 1, _id: 1 })
+    .toArray();
+}
+
 export async function updateUserAvatar(
   userId: string,
   avatarUrl: string | null,
@@ -791,21 +849,22 @@ export async function updateUserAvatar(
 export async function getDeltaSince(userId: string, since: number): Promise<SyncResponse> {
   // Read the waterline first, then bound every collection query to that snapshot.
   const latestVersion = await getSyncVersion(userId);
-  const [agents, conversations, providers] = await Promise.all([
+  const [agents, conversations, providers, projects] = await Promise.all([
     listAgentsSince(userId, since, latestVersion),
     listConversationsSince(userId, since, latestVersion),
     listProvidersSince(userId, since, latestVersion),
+    listProjectsSince(userId, since, latestVersion),
   ]);
-  return { agents, conversations, providers, latestVersion };
+  return { agents, conversations, providers, projects, latestVersion };
 }
 
-export type SyncCollection = "agents" | "conversations" | "providers";
+export type SyncCollection = "agents" | "conversations" | "providers" | "projects";
 
 export interface SyncPage {
   // 当前页所属集合；客户端拿到 hasMore=true 时应使用同一 collection + nextCursor 继续翻页。
   collection: SyncCollection;
   // 当前页文档（按 version 升序、_id 升序）。已删除的会话在这里只含墓碑字段。
-  documents: AgentDoc[] | ConversationDoc[] | ProviderDoc[];
+  documents: AgentDoc[] | ConversationDoc[] | ProviderDoc[] | ProjectDoc[];
   // 当前集合是否还有更多文档可拉。
   hasMore: boolean;
   // 下一页游标（base64url 编码的 { version, id }）。hasMore=false 时为 null。
@@ -873,13 +932,15 @@ export async function getDeltaSincePaged(
     : { userId, version: { $gt: since, $lte: latestVersion } };
 
   const cursor_options = { sort: { version: 1, _id: 1 } as const, limit: pageSize + 1 };
-  let docs: AgentDoc[] | ConversationDoc[] | ProviderDoc[];
+  let docs: AgentDoc[] | ConversationDoc[] | ProviderDoc[] | ProjectDoc[];
   if (collection === "agents") {
     docs = await db.collection<AgentDoc>("agents").find(filter, cursor_options).toArray();
   } else if (collection === "conversations") {
     docs = await db.collection<ConversationDoc>("conversations").find(filter, cursor_options).toArray();
-  } else {
+  } else if (collection === "providers") {
     docs = await db.collection<ProviderDoc>("providers").find(filter, cursor_options).toArray();
+  } else {
+    docs = await db.collection<ProjectDoc>("projects").find(filter, cursor_options).toArray();
   }
 
   const hasMore = docs.length > pageSize;
