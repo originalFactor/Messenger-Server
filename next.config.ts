@@ -18,6 +18,24 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  async headers() {
+    return [
+      {
+        // The Compose Multiplatform web client (Kotlin/Wasm) keeps renderer
+        // state in shared memory, so its pages must be cross-origin isolated.
+        // Scoped to /app/* deliberately: COEP breaks third-party embeds, so
+        // the rest of the site must not carry these headers. The client is
+        // served from public/app/ (see the webApp Gradle copy task), which
+        // makes it same-origin with the API and keeps the session cookie
+        // working with no CORS configuration.
+        source: "/app/:path*",
+        headers: [
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+          { key: "Cross-Origin-Embedder-Policy", value: "require-corp" },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

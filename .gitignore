@@ -7,3 +7,8 @@ coverage/
 !.env.example
 next-env.d.ts
 .blobs/
+
+# The compiled Compose Multiplatform web client (copied from :webApp by
+# copyWebAppDistribution). Only public/app/.gitkeep is committed.
+public/app/*
+!public/app/.gitkeep
