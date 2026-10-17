@@ -7,7 +7,7 @@ Messenger `server/` 是一个独立的 Next.js (App Router) SaaS 服务，提供
 - **包管理**: pnpm
 - **基类**: TypeScript + Zod 校验
 
-本文档对应 `app/api/**` 与 `app/v1/**` 下全部 33 个路由处理器。如需了解部署、环境变量与本地开发，参见 [`README.md`](./README.md) 与 [`AGENTS.md`](./AGENTS.md)。
+本文档对应 `app/api/**` 与 `app/v1/**` 下全部 36 个路由处理器。如需了解部署、环境变量与本地开发，参见 [`README.md`](./README.md) 与 [`AGENTS.md`](./AGENTS.md)。
 
 ---
 
@@ -143,7 +143,10 @@ interface SessionClaims {
 | POST | `/api/admin/upstreams/test` | 管理员 | 测试上游单个模型（最小 chat completion） |
 | GET | `/api/plans` | 无 | 公开套餐列表（官网定价） |
 | GET | `/v1/models` | AI API Key | OpenAI 兼容模型列表 |
-| POST | `/v1/chat/completions` | AI API Key | OpenAI 兼容对话（流式/非流式，扣额度） |
+| POST | `/v1/chat/completions` | AI API Key | OpenAI Chat Completions（流式/非流式，扣额度） |
+| POST | `/v1/responses` | AI API Key | OpenAI Responses API（流式/非流式，扣额度） |
+| POST | `/v1/messages` | AI API Key | Anthropic Messages API（流式/非流式，扣额度） |
+| POST | `/v1/interactions` | AI API Key | Gemini Interactions API（流式/非流式，扣额度） |
 | PUT | `/api/agents/{id}` | 用户 | 新增/更新 Agent |
 | DELETE | `/api/agents/{id}` | 用户 | 软删除 Agent |
 | PUT | `/api/conversations/{id}` | 用户 | 新增/更新会话 |
@@ -468,8 +471,9 @@ interface SessionClaims {
 ```jsonc
 {
   "name": "主上游",
-  "baseUrl": "https://api.example.com/v1",   // OpenAI 兼容根地址（含 /v1）
+  "baseUrl": "https://api.example.com/v1",   // 含版本段的根地址
   "apiKey": "上游密钥",
+  "apiFormat": "auto",                        // chat | responses | messages | interactions | auto（跟随客户端）
   "models": ["gpt-4o", "deepseek-chat"],     // 可服务的模型 ID
   "modelMeta": {                              // 按上游自定义的模型元数据（按模型粒度）
     "gpt-4o": { "override": true, "contextWindow": 128000, "inputRate": 16.6667, "outputRate": 16.6667 },
@@ -480,9 +484,9 @@ interface SessionClaims {
 }
 ```
 
-`POST /api/admin/upstreams/probe`：直探模式 —— 请求体 `{ "baseUrl": "https://api.example.com/v1", "apiKey": "…" }`，不要求上游已保存，供「新增/编辑上游」表单直接拉取模型列表；与 `{id}/probe` 共享 `lib/upstream-probe.ts` 实现，连接失败返回 `502`。两条探测路由的响应均内联 models.dev 的上下文数据：`{ "models": ["…"], "contextSizes": { "gpt-4o": 128000 } }`。
+`POST /api/admin/upstreams/probe`：直探模式 —— 请求体 `{ "baseUrl": "https://api.example.com/v1", "apiKey": "…", "apiFormat": "auto" }`，不要求上游已保存，供「新增/编辑上游」表单直接拉取模型列表；与 `{id}/probe` 共享 `lib/upstream-probe.ts` 实现，连接失败返回 `502`。两条探测路由的响应均内联 models.dev 的上下文数据：`{ "models": ["…"], "contextSizes": { "gpt-4o": 128000 } }`。
 
-`POST /api/admin/upstreams/test`：对单个上游模型发一次最小 chat completion（`"Hi"` + `max_tokens: 16`，30s 超时）。请求体 `{ "baseUrl": "…", "apiKey": "…", "model": "…" }`；响应 `200` 为 `{ "model": "…", "latencyMs": 832, "reply": "…" }`，失败返回上游的 `error.message`（`502`）。供「新增/编辑上游」表单的逐模型测试与整体测试（整体测试自动选已选模型中输入+输出倍率之和最低者）。
+`POST /api/admin/upstreams/test`：对单个上游模型发一次最小对话（`"Hi"` + `max_tokens: 16`，30s 超时），请求体按 `apiFormat` 编码。请求体 `{ "baseUrl": "…", "apiKey": "…", "model": "…", "apiFormat": "auto" }`；响应 `200` 为 `{ "model": "…", "latencyMs": 832, "reply": "…" }`，失败返回上游的 `error.message`（`502`）。供「新增/编辑上游」表单的逐模型测试与整体测试（整体测试自动选已选模型中输入+输出倍率之和最低者）。
 
 ### GET /api/admin/models/metadata
 
@@ -511,9 +515,35 @@ interface SessionClaims {
 
 ---
 
-## AI API（OpenAI 兼容代理）
+## AI API（多协议兼容代理）
 
-`/v1/*` 是面向用户 API Key（`Authorization: Bearer sk-…`）的 OpenAI 兼容代理。可用模型 = 所有启用上游可服务模型的并集；额度在响应完成后按 `ceil(promptTokens × 输入倍率 + completionTokens × 输出倍率)` 扣减（失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`）。元数据解析（按模型）：该模型的 `modelMeta.override` 开启时用其自定义值（缺失字段回退 models.dev），关闭时直接用 models.dev 元数据；倍率无数据时默认 1x（显式配置 0 = 不计费，双倍率为 0 时本条调用免费），contextWindow 0 = 不限制。
+`/v1/*` 是面向用户 API Key（`Authorization: Bearer sk-…`）的多协议代理，同时提供四种对话线格式：
+
+| 路径 | 线格式 | 鉴权头 |
+| --- | --- | --- |
+| `POST /v1/chat/completions` | OpenAI Chat Completions | `Authorization: Bearer sk-…` |
+| `POST /v1/responses` | OpenAI Responses | `Authorization: Bearer sk-…` |
+| `POST /v1/messages` | Anthropic Messages | `Authorization: Bearer sk-…`（或 `x-api-key`） |
+| `POST /v1/interactions` | Gemini Interactions | `Authorization: Bearer sk-…`（或 `x-goog-api-key`） |
+| `GET /v1/models` | 模型列表 | `Authorization: Bearer sk-…` |
+
+四条对话路由共用一条管线（[`lib/ai-relay.ts`](./lib/ai-relay.ts)）：客户端请求先由 [`lib/ai-formats.ts`](./lib/ai-formats.ts) 解码为内部中间表示（IR），再按**上游配置的协议**编码；上游响应/SSE 先解码回 IR，最后按客户端使用的协议编码返回。因此客户端用哪种协议调用，与上游实际使用哪种协议完全解耦 —— 例如用 Anthropic Messages 调用一个只提供 OpenAI Chat Completions 的上游，或反之。
+
+上游的协议在管理后台「上游管理 → 上游协议」配置（`apiFormat`）：
+
+| `apiFormat` | 上游请求路径 | 认证头 |
+| --- | --- | --- |
+| `chat`（默认） | `<baseUrl>/chat/completions` | `Authorization: Bearer` |
+| `responses` | `<baseUrl>/responses` | `Authorization: Bearer` |
+| `messages` | `<baseUrl>/messages` | `x-api-key` + `anthropic-version`，同时带 `Authorization` |
+| `interactions` | `<baseUrl>/interactions` | `x-goog-api-key`，同时带 `Authorization` |
+| `auto` | 跟随客户端请求的协议 | 同上 |
+
+`baseUrl` 需含版本段（OpenAI 兼容为 `/v1`，Gemini 为 `/v1beta`）。模型列表探测 `GET <baseUrl>/models` 同时接受 `{data:[{id}]}` 与 `{models:[{name:"models/…"}]}` 两种形状。
+
+转换覆盖：文本、图片（`data:` URI 与 URL）、函数调用/结果、推理文本、`usage`、`finish_reason`。按设计丢弃：音频/视频块、引用标注、加密思维链签名、平台专有工具（web search / maps / file search）。
+
+计费与用量记账对所有协议一致：可用模型 = 所有启用上游可服务模型的并集；额度在响应完成后按 `ceil(promptTokens × 输入倍率 + completionTokens × 输出倍率)` 扣减（失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`）。元数据解析（按模型）：该模型的 `modelMeta.override` 开启时用其自定义值（缺失字段回退 models.dev），关闭时直接用 models.dev 元数据；倍率无数据时默认 1x（显式配置 0 = 不计费，双倍率为 0 时本条调用免费），contextWindow 0 = 不限制。
 
 **模型广场**：公开页面 `GET /models`（无需登录，RSC 直读，`lib/model-plaza.ts`）按同一套解析语义展示全部可服务模型的上下文窗口与输入/输出倍率；同一模型被多个上游提供且倍率不同时显示 `min ~ max` 区间（0 显示为「免费」），并列出提供该模型的上游数量。
 
@@ -525,19 +555,31 @@ interface SessionClaims {
 
 ### POST /v1/chat/completions
 
-标准的 OpenAI Chat Completions 请求/响应。流式请求会强制注入 `stream_options: {"include_usage": true}` 并将上游 SSE 字节原样透传。同模型配置多个启用上游时按 `priority` 升序故障转移（连接失败或 5xx 切换下一个；4xx 原样透传给调用方）。
+标准的 OpenAI Chat Completions 请求/响应。流式请求对 `chat` 上游注入 `stream_options: {"include_usage": true}`；其他协议的上游各自在流内报告 usage。同模型配置多个启用上游时按 `priority` 升序故障转移（连接失败或 5xx 切换下一个；4xx 转换为客户端协议的错误体后透传）。
 
-- 错误体为 OpenAI 格式：
+### POST /v1/responses
+
+OpenAI Responses 请求体（`model`、`input`（字符串或 item 数组）、`instructions`、`tools`、`stream`）。非流式返回 `object:"response"` 的 `output` 数组；流式返回 `response.created` / `response.output_item.added` / `response.output_text.delta` / `response.function_call_arguments.delta` / `response.completed` 等 SSE 事件。
+
+### POST /v1/messages
+
+Anthropic Messages 请求体（`model`、`max_tokens`（缺省 4096）、`system`、`messages`、`tools`、`stream`）。流式返回 `message_start` → `content_block_*` → `message_delta` → `message_stop`。
+
+### POST /v1/interactions
+
+Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tools`、`generation_config`、`stream`；代理固定发送 `store:false` 走无状态调用）。流式返回 `interaction.created` / `step.start` / `step.delta` / `step.stop` / `interaction.completed`。
+
+### 错误体
+
+每条路由按自己的协议返回错误体，状态码语义一致（401 无效 Key、402 额度耗尽/套餐过期、404 模型无可用上游、502 全部上游不可用、400 请求体不合法）：
 
 ```jsonc
-// 401
+// chat / responses
 { "error": { "message": "Invalid API key.", "type": "authentication_error", "code": "invalid_api_key" } }
-// 402 —— 额度耗尽 / 套餐过期
-{ "error": { "message": "Insufficient quota. Redeem a card key to top up.", "type": "insufficient_quota" } }
-// 404
-{ "error": { "message": "Model 'gpt-4o' is not available.", "type": "invalid_request_error", "code": "model_not_found" } }
-// 502 —— 全部上游不可用
-{ "error": { "message": "Upstream model service is unavailable.", "type": "api_error" } }
+// messages
+{ "type": "error", "error": { "type": "authentication_error", "message": "Invalid API key." } }
+// interactions
+{ "error": { "code": "authentication_error", "message": "Invalid API key.", "status": "INVALID_ARGUMENT" } }
 ```
 
 ---
@@ -663,6 +705,7 @@ interface SessionClaims {
   "name": "OpenAI",
   "baseUrl": "https://api.openai.com/v1",
   "apiKey": "sk-...",
+  "apiFormat": "chat",        // chat | responses | messages | interactions | auto（旧客户端不发送该键）
   "models": [
     {
       "id": "model-uuid",

@@ -59,18 +59,30 @@ import {
 import { Switch } from "@/components/ui/switch";
 import type { UpstreamDoc, UpstreamModelMeta } from "@/lib/types";
 
+type UpstreamApiFormatValue = "auto" | "chat" | "responses" | "messages" | "interactions";
+
 interface UpstreamFormState {
   name: string;
   baseUrl: string;
   apiKey: string;
+  apiFormat: UpstreamApiFormatValue;
   priority: string;
   enabled: string;
 }
+
+const API_FORMAT_LABELS: Record<UpstreamApiFormatValue, string> = {
+  auto: "跟随客户端",
+  chat: "Chat Completions",
+  responses: "Responses",
+  messages: "Messages",
+  interactions: "Interactions",
+};
 
 const emptyUpstreamForm: UpstreamFormState = {
   name: "",
   baseUrl: "",
   apiKey: "",
+  apiFormat: "auto",
   priority: "0",
   enabled: "1",
 };
@@ -185,6 +197,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       name: upstream.name,
       baseUrl: upstream.baseUrl,
       apiKey: upstream.apiKey,
+      apiFormat: (upstream.apiFormat ?? "auto") as UpstreamApiFormatValue,
       priority: String(upstream.priority),
       enabled: upstream.enabled ? "1" : "0",
     });
@@ -231,7 +244,11 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       const response = await fetch("/api/admin/upstreams/probe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: form.baseUrl, apiKey: form.apiKey }),
+        body: JSON.stringify({
+          baseUrl: form.baseUrl,
+          apiKey: form.apiKey,
+          apiFormat: form.apiFormat,
+        }),
       });
       const payload = (await response.json().catch(() => null)) as {
         models?: string[];
@@ -384,6 +401,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       name: form.name,
       baseUrl: form.baseUrl,
       apiKey: form.apiKey,
+      apiFormat: form.apiFormat,
       models: selectedModels,
       priority: Number(form.priority) || 0,
       enabled: form.enabled === "1",
@@ -458,7 +476,12 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       const response = await fetch("/api/admin/upstreams/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: upstream.baseUrl, apiKey: upstream.apiKey, model: cheapest }),
+        body: JSON.stringify({
+          baseUrl: upstream.baseUrl,
+          apiKey: upstream.apiKey,
+          model: cheapest,
+          apiFormat: upstream.apiFormat ?? "auto",
+        }),
       });
       const payload = (await response.json().catch(() => null)) as {
         latencyMs?: number;
@@ -494,7 +517,12 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       const response = await fetch("/api/admin/upstreams/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: form.baseUrl, apiKey: form.apiKey, model: modelId }),
+        body: JSON.stringify({
+          baseUrl: form.baseUrl,
+          apiKey: form.apiKey,
+          model: modelId,
+          apiFormat: form.apiFormat,
+        }),
       });
       const payload = (await response.json().catch(() => null)) as {
         latencyMs?: number;
@@ -551,9 +579,11 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
           <DialogHeader className="pr-8">
             <DialogTitle>{editingId ? "编辑上游" : "新增上游"}</DialogTitle>
             <DialogDescription>
-              Base URL 填 OpenAI 兼容根地址（含 /v1），例如{" "}
-              <code className="font-mono text-xs">https://api.example.com/v1</code>
-              ；优先级数字越小越优先，同模型多个上游时自动故障转移。
+              Base URL 填含版本段的根地址，例如{" "}
+              <code className="font-mono text-xs">https://api.example.com/v1</code> 或{" "}
+              <code className="font-mono text-xs">https://generativelanguage.googleapis.com/v1beta</code>
+              ；上游协议决定请求/响应的线格式（「跟随客户端」按调用方使用的 API 自动转换）；
+              优先级数字越小越优先，同模型多个上游时自动故障转移。
             </DialogDescription>
           </DialogHeader>
           <form id="upstream-form" className="grid gap-4" onSubmit={submit}>
@@ -585,6 +615,26 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                   value={form.apiKey}
                   onChange={(event) => setForm({ ...form, apiKey: event.target.value })}
                 />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="upstream-format">上游协议</Label>
+                <Select
+                  value={form.apiFormat}
+                  onValueChange={(value) =>
+                    setForm({ ...form, apiFormat: value as UpstreamApiFormatValue })
+                  }
+                >
+                  <SelectTrigger id="upstream-format" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(API_FORMAT_LABELS) as UpstreamApiFormatValue[]).map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {API_FORMAT_LABELS[value]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="upstream-priority">优先级</Label>
@@ -845,6 +895,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                 <TableRow>
                   <TableHead>名称</TableHead>
                   <TableHead>Base URL</TableHead>
+                  <TableHead>协议</TableHead>
                   <TableHead>优先级</TableHead>
                   <TableHead>模型</TableHead>
                   <TableHead>元数据</TableHead>
@@ -857,6 +908,11 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                   <TableRow key={upstream._id}>
                     <TableCell className="font-medium">{upstream.name}</TableCell>
                     <TableCell className="max-w-52 font-mono text-xs break-all">{upstream.baseUrl}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="font-mono text-[10px]">
+                        {API_FORMAT_LABELS[(upstream.apiFormat ?? "auto") as UpstreamApiFormatValue]}
+                      </Badge>
+                    </TableCell>
                     <TableCell className="tabular-nums">{upstream.priority}</TableCell>
                     <TableCell>
                       {upstream.models.length === 0 ? (

@@ -135,6 +135,11 @@ export const providerSchema = z.object({
   name: z.string().trim().min(1).max(200),
   baseUrl: z.string().url().max(2_000),
   apiKey: z.string(),
+  /**
+   * 客户端 Provider 的对话协议（chat/responses/messages/interactions/auto）。
+   * 旧客户端不发送该键，缺省视为 auto。
+   */
+  apiFormat: z.enum(["chat", "responses", "messages", "interactions", "auto"]).optional(),
   models: z.array(modelSchema),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
@@ -177,10 +182,14 @@ export const redeemSchema = z.object({
   code: z.string().trim().min(4).max(64),
 }).strict();
 
+export const upstreamApiFormatSchema = z.enum(["chat", "responses", "messages", "interactions", "auto"]);
+
 export const upstreamInputSchema = z.object({
   name: z.string().trim().min(1).max(100),
   baseUrl: z.string().url().max(2_000),
   apiKey: z.string().max(2_000),
+  /** 上游协议；`auto` = 跟随客户端请求格式。缺省为 `auto`。 */
+  apiFormat: upstreamApiFormatSchema.optional(),
   models: z.array(z.string().trim().min(1).max(200)).max(1_000),
   modelMeta: z
     .record(
@@ -204,12 +213,14 @@ export const upstreamInputSchema = z.object({
 export const upstreamProbeSchema = z.object({
   baseUrl: z.string().url().max(2_000),
   apiKey: z.string().max(2_000),
+  apiFormat: upstreamApiFormatSchema.optional(),
 }).strict();
 
 export const upstreamTestSchema = z.object({
   baseUrl: z.string().url().max(2_000),
   apiKey: z.string().max(2_000),
   model: z.string().trim().min(1).max(200),
+  apiFormat: upstreamApiFormatSchema.optional(),
 }).strict();
 
 export const adminUserPatchSchema = z.object({

@@ -38,7 +38,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await testUpstreamModel(parsed.data.baseUrl, parsed.data.apiKey, parsed.data.model);
+    const result = await testUpstreamModel(
+      parsed.data.baseUrl,
+      parsed.data.apiKey,
+      parsed.data.model,
+      parsed.data.apiFormat === "auto" ? undefined : parsed.data.apiFormat,
+    );
     return jsonOk({ model: parsed.data.model, latencyMs: result.latencyMs, reply: result.reply });
   } catch (error) {
     if (error instanceof UpstreamTestError) {

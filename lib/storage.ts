@@ -725,6 +725,7 @@ export async function upsertProvider(userId: string, provider: ProviderUpsertInp
           name: provider.name,
           baseUrl: provider.baseUrl,
           apiKey: provider.apiKey,
+          apiFormat: provider.apiFormat ?? "auto",
           models: provider.models,
           createdAt: provider.createdAt,
           updatedAt: provider.updatedAt,
@@ -1543,10 +1544,20 @@ export interface UpstreamInput {
   name: string;
   baseUrl: string;
   apiKey: string;
+  apiFormat?: "chat" | "responses" | "messages" | "interactions" | "auto";
   models: string[];
   modelMeta?: Record<string, UpstreamModelMeta> | null;
   priority: number;
   enabled: boolean;
+}
+
+/** 上游协议规范化：非法值回落 `auto`（跟随客户端请求格式）。 */
+function normalizeUpstreamApiFormat(
+  value: UpstreamInput["apiFormat"],
+): NonNullable<UpstreamDoc["apiFormat"]> {
+  return value === "chat" || value === "responses" || value === "messages" || value === "interactions"
+    ? value
+    : "auto";
 }
 
 function normalizeUpstreamModelMeta(
@@ -1612,6 +1623,7 @@ export async function createUpstream(input: UpstreamInput): Promise<UpstreamDoc>
     name: input.name,
     baseUrl: input.baseUrl,
     apiKey: input.apiKey,
+    apiFormat: normalizeUpstreamApiFormat(input.apiFormat),
     models: normalizeUpstreamModels(input.models),
     modelMeta: normalizeUpstreamModelMeta(input.modelMeta),
     priority: input.priority,
@@ -1632,6 +1644,7 @@ export async function updateUpstream(upstreamId: string, input: UpstreamInput): 
         name: input.name,
         baseUrl: input.baseUrl,
         apiKey: input.apiKey,
+        apiFormat: normalizeUpstreamApiFormat(input.apiFormat),
         models: normalizeUpstreamModels(input.models),
         modelMeta: normalizeUpstreamModelMeta(input.modelMeta),
         priority: input.priority,

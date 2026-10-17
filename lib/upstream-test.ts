@@ -14,7 +14,17 @@
  * limitations under the License.
  */
 
-/** 上游模型测试（最小 chat completion 探活）的共享实现，供表单直测路由使用。 */
+/** 上游模型测试（最小对话探活）的共享实现，供表单直测路由使用。 */
+
+import {
+  type ApiFormat,
+  type IrRequest,
+  decodeUpstreamResponse,
+  encodeUpstreamRequest,
+  formatPath,
+  normalizeApiFormat,
+  upstreamHeaders,
+} from "@/lib/ai-formats";
 
 export class UpstreamTestError extends Error {
   constructor(
@@ -33,25 +43,31 @@ export interface UpstreamTestResult {
   reply: string;
 }
 
-/** 向上游发送一次最小 chat completion，验证指定模型可用性并测量耗时。 */
+/**
+ * 向上游发送一次最小对话，验证指定模型可用性并测量耗时。
+ * [apiFormat] 缺省按 OpenAI Chat Completions 探测。
+ */
 export async function testUpstreamModel(
   baseUrl: string,
   apiKey: string,
   model: string,
+  apiFormat?: ApiFormat,
 ): Promise<UpstreamTestResult> {
-  const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
+  const format = normalizeApiFormat(apiFormat, "chat");
+  const url = `${baseUrl.replace(/\/+$/, "")}${formatPath(format)}`;
+  const ir: IrRequest = {
+    model,
+    messages: [{ role: "user", parts: [{ type: "text", text: "Hi" }] }],
+    maxTokens: 16,
+    stream: false,
+  };
   const startedAt = Date.now();
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: "Hi" }],
-        max_tokens: 16,
-        stream: false,
-      }),
+      headers: upstreamHeaders(format, apiKey),
+      body: JSON.stringify(encodeUpstreamRequest(format, ir)),
       signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
     });
   } catch (error) {
@@ -62,16 +78,20 @@ export async function testUpstreamModel(
 
   if (!response.ok) {
     const detail = (await response.json().catch(() => null)) as
-      | { error?: { message?: unknown } }
+      | { error?: { message?: unknown } | string; message?: unknown }
       | null;
-    const message = typeof detail?.error?.message === "string" ? detail.error.message : `上游返回 ${response.status}。`;
+    const message =
+      typeof detail?.error === "string"
+        ? detail.error
+        : typeof detail?.error?.message === "string"
+          ? detail.error.message
+          : typeof detail?.message === "string"
+            ? detail.message
+            : `上游返回 ${response.status}。`;
     throw new UpstreamTestError(message, 502);
   }
 
-  const payload = (await response.json().catch(() => null)) as
-    | { choices?: Array<{ message?: { content?: unknown } }> }
-    | null;
-  const content = payload?.choices?.[0]?.message?.content;
-  const reply = typeof content === "string" ? content : "";
+  const payload = await response.json().catch(() => null);
+  const reply = payload ? decodeUpstreamResponse(format, payload).text : "";
   return { latencyMs, reply: reply.slice(0, MAX_REPLY_LENGTH) };
 }

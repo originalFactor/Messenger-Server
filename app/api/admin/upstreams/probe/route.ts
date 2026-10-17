@@ -39,7 +39,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const models = await fetchUpstreamModelIds(parsed.data.baseUrl, parsed.data.apiKey);
+    const models = await fetchUpstreamModelIds(
+      parsed.data.baseUrl,
+      parsed.data.apiKey,
+      parsed.data.apiFormat === "auto" ? undefined : parsed.data.apiFormat,
+    );
     const allSizes = await getModelContextSizes();
     const contextSizes = Object.fromEntries(
       models.map((modelId) => [modelId, allSizes[modelId]]).filter(([, size]) => typeof size === "number"),

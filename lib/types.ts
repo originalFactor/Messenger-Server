@@ -146,9 +146,15 @@ export interface UpstreamModelMeta {
 export interface UpstreamDoc {
   _id: string;
   name: string;
-  /** OpenAI 兼容根地址（含 /v1），例如 https://api.example.com/v1。 */
+  /** 上游根地址（含版本段），例如 https://api.example.com/v1 或 https://generativelanguage.googleapis.com/v1beta。 */
   baseUrl: string;
   apiKey: string;
+  /**
+   * 上游对话协议：`chat`（OpenAI Chat Completions）、`responses`（OpenAI
+   * Responses）、`messages`（Anthropic Messages）、`interactions`（Gemini
+   * Interactions），或 `auto` = 跟随客户端请求的协议。缺省视为 `auto`。
+   */
+  apiFormat?: "chat" | "responses" | "messages" | "interactions" | "auto" | null;
   /** 该上游可服务的模型 ID 列表。 */
   models: string[];
   /** 按上游自定义的模型元数据；仅 override 开启的条目生效，其余用 models.dev 元数据。 */
@@ -283,6 +289,8 @@ export interface ProviderDoc {
   name: string;
   baseUrl: string;
   apiKey: string;
+  /** 客户端 Provider 的对话协议；旧文档缺省视为 auto。 */
+  apiFormat?: "chat" | "responses" | "messages" | "interactions" | "auto" | null;
   models: ModelEmbed[];
   createdAt: number;
   updatedAt: number;
@@ -410,6 +418,7 @@ export interface ProviderUpsertInput {
   name: string;
   baseUrl: string;
   apiKey: string;
+  apiFormat?: "chat" | "responses" | "messages" | "interactions" | "auto";
   models: ModelEmbed[];
   createdAt: number;
   updatedAt: number;

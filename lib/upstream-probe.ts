@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-/** 上游 /v1/models 探测的共享实现，供已存上游与表单直探两条路由使用。 */
+/** 上游 /models 探测的共享实现，供已存上游与表单直探两条路由使用。 */
+
+import { type ApiFormat, MODELS_PATH, normalizeApiFormat, upstreamHeaders } from "@/lib/ai-formats";
 
 export class UpstreamProbeError extends Error {
   constructor(
@@ -27,13 +29,23 @@ export class UpstreamProbeError extends Error {
 
 const PROBE_TIMEOUT_MS = 15_000;
 
-export async function fetchUpstreamModelIds(baseUrl: string, apiKey: string): Promise<string[]> {
-  const url = `${baseUrl.replace(/\/+$/, "")}/models`;
+/**
+ * 拉取上游模型 ID。OpenAI/Anthropic 返回 `{ data: [{ id }] }`，Gemini 返回
+ * `{ models: [{ name: "models/…" }] }` —— 两种形状都接受，Gemini 的名称去掉
+ * `models/` 前缀后即为请求所用的模型 ID。
+ */
+export async function fetchUpstreamModelIds(
+  baseUrl: string,
+  apiKey: string,
+  apiFormat?: ApiFormat,
+): Promise<string[]> {
+  const format = normalizeApiFormat(apiFormat, "chat");
+  const url = `${baseUrl.replace(/\/+$/, "")}${MODELS_PATH}`;
   let response: Response;
   try {
     response = await fetch(url, {
       method: "GET",
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers: upstreamHeaders(format, apiKey),
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
   } catch (error) {
@@ -45,13 +57,23 @@ export async function fetchUpstreamModelIds(baseUrl: string, apiKey: string): Pr
     throw new UpstreamProbeError(`上游返回 ${response.status}，请检查地址与密钥。`, 502);
   }
 
-  const payload = (await response.json().catch(() => null)) as { data?: unknown } | null;
-  const data = payload?.data;
-  if (!Array.isArray(data)) {
-    throw new UpstreamProbeError("上游响应格式不是 OpenAI 兼容的模型列表。", 502);
+  const payload = (await response.json().catch(() => null)) as
+    | { data?: unknown; models?: unknown }
+    | null;
+  const entries = Array.isArray(payload?.data)
+    ? payload.data
+    : Array.isArray(payload?.models)
+      ? payload.models
+      : null;
+  if (!entries) {
+    throw new UpstreamProbeError("上游响应格式不是可识别的模型列表。", 502);
   }
 
-  return data
-    .map((entry) => (entry as { id?: unknown } | null)?.id)
-    .filter((value): value is string => typeof value === "string");
+  return entries
+    .map((entry) => {
+      const record = (entry ?? {}) as { id?: unknown; name?: unknown };
+      const value = typeof record.id === "string" ? record.id : record.name;
+      return typeof value === "string" ? value.replace(/^models\//, "") : null;
+    })
+    .filter((value): value is string => value !== null);
 }
