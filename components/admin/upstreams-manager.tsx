@@ -88,10 +88,11 @@ const emptyUpstreamForm: UpstreamFormState = {
 };
 
 type DevMeta = Record<string, UpstreamModelMeta>;
+/** 草稿只记录用户动过的字段；未触碰字段缺省，由生效值解析兜底。 */
 interface MetaDraft {
-  context: string;
-  inputRate: string;
-  outputRate: string;
+  context?: string;
+  inputRate?: string;
+  outputRate?: string;
 }
 
 /** 展示形式：取能整除的最大单位（1000000 → 1M、1050000 → 1050K、500 → 500）。 */
@@ -305,13 +306,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   }
 
   function metaDraftOf(modelId: string): MetaDraft {
-    return (
-      metaDrafts[modelId] ?? {
-        context: "",
-        inputRate: "",
-        outputRate: "",
-      }
-    );
+    return metaDrafts[modelId] ?? {};
   }
 
   /** 按模型覆盖开关：行草稿 > 已存自定义 > 默认关闭（用 models.dev）。 */
@@ -319,8 +314,19 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     return overrideDrafts[modelId] ?? editingModelMeta[modelId]?.override ?? false;
   }
 
+  /** 打开「覆盖」时清掉该行草稿，输入框按当前生效值重新显示。 */
   function setRowOverride(modelId: string, override: boolean) {
     setOverrideDrafts((drafts) => ({ ...drafts, [modelId]: override }));
+    if (override) {
+      setMetaDrafts((drafts) => {
+        if (drafts[modelId] === undefined) {
+          return drafts;
+        }
+        const next = { ...drafts };
+        delete next[modelId];
+        return next;
+      });
+    }
   }
 
   /** 生效元数据（按模型）：覆盖开启时 草稿 > 自定义 > models.dev > 0（0 = 不计费）；
@@ -371,11 +377,14 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     event.preventDefault();
     // 草稿格式校验：无效输入阻止提交。
     for (const [modelId, draft] of Object.entries(metaDrafts)) {
-      if (parseContextInput(draft.context) === "invalid") {
+      if (draft.context !== undefined && parseContextInput(draft.context) === "invalid") {
         setFormError(`模型 ${modelId} 的上下文格式无效，请使用 272K / 1M 等形式。`);
         return;
       }
-      if (parseRateInput(draft.inputRate) === "invalid" || parseRateInput(draft.outputRate) === "invalid") {
+      const badRate =
+        (draft.inputRate !== undefined && parseRateInput(draft.inputRate) === "invalid") ||
+        (draft.outputRate !== undefined && parseRateInput(draft.outputRate) === "invalid");
+      if (badRate) {
         setFormError(`模型 ${modelId} 的倍率必须是数字。`);
         return;
       }
@@ -756,7 +765,16 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                       {sortedDiscovered.map((modelId) => {
                         const meta = resolvedMeta(modelId);
                         const editable = rowOverride(modelId);
-                        const draft = metaDraftOf(modelId);
+                        const rawDraft = metaDraftOf(modelId);
+                        // 覆盖开启：未触碰字段显示当前生效值（自定义 > models.dev > 0），
+                        // 用户动过的字段（含主动清空 = 0）显示草稿原值。
+                        const draft: MetaDraft = editable
+                          ? {
+                              context: rawDraft.context ?? (meta.contextWindow > 0 ? formatContext(meta.contextWindow) : ""),
+                              inputRate: rawDraft.inputRate ?? String(meta.inputRate),
+                              outputRate: rawDraft.outputRate ?? String(meta.outputRate),
+                            }
+                          : rawDraft;
                         const setDraft = (field: keyof MetaDraft, value: string) =>
                           setMetaDrafts((drafts) => ({
                             ...drafts,
