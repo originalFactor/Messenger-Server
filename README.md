@@ -193,6 +193,24 @@ pnpm start   # serves on $PORT (default 3000); put a reverse proxy in front for 
 
 Self-hosted deployments should use the `fs` blob backend (default when no Vercel token is configured) and point `BLOB_STORAGE_DIR` at a persistent disk. The AI streaming proxy has a `maxDuration` export that Vercel clamps per plan; self-hosted runtimes have no function timeout.
 
+### Docker (self-hosted)
+
+`Dockerfile` and `compose.yaml` build the server alone. **MongoDB and the TLS reverse proxy are external** — the container listens on `0.0.0.0:3000` inside the Compose network and is published to loopback only.
+
+```bash
+cp .env.example .env      # JWT_SECRET, MONGODB_URI, APP_BASE_URL (public HTTPS origin)
+docker compose up -d --build
+curl -sf http://127.0.0.1:3000/api/plans    # readiness probe (hits MongoDB)
+```
+
+- The image is a four-stage build (`base` → `deps`/`prod-deps`/`builder` → `runner`). `pnpm build` runs with dev dependencies; the runner stage receives only production dependencies, `.next/`, `public/`, `package.json`, and `next.config.ts`, and runs as the unprivileged `node` user. `.next/cache` is deleted in the builder stage because it is build-only state.
+- `compose.yaml` publishes on `127.0.0.1:${MESSENGER_PORT:-3000}`. If nginx runs in another container instead of on the host, set `MESSENGER_BIND=0.0.0.0` and attach both services to a shared network — never publish to a public interface directly.
+- `compose.yaml` forces `BLOB_BACKEND=fs` with `BLOB_STORAGE_DIR=/data/blobs` on the `blobs` volume. Back that volume up together with MongoDB — restoring either alone loses avatar content or the metadata that references it.
+- `MONGODB_URI` must point at a replica set reachable from inside the container (e.g. `mongodb://host.docker.internal:27017/...` on Docker Desktop, or the host/LAN address on Linux; `127.0.0.1` inside the container is the container itself). Do not set `directConnection=true`.
+- The web client at `/app` is fetched during the image build. Set `WEB_CLIENT_URL` (explicit archive) or `WEB_CLIENT_REQUIRED=1` as build args to control that step; without either, a failed download only logs a warning and the site/API still work. `.dockerignore` keeps any local `public/app/` out of the context so a stale bundle is never baked in — if you want to ship a pre-downloaded client, remove those two ignore lines and set `WEB_CLIENT_URL` to a reachable archive.
+- `APP_BASE_URL` must be the public HTTPS origin: avatar URLs returned to mobile clients are absolute and built from it. The session cookie is `secure` under `NODE_ENV=production`, so serving the container over plain HTTP makes login silently fail.
+- The container healthcheck calls `/api/plans`, so a healthy container requires a reachable MongoDB.
+
 ### Web client (Compose Multiplatform) at /app
 
 The Messenger web client is a Kotlin/Wasm Compose application. Its output is **not** committed: `pnpm build` downloads the compiled bundle and unpacks it into `public/app/` before `next build` runs, so every deployment ships whatever the parent repository last published on `main`.

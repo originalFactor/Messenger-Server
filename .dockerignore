@@ -1,0 +1,22 @@
+# Dependencies and build output are produced inside the image.
+node_modules
+.next
+.pnpm-store
+
+# Local state and secrets never enter the build context.
+.git
+.vercel
+.blobs
+.env
+.env.*
+!.env.example
+
+# The web client is downloaded during `pnpm build`; a stale local copy would
+# otherwise be baked into the image.
+public/app/*
+!public/app/.gitkeep
+
+coverage
+tsconfig.tsbuildinfo
+next-env.d.ts
+*.log

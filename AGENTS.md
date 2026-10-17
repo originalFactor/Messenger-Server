@@ -29,6 +29,7 @@
 - Copy `.env.example` to `.env.local`. `JWT_SECRET` and `MONGODB_URI` are required at runtime; `MONGODB_DB_NAME` defaults to `messenger`, and `APP_BASE_URL` defaults to `http://localhost:3000`.
 - Blob storage: `BLOB_BACKEND` selects `auto` (default; Vercel Blob when `BLOB_READ_WRITE_TOKEN` is set, otherwise the filesystem backend), `fs` (`BLOB_STORAGE_DIR`, default `./.blobs`), or `vercel`. The Vercel-specific blob variables (`BLOB_READ_WRITE_TOKEN`, `BLOB_STORE_ID`, `VERCEL_BLOB_API_URL`, `VERCEL_BLOB_STORAGE_URL`, `VERCEL_BLOB_RETRIES`) are only needed for the `vercel` backend; local development and self-hosting need none of them.
 - Keep secrets out of source control; `.env.*` is ignored except `.env.example`, and `.blobs/` (fs backend content) is ignored too.
+- Self-hosting: `Dockerfile` + `compose.yaml` package the server alone (MongoDB and nginx are external). The runner stage gets production dependencies only, runs `next start` as the `node` user, stores blobs in the `blobs` volume at `/data/blobs`, and healthchecks `/api/plans`. Any new runtime dependency must therefore be a `dependencies` entry, not `devDependencies`; keep `next.config.ts` free of options that break `next start` (for example `output: "standalone"`, which Next rejects at runtime).
 
 ## Conventions
 
