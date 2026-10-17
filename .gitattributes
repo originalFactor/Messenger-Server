@@ -1,0 +1,6 @@
+# Docker and shell inputs must keep LF endings: a CRLF checkout breaks the
+# `\` line continuations in the Dockerfile.
+Dockerfile        text eol=lf
+.dockerignore     text eol=lf
+compose.yaml      text eol=lf
+*.sh              text eol=lf
