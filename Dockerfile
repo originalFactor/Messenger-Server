@@ -9,12 +9,11 @@
 #   docker run -d --name messenger-server --env-file .env \
 #     -p 127.0.0.1:3000:3000 -v messenger-blobs:/data/blobs messenger-server
 
-FROM node:22-bookworm-slim AS base
+FROM node:24-bookworm-slim AS base
 # Pinned to the `packageManager` version in package.json. Installed via npm
 # rather than corepack: corepack's bundled signing keys expire and its
 # downloads are an extra failure mode in offline/CI builds.
-RUN npm install -g pnpm@11.15.1 \
-    && pnpm config set store-dir /pnpm/store --global
+RUN npm install -g pnpm@11.15.1
 WORKDIR /app
 
 # Dependencies are installed in their own layer so edits to app code reuse it.
@@ -22,16 +21,16 @@ WORKDIR /app
 # that pnpm 11 needs before it will run install scripts.
 FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile --store-dir /pnpm/store
 
 # The runner only needs runtime dependencies. `next start` reads next.config.ts
 # at runtime, but Next transpiles it with its own bundled compiler, so the
 # `typescript` devDependency is not required to boot.
 FROM base AS prod-deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --prod --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store,sharing=locked \
+    pnpm install --prod --frozen-lockfile --store-dir /pnpm/store
 
 FROM base AS builder
 ENV NEXT_TELEMETRY_DISABLED=1
