@@ -47,7 +47,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import {
   Table,
   TableBody,
@@ -830,26 +829,14 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                     添加
                   </Button>
                 </div>
-              </div>
-            </div>
-
-            <Separator />
-
-            <div className="grid gap-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs text-muted-foreground">
-                  每个模型的元数据默认取自 models.dev（倍率 0 = 不计费，
-                  models.dev 无数据的模型倍率默认 1x）；
-                  在表格中打开「覆盖」后可为此上游单独自定义。
-                  「停用」把模型从服务中摘除但仍保留在表里（可随时重新启用），
-                  「删除」则连同元数据一起移除。
-                </p>
                 <Button type="button" variant="outline" size="sm" onClick={updateMetaFromModelsDev}>
                   <ArrowDownToLine />
                   从 models.dev 更新元数据
                 </Button>
               </div>
+            </div>
 
+            <div className="grid gap-3">
               {tableModelIds.length > 0 ? (
                 <div className="overflow-hidden rounded-lg border">
                   <Table>
