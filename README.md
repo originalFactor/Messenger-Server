@@ -49,7 +49,7 @@ All documents use application-generated string IDs as MongoDB `_id` values. Time
 - `ai_models`: the model catalog consumed by the AI API (`_id` = model ID, `rate` multiplier, `enabled`).
 - `upstreams`: admin-managed upstream OpenAI-compatible services (`baseUrl` including `/v1`, `apiKey`, served `models`, `priority`, `enabled`).
 - `model_rate_settings`: single-document `baseModelId` — the 1x base model; a read-time divisor, so all effective rates rescale when it changes without rewriting stored rates.
-- `usage_logs`: one document per AI API completion (tokens and quota `cost`, upstream, stream flag).
+- `usage_logs`: one document per AI API completion (tokens and quota `cost`, upstream, request duration).
 - `system_bootstrap`: the `admin_bootstrap` marker that makes the first-admin grant race-safe.
 
 Messages are stored inside their owning conversation. Models are stored inside their owning provider. A delete sets `deleted: true`; tombstones remain available to delta sync clients.

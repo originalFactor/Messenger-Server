@@ -96,7 +96,8 @@ async function settleUsage(
     upstreamId: string | null;
     usage: IrUsage | null;
     completionChars: number;
-    stream: boolean;
+    /** 请求耗时（毫秒，从上游请求开始到 usage 结算）。 */
+    durationMs: number;
   },
 ): Promise<void> {
   const usage = params.usage;
@@ -123,7 +124,7 @@ async function settleUsage(
       cachedTokens,
       totalTokens,
       cost,
-      stream: params.stream,
+      durationMs: params.durationMs,
     });
   } catch (error) {
     console.error("Unable to settle usage after completion.", error);
@@ -198,6 +199,7 @@ async function nonStreamProxy(
   for (const upstream of upstreams) {
     const upstreamFormat = resolveUpstreamFormat(upstream, clientFormat);
     let response: Response;
+    const startedAt = Date.now();
     try {
       response = await fetch(`${upstream.baseUrl.replace(/\/+$/, "")}${formatPath(upstreamFormat)}`, {
         method: "POST",
@@ -231,7 +233,7 @@ async function nonStreamProxy(
       upstreamId: upstream._id,
       usage: decoded.usage,
       completionChars: decoded.text.length,
-      stream: false,
+      durationMs: Date.now() - startedAt,
     });
     return NextResponse.json(encodeClientResponse(clientFormat, decoded, ir.model), {
       status: response.status,
@@ -290,6 +292,7 @@ export function buildStreamingResponse(
   const textDecoder = new TextDecoder();
   const textEncoder = new TextEncoder();
   let buffer = "";
+  const startedAt = Date.now();
   const sniffed = {
     usage: null as IrUsage | null,
     completionChars: 0,
@@ -353,7 +356,7 @@ export function buildStreamingResponse(
           upstreamId: upstream._id,
           usage: sniffed.usage,
           completionChars: sniffed.completionChars,
-          stream: true,
+          durationMs: Date.now() - startedAt,
         });
       },
     }),

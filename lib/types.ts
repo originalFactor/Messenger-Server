@@ -206,7 +206,8 @@ export interface UsageLogDoc {
   totalTokens: number;
   /** 实际扣减的额度。 */
   cost: number;
-  stream: boolean;
+  /** 请求耗时（毫秒）；老数据与缺失时为 null，输出 TPS 不可计算。 */
+  durationMs: number | null;
   createdAt: number;
 }
 

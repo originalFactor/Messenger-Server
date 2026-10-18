@@ -344,7 +344,8 @@ interface SessionClaims {
   "usage": {
     "today": { "requests": 12, "tokens": 45231, "cost": 45231 }  // 近 24 小时
   },
-  "recentUsage": [ /* UsageLogDoc[]，最近 10 条 */ ]
+  "recentUsage": [ /* UsageLogDoc[]，最近 10 条 */ ],
+  "usageBuckets": [ /* { ts, modelId, tokens }，近 24 小时按小时分桶的 per-model tokens */ ]
 }
 ```
 
@@ -1224,7 +1225,7 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 - `RedemptionDoc`: `{ _id, userId, cardKeyId, cardCode, planId, planName, quotaTokens, validityDays, createdAt }`
 - `UpstreamDoc`: `{ _id, name, baseUrl(含 /v1), apiKey, models: 可服务模型ID[], disabledModels: 保留但停用的模型ID[], modelMeta, multiplier(上游整体倍率), priority(小者先), enabled, createdAt, updatedAt }`
 - `model_rate_settings`：单文档（`_id = "default"`）`{ baseModelId: 1x 基准模型 ID | null, createdAt, updatedAt }` —— 基准是解析期分母，切换时不改写任何存量倍率。
-- `UsageLogDoc`: `{ _id, userId, modelId, upstreamId, promptTokens, completionTokens, cachedTokens, totalTokens, cost, stream, createdAt }`
+- `UsageLogDoc`: `{ _id, userId, modelId, upstreamId, promptTokens, completionTokens, cachedTokens, totalTokens, cost, durationMs(请求耗时毫秒；老数据为 null), createdAt }`
 
 ### system_bootstrap
 

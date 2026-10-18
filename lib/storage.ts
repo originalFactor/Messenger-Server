@@ -1809,6 +1809,53 @@ export async function sumUsage(userId: string | null, sinceTs: number): Promise<
 }
 
 /**
+ * 一条 per-model 用量曲线数据点：某时间桶内某模型的 tokens。
+ * `bucketMs` 为桶粒度（小时或天，毫秒）。
+ */
+export interface UsageModelBucket {
+  /** 桶起始时间（毫秒）。 */
+  ts: number;
+  modelId: string;
+  tokens: number;
+}
+
+/**
+ * 按模型 + 时间桶分桶的用量聚合（曲线图数据源）。桶内无调用的
+ * 模型不出现在结果里，由调用方补齐空桶。usage_logs 上的
+ * {userId, createdAt} 前缀索引可直接服务该 $match + $group。
+ */
+export async function sumUsageByModelBuckets(
+  userId: string | null,
+  sinceTs: number,
+  bucketMs: number,
+): Promise<UsageModelBucket[]> {
+  const db = await getDb();
+  const pipeline: Record<string, unknown>[] = [
+    { $match: { createdAt: { $gte: sinceTs }, ...(userId ? { userId } : {}) } },
+    {
+      $group: {
+        _id: {
+          bucket: {
+            $toDate: {
+              $subtract: [{ $toLong: "$createdAt" }, { $mod: [{ $toLong: "$createdAt" }, bucketMs] }],
+            },
+          },
+          modelId: "$modelId",
+        },
+        tokens: { $sum: "$totalTokens" },
+      },
+    },
+    { $sort: { "_id.bucket": 1 } },
+  ];
+  const rows = await db.collection<UsageLogDoc>("usage_logs").aggregate(pipeline).toArray();
+  return (rows as unknown as { _id: { bucket: Date; modelId: string }; tokens: number }[]).map((row) => ({
+    ts: row._id.bucket.getTime(),
+    modelId: row._id.modelId,
+    tokens: row.tokens,
+  }));
+}
+
+/**
  * 扣减额度（AI 计费）。按先过期先用从用户的套餐条目中扣减，
  * 事务内原子完成，余额不足时扣到 0 为止，不产生负数。
  */

@@ -46,3 +46,12 @@ export function formatDate(ts: number): string {
   });
   return formatter.format(new Date(ts));
 }
+
+/** 输出 TPS：completionTokens ÷ 耗时秒数；缺失/非正耗时或 0 输出时返回 —。 */
+export function formatTps(completionTokens: number, durationMs: number | null | undefined): string {
+  if (!Number.isFinite(durationMs) || !durationMs || durationMs <= 0 || completionTokens <= 0) {
+    return "—";
+  }
+  const tps = completionTokens / (durationMs / 1000);
+  return tps >= 100 ? tps.toFixed(0) : tps.toFixed(1);
+}

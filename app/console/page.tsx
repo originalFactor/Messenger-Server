@@ -16,6 +16,7 @@
 
 import { redirect } from "next/navigation";
 import { ApiKeyCard } from "@/components/console/api-key-card";
+import { UsageModelChart } from "@/components/console/usage-model-chart";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -33,8 +34,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { requireUserSession } from "@/lib/auth";
-import { formatDateTime, formatTokens } from "@/lib/format";
-import { getUserById, getUserQuotaState, getUserSyncSummary, listUsageLogs, sumUsage } from "@/lib/storage";
+import { formatDateTime, formatTokens, formatTps } from "@/lib/format";
+import { getUserById, getUserQuotaState, getUserSyncSummary, listUsageLogs, sumUsage, sumUsageByModelBuckets } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -47,7 +48,15 @@ async function loadOverviewData(userId: string) {
     getUserQuotaState(userId),
     getUserSyncSummary(userId),
   ]);
-  return { today, recentUsage, quota, sync };
+  // 曲线窗口自适应：近 24 小时（小时桶）无数据时回退近 30 天（天桶），
+  // 否则老用户的曲线图永远空白；usageWindowMs 决定 X 轴刻度格式。
+  let usageBuckets = await sumUsageByModelBuckets(userId, now - 24 * 60 * 60 * 1000, 60 * 60 * 1000);
+  let usageWindowMs = 24 * 60 * 60 * 1000;
+  if (usageBuckets.length === 0) {
+    usageBuckets = await sumUsageByModelBuckets(userId, now - 30 * 24 * 60 * 60 * 1000, 24 * 60 * 60 * 1000);
+    usageWindowMs = 30 * 24 * 60 * 60 * 1000;
+  }
+  return { today, recentUsage, quota, sync, usageBuckets, usageWindowMs, now };
 }
 
 export default async function ConsoleOverviewPage() {
@@ -60,7 +69,7 @@ export default async function ConsoleOverviewPage() {
     redirect("/login");
   }
 
-  const { today, recentUsage, quota, sync } = await loadOverviewData(user.id);
+  const { today, recentUsage, quota, sync, usageBuckets, usageWindowMs, now } = await loadOverviewData(user.id);
 
   return (
     <div className="grid gap-6">
@@ -117,6 +126,8 @@ export default async function ConsoleOverviewPage() {
 
       <ApiKeyCard apiKey={user.aiApiKey} />
 
+      <UsageModelChart buckets={usageBuckets} windowMs={usageWindowMs} now={now} />
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">近期用量</CardTitle>
@@ -136,8 +147,8 @@ export default async function ConsoleOverviewPage() {
                   <TableHead>输入</TableHead>
                   <TableHead>缓存</TableHead>
                   <TableHead>输出</TableHead>
+                  <TableHead>输出 TPS</TableHead>
                   <TableHead>消耗额度</TableHead>
-                  <TableHead className="text-right">方式</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -148,10 +159,10 @@ export default async function ConsoleOverviewPage() {
                     <TableCell className="tabular-nums">{formatTokens(log.promptTokens)}</TableCell>
                     <TableCell className="tabular-nums">{formatTokens(log.cachedTokens ?? 0)}</TableCell>
                     <TableCell className="tabular-nums">{formatTokens(log.completionTokens)}</TableCell>
-                    <TableCell className="tabular-nums">{log.cost}</TableCell>
-                    <TableCell className="text-right text-muted-foreground">
-                      {log.stream ? "流式" : "非流式"}
+                    <TableCell className="tabular-nums text-muted-foreground">
+                      {formatTps(log.completionTokens, log.durationMs)}
                     </TableCell>
+                    <TableCell className="tabular-nums">{log.cost}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
