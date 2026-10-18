@@ -1107,7 +1107,6 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                   <TableHead>协议</TableHead>
                   <TableHead>优先级</TableHead>
                   <TableHead>模型</TableHead>
-                  <TableHead>元数据</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
@@ -1123,35 +1122,12 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                       </Badge>
                     </TableCell>
                     <TableCell className="tabular-nums">{upstream.priority}</TableCell>
-                    <TableCell>
+                    <TableCell className="tabular-nums">
                       {upstream.models.length === 0 ? (
                         <span className="text-xs text-muted-foreground">—</span>
                       ) : (
-                        <div className="flex max-w-72 flex-wrap items-center gap-1">
-                          {upstream.models.slice(0, 3).map((modelId) => (
-                            <Badge key={modelId} variant="secondary" className="font-mono text-[10px]">
-                              {modelId}
-                            </Badge>
-                          ))}
-                          {upstream.models.length > 3 ? (
-                            <Badge variant="outline" className="font-mono text-[10px]">
-                              +{upstream.models.length - 3}
-                            </Badge>
-                          ) : null}
-                        </div>
+                        upstream.models.length
                       )}
-                    </TableCell>
-                    <TableCell>
-                      {(() => {
-                        const overrideCount = Object.values(upstream.modelMeta ?? {}).filter(
-                          (meta) => meta.override,
-                        ).length;
-                        return (
-                          <Badge variant={overrideCount > 0 ? "default" : "secondary"}>
-                            {overrideCount > 0 ? overrideCount + " 项覆盖" : "models.dev"}
-                          </Badge>
-                        );
-                      })()}
                     </TableCell>
                     <TableCell>
                       <Badge variant={upstream.enabled ? "default" : "secondary"}>
