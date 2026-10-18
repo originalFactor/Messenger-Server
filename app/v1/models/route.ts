@@ -26,10 +26,10 @@ export async function GET(request: Request) {
     return openAiError("Invalid API key.", 401, { type: "authentication_error", code: "invalid_api_key" });
   }
 
-  // 模型元数据（context_window / 倍率）与 /v1/chat/completions 的
-  // resolveModelMeta 语义一致：override 开启用自定义值（缺失回退
-  // models.dev），关闭用 models.dev，多上游不一致取最大上下文。
+  // 模型元数据（倍率）与 /v1/chat/completions 的 resolveModelMeta 语义一致：
+  // override 开启用自定义值（缺失回退 models.dev），关闭用 models.dev。
   // 倍率取各上游的最小值（最优惠价），0 = 该模型免费。
+  // 上下文窗口不再由服务端下发，客户端自行从 models.dev 推导。
   const plaza = await getModelPlaza();
   const now = Math.floor(Date.now() / 1000);
   return jsonOk({
@@ -39,8 +39,8 @@ export async function GET(request: Request) {
       object: "model",
       created: now,
       owned_by: "messenger-cloud",
-      context_window: model.contextWindow,
       input_rate: model.inputRateMin,
+      cache_read_rate: model.cacheReadRateMin,
       output_rate: model.outputRateMin,
     })),
   });

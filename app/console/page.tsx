@@ -134,6 +134,7 @@ export default async function ConsoleOverviewPage() {
                   <TableHead>时间</TableHead>
                   <TableHead>模型</TableHead>
                   <TableHead>输入</TableHead>
+                  <TableHead>缓存</TableHead>
                   <TableHead>输出</TableHead>
                   <TableHead>消耗额度</TableHead>
                   <TableHead className="text-right">方式</TableHead>
@@ -145,6 +146,7 @@ export default async function ConsoleOverviewPage() {
                     <TableCell className="whitespace-nowrap">{formatDateTime(log.createdAt)}</TableCell>
                     <TableCell className="font-mono text-xs">{log.modelId}</TableCell>
                     <TableCell className="tabular-nums">{formatTokens(log.promptTokens)}</TableCell>
+                    <TableCell className="tabular-nums">{formatTokens(log.cachedTokens ?? 0)}</TableCell>
                     <TableCell className="tabular-nums">{formatTokens(log.completionTokens)}</TableCell>
                     <TableCell className="tabular-nums">{log.cost}</TableCell>
                     <TableCell className="text-right text-muted-foreground">

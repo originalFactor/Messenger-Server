@@ -30,6 +30,7 @@ import type {
   MarketAgentInput,
   ConversationDoc,
   ConversationUpsertInput,
+  ModelRateSettingsDoc,
   PlanDoc,
   ProviderDoc,
   ProviderUpsertInput,
@@ -1547,6 +1548,10 @@ export interface UpstreamInput {
   apiFormat?: "chat" | "responses" | "messages" | "interactions" | "auto";
   models: string[];
   modelMeta?: Record<string, UpstreamModelMeta> | null;
+  /** 表中保留但停用的模型 ID：不参与服务，仅用于编辑表单回显。 */
+  disabledModels?: string[] | null;
+  /** 上游整体倍率（providerRate）；缺省 = 1。 */
+  multiplier?: number | null;
   priority: number;
   enabled: boolean;
 }
@@ -1574,14 +1579,17 @@ function normalizeUpstreamModelMeta(
     if (typeof meta.override === 'boolean') {
       entry.override = meta.override;
     }
-    if (typeof meta.contextWindow === 'number' && Number.isFinite(meta.contextWindow) && meta.contextWindow >= 0) {
-      entry.contextWindow = Math.round(meta.contextWindow);
+    if (typeof meta.cacheReadRate === 'number' && Number.isFinite(meta.cacheReadRate) && meta.cacheReadRate >= 0) {
+      entry.cacheReadRate = meta.cacheReadRate;
     }
     if (typeof meta.inputRate === 'number' && Number.isFinite(meta.inputRate) && meta.inputRate >= 0) {
       entry.inputRate = meta.inputRate;
     }
     if (typeof meta.outputRate === 'number' && Number.isFinite(meta.outputRate) && meta.outputRate >= 0) {
       entry.outputRate = meta.outputRate;
+    }
+    if (typeof meta.multiplier === 'number' && Number.isFinite(meta.multiplier) && meta.multiplier >= 0) {
+      entry.multiplier = meta.multiplier;
     }
     if (Object.keys(entry).length > 0) {
       normalized[id] = entry;
@@ -1592,6 +1600,20 @@ function normalizeUpstreamModelMeta(
 
 function normalizeUpstreamModels(models: string[]): string[] {
   return [...new Set(models.map((model) => model.trim()).filter(Boolean))];
+}
+
+/**
+ * 停用模型列表规范化：trimming + 去重，并剔除同时出现在 models 里的 ID
+ * （models 优先 —— 一个模型不能既服务又停用）。停用 ID 本身不是 models 的
+ * 子集：模型停用时已从 models 移除，这里绝不能与之求交，否则停用行在重开
+ * 编辑表单时会消失。缺省（旧文档）= 无停用模型。
+ */
+function normalizeUpstreamDisabledModels(models: string[], disabledModels: string[] | null | undefined): string[] {
+  if (!disabledModels) {
+    return [];
+  }
+  const inferred = new Set(disabledModels.map((model) => model.trim()).filter(Boolean));
+  return [...inferred].filter((model) => !models.includes(model));
 }
 
 export async function listUpstreams(): Promise<UpstreamDoc[]> {
@@ -1626,6 +1648,8 @@ export async function createUpstream(input: UpstreamInput): Promise<UpstreamDoc>
     apiFormat: normalizeUpstreamApiFormat(input.apiFormat),
     models: normalizeUpstreamModels(input.models),
     modelMeta: normalizeUpstreamModelMeta(input.modelMeta),
+    disabledModels: normalizeUpstreamDisabledModels(normalizeUpstreamModels(input.models), input.disabledModels),
+    multiplier: input.multiplier ?? null,
     priority: input.priority,
     enabled: input.enabled,
     createdAt: now,
@@ -1647,6 +1671,11 @@ export async function updateUpstream(upstreamId: string, input: UpstreamInput): 
         apiFormat: normalizeUpstreamApiFormat(input.apiFormat),
         models: normalizeUpstreamModels(input.models),
         modelMeta: normalizeUpstreamModelMeta(input.modelMeta),
+        disabledModels: normalizeUpstreamDisabledModels(
+          normalizeUpstreamModels(input.models),
+          input.disabledModels,
+        ),
+        multiplier: input.multiplier ?? null,
         priority: input.priority,
         enabled: input.enabled,
         updatedAt: Date.now(),
@@ -1666,6 +1695,54 @@ export async function deleteUpstream(upstreamId: string): Promise<void> {
   if (result.deletedCount !== 1) {
     throw new NotFoundError("Upstream not found.");
   }
+}
+
+// ---------------------------------------------------------------------------
+// 全局模型倍率设置：1x 基准模型
+// ---------------------------------------------------------------------------
+
+const MODEL_RATE_SETTINGS_ID = "default";
+
+/** 基准模型设置（单文档）；从未配置过时返回 baseModelId = null。 */
+export async function getModelRateSettings(): Promise<ModelRateSettingsDoc> {
+  const db = await getDb();
+  const doc = await db.collection<ModelRateSettingsDoc>("model_rate_settings").findOne({ _id: MODEL_RATE_SETTINGS_ID });
+  if (doc) {
+    return doc;
+  }
+  const now = Date.now();
+  return { _id: MODEL_RATE_SETTINGS_ID, baseModelId: null, createdAt: now, updatedAt: now };
+}
+
+export interface SetBaseModelInput {
+  /** 新基准模型 ID；null = 清除基准（回到 models.dev 归一化口径）。 */
+  baseModelId: string | null;
+}
+
+/**
+ * 切换 1x 基准模型：只写 model_rate_settings。
+ *
+ * 存量倍率长期保存在 models.dev 归一化空间，与基准无关；基准是解析期
+ * 的分母（见 resolveModelRates），因此切换基准不改任何上游数据 ——
+ * 模型间相对价格恒定、随时可逆、无浮点漂移。基准模型自身在解析时
+ * 恒为 1x（存量 ÷ 自身存量）。
+ */
+export async function setBaseModel(input: SetBaseModelInput): Promise<ModelRateSettingsDoc> {
+  const db = await getDb();
+  const now = Date.now();
+  const current = await getModelRateSettings();
+  const settings: ModelRateSettingsDoc = {
+    _id: MODEL_RATE_SETTINGS_ID,
+    baseModelId: input.baseModelId,
+    createdAt: current.createdAt,
+    updatedAt: now,
+  };
+  await db.collection<ModelRateSettingsDoc>("model_rate_settings").updateOne(
+    { _id: MODEL_RATE_SETTINGS_ID },
+    { $set: { baseModelId: settings.baseModelId, updatedAt: now }, $setOnInsert: { createdAt: now } },
+    { upsert: true },
+  );
+  return settings;
 }
 
 /** AI API 可对外提供的模型 = 所有启用上游可服务模型的并集。 */

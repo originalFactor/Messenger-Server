@@ -55,9 +55,9 @@ export default async function ModelPlazaPage() {
           <h1 className="text-2xl font-semibold tracking-tight">模型广场</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             当前可用的全部模型及其计费倍率。基准为 deepseek-v4.1-flash 的峰时输出费率（定为 1.0），
-            其余模型的输入/输出倍率及 deepseek-v4.1-flash 自身的输入倍率均按该基准折算。
-            单次调用费用 = 输入 tokens × 输入倍率 + 输出 tokens × 输出倍率（向上取整，至少 1）；
-            多个上游提供同一模型且倍率不同时显示区间，实际按为你服务的上游计费。
+            其余模型的输入/输出/缓存读取倍率及 deepseek-v4.1-flash 自身的输入倍率均按该基准折算。
+            单次调用费用 = 输入 tokens × 输入倍率 + 输出 tokens × 输出倍率 + 命中缓存的 tokens × 缓存读取倍率
+            （向上取整，至少 1）；多个上游提供同一模型且倍率不同时显示区间，实际按为你服务的上游计费。
           </p>
         </div>
 

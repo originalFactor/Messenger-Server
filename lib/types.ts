@@ -135,12 +135,31 @@ export interface RedemptionDoc {
 export interface UpstreamModelMeta {
   /** 覆盖开关：开启时本条自定义元数据生效，关闭时使用 models.dev 元数据。 */
   override?: boolean;
-  /** 上下文窗口（tokens），0 = 不限制。 */
-  contextWindow?: number | null;
+  /** 缓存读取倍率，0 = 不计费；缺省按 models.dev 值（无数据按输入价）。 */
+  cacheReadRate?: number | null;
   /** 输入倍率，0 = 不计费。 */
   inputRate?: number | null;
   /** 输出倍率，0 = 不计费。 */
   outputRate?: number | null;
+  /**
+   * 模型整体倍率（modelRate）：把上面三种 tokenType 倍率整体再乘一次，
+   * 与覆盖开关无关 —— 未覆盖的模型同样可以只放大倍率而不改各 tokenType
+   * 单价。缺省/非法值 = 1（不缩放），显式 0 = 该模型在此上游不计费。
+   */
+  multiplier?: number | null;
+}
+
+/**
+ * 全局模型倍率设置（`model_rate_settings` 集合，单文档 `_id = "default"`）。
+ * baseModelId 非空时，它的生效 tokenType 倍率即 1x 基准：其余模型的已存
+ * 倍率（含覆盖条目）在基准切换时整体重算。
+ */
+export interface ModelRateSettingsDoc {
+  _id: "default";
+  /** 基准模型 ID；null = 未选基准，维持 models.dev 归一化倍率。 */
+  baseModelId: string | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface UpstreamDoc {
@@ -159,6 +178,15 @@ export interface UpstreamDoc {
   models: string[];
   /** 按上游自定义的模型元数据；仅 override 开启的条目生效，其余用 models.dev 元数据。 */
   modelMeta?: Record<string, UpstreamModelMeta> | null;
+  /** 表中保留但停用的模型 ID：不参与服务，仅用于编辑表单回显。 */
+  disabledModels?: string[] | null;
+  /**
+   * 上游整体倍率（providerRate）：把该上游所有模型的生效 tokenType
+   * 倍率整体再乘一次，与 per-model multiplier 叠加生效：
+   *   实际倍率 = tokenTypeRate × modelRate × providerRate
+   * 缺省/非法值 = 1（不缩放），显式 0 = 该上游所有模型不计费。
+   */
+  multiplier?: number | null;
   /** 路由优先级，数字越小越优先。 */
   priority: number;
   enabled: boolean;
@@ -173,6 +201,8 @@ export interface UsageLogDoc {
   upstreamId?: string | null;
   promptTokens: number;
   completionTokens: number;
+  /** 命中的缓存读取 token 数（0 = 无缓存命中）。 */
+  cachedTokens: number;
   totalTokens: number;
   /** 实际扣减的额度。 */
   cost: number;

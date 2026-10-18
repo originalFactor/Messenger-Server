@@ -197,17 +197,28 @@ export const upstreamInputSchema = z.object({
       z
         .object({
           override: z.boolean().optional(),
-          contextWindow: z.number().int().min(0).max(1_000_000_000).nullable().optional(),
+          cacheReadRate: z.number().finite().min(0).max(100_000).nullable().optional(),
           inputRate: z.number().finite().min(0).max(100_000).nullable().optional(),
           outputRate: z.number().finite().min(0).max(100_000).nullable().optional(),
+          /** 模型整体倍率：与覆盖开关无关，缺省 = 1，0 = 不计费。 */
+          multiplier: z.number().finite().min(0).max(100_000).nullable().optional(),
         })
         .strict(),
     )
     .refine((meta) => Object.keys(meta).length <= 1_000, "Too many model meta entries.")
     .nullable()
     .optional(),
+  /** 表中保留但停用的模型 ID：不在 models 中、不参与服务，仅用于编辑表单回显。 */
+  disabledModels: z.array(z.string().trim().min(1).max(200)).max(1_000).optional(),
+  /** 上游整体倍率：乘到该上游所有模型的生效倍率上；缺省 = 1，0 = 全部不计费。 */
+  multiplier: z.number().finite().min(0).max(100_000).nullable().optional(),
   priority: z.number().int().min(0).max(100_000),
   enabled: z.boolean(),
+}).strict();
+
+/** 切换 1x 基准模型：baseModelId 为 null = 清除基准。 */
+export const baseModelInputSchema = z.object({
+  baseModelId: z.string().trim().min(1).max(200).nullable(),
 }).strict();
 
 export const upstreamProbeSchema = z.object({

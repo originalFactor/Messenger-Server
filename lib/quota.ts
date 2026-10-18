@@ -15,8 +15,12 @@
  */
 
 /**
- * 额度估算与计费。额度单位与 token 1:1，输入/输出分别乘以各自倍率：
- *   cost = max(1, ceil(promptTokens × inputRate + completionTokens × outputRate))
+ * 额度估算与计费。额度单位与 token 1:1。命中的缓存读取 token 走
+ * cacheReadRate，其余输入 token 走 inputRate：
+ *   cached = clamp(cachedTokens, 0, promptTokens)
+ *   cost = max(1, ceil((prompt - cached) × inputRate
+ *                       + cached × cacheReadRate
+ *                       + completion × outputRate))
  * 上游未返回 usage 时按英文文本经验值（约 4 字符/token）估算。
  */
 
@@ -33,16 +37,23 @@ export function computeCost(
   completionTokens: number,
   inputRate: number | null | undefined,
   outputRate: number | null | undefined,
+  cachedTokens = 0,
+  cacheReadRate: number | null | undefined = 0,
 ): number {
   const ir = safeRateOrZero(inputRate);
   const or = safeRateOrZero(outputRate);
-  // 双倍率置零 = 不限制 / 不计费。
-  if (ir <= 0 && or <= 0) {
+  const cr = safeRateOrZero(cacheReadRate);
+  // 三倍率置零 = 不限制 / 不计费。
+  if (ir <= 0 && or <= 0 && cr <= 0) {
     return 0;
   }
   const prompt = Number.isFinite(promptTokens) && promptTokens > 0 ? promptTokens : 0;
   const completion = Number.isFinite(completionTokens) && completionTokens > 0 ? completionTokens : 0;
-  return Math.max(1, Math.ceil(prompt * ir + completion * or));
+  // 缓存命中 token 不可能超过提示总量；溢出视为上游统计口径异常，按 0 计。
+  const rawCached = Number.isFinite(cachedTokens) && cachedTokens > 0 ? cachedTokens : 0;
+  const cached = prompt > 0 ? Math.min(rawCached, prompt) : 0;
+  const billableInput = prompt - cached;
+  return Math.max(1, Math.ceil(billableInput * ir + cached * cr + completion * or));
 }
 
 export interface QuotaState {

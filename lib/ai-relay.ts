@@ -51,21 +51,15 @@ import {
 } from "@/lib/ai-formats";
 import { authenticateAiKey } from "@/lib/ai-proxy";
 import { getModelDefaults } from "@/lib/model-metadata";
+import { type BaseModelContext, resolveModelRates } from "@/lib/model-rates";
 import { computeCost } from "@/lib/quota";
-import { consumeQuota, getUserQuotaState, listUpstreamsForModel, recordUsage } from "@/lib/storage";
+import { consumeQuota, getModelRateSettings, getUserQuotaState, listUpstreamsForModel, recordUsage } from "@/lib/storage";
 import type { UpstreamDoc } from "@/lib/types";
 
 export const UPSTREAM_TIMEOUT_MS = 120_000;
 
 interface ModelDefaults {
-  contextSizes: Record<string, number>;
-  rates: Record<string, { input: number; output: number }>;
-}
-
-interface ResolvedModelMeta {
-  contextWindow: number;
-  inputRate: number;
-  outputRate: number;
+  rates: Record<string, { input: number; output: number; cacheRead: number }>;
 }
 
 interface SettleParams {
@@ -73,29 +67,21 @@ interface SettleParams {
   modelId: string;
   promptTokens: number;
   defaults: ModelDefaults;
+  /** 1x 基准上下文；无基准（baseModelId = null）= models.dev 归一化口径。 */
+  base: BaseModelContext | null;
 }
 
 /**
- * 元数据解析（按模型）：该模型的 modelMeta.override 开启时使用其自定义值
- * （缺失字段回退 models.dev），否则直接使用 models.dev 元数据；倍率无数据
- * 时默认 1x（显式配置 0 = 不计费），contextWindow 0 = 不限制。
+ * 元数据解析（按模型）：modelMeta.override 开启时使用其自定义值（缺失
+ * 字段回退 models.dev），否则直接使用 models.dev 元数据；倍率无数据时
+ * 默认 1x（显式配置 0 = 不计费）。最终实际倍率再乘以模型整体倍率
+ * modelRate（modelMeta[model].multiplier）与上游整体倍率 providerRate
+ * （upstream.multiplier）：实际倍率 = tokenTypeRate × modelRate × providerRate。
+ * 设了 1x 基准模型时基准模型自身恒为 1x。缓存读取价高于输入价的报价
+ * 视为脏数据，夹到输入价。
  */
-function resolveModelMeta(upstream: UpstreamDoc, model: string, defaults: ModelDefaults): ResolvedModelMeta {
-  const devContext = defaults.contextSizes[model];
-  const devRate = defaults.rates[model];
-  const custom = upstream.modelMeta?.[model];
-  if (custom?.override) {
-    return {
-      contextWindow: custom.contextWindow ?? devContext ?? 0,
-      inputRate: custom.inputRate ?? devRate?.input ?? 1,
-      outputRate: custom.outputRate ?? devRate?.output ?? 1,
-    };
-  }
-  return {
-    contextWindow: devContext ?? 0,
-    inputRate: devRate?.input ?? 1,
-    outputRate: devRate?.output ?? 1,
-  };
+function resolveModelMeta(upstream: UpstreamDoc, model: string, defaults: ModelDefaults, base: BaseModelContext | null) {
+  return resolveModelRates(upstream, model, defaults.rates, base);
 }
 
 /**
@@ -106,6 +92,7 @@ async function settleUsage(
   params: SettleParams & {
     inputRate: number;
     outputRate: number;
+    cacheReadRate: number;
     upstreamId: string | null;
     usage: IrUsage | null;
     completionChars: number;
@@ -116,7 +103,15 @@ async function settleUsage(
   const completionTokens = usage?.completionTokens ?? Math.ceil(params.completionChars / 4);
   const promptTokens = usage?.promptTokens ?? params.promptTokens;
   const totalTokens = usage?.totalTokens ?? promptTokens + completionTokens;
-  const cost = computeCost(promptTokens, completionTokens, params.inputRate, params.outputRate);
+  const cachedTokens = usage?.cachedTokens ?? 0;
+  const cost = computeCost(
+    promptTokens,
+    completionTokens,
+    params.inputRate,
+    params.outputRate,
+    cachedTokens,
+    params.cacheReadRate,
+  );
   try {
     await consumeQuota(params.userId, cost);
     await recordUsage({
@@ -125,6 +120,7 @@ async function settleUsage(
       upstreamId: params.upstreamId,
       promptTokens,
       completionTokens,
+      cachedTokens,
       totalTokens,
       cost,
       stream: params.stream,
@@ -231,7 +227,7 @@ async function nonStreamProxy(
     decoded.finishReason = normalizeFinishReason(decoded.finishReason);
     await settleUsage({
       ...settle,
-      ...resolveModelMeta(upstream, settle.modelId, settle.defaults),
+      ...resolveModelMeta(upstream, settle.modelId, settle.defaults, settle.base),
       upstreamId: upstream._id,
       usage: decoded.usage,
       completionChars: decoded.text.length,
@@ -353,7 +349,7 @@ export function buildStreamingResponse(
         if (closing) controller.enqueue(textEncoder.encode(closing));
         await settleUsage({
           ...settle,
-          ...resolveModelMeta(upstream, settle.modelId, settle.defaults),
+          ...resolveModelMeta(upstream, settle.modelId, settle.defaults, settle.base),
           upstreamId: upstream._id,
           usage: sniffed.usage,
           completionChars: sniffed.completionChars,
@@ -431,11 +427,16 @@ export async function relayCompletion({ format, request }: RelayOptions): Promis
   }
 
   const defaults = await getModelDefaults();
+  const settings = await getModelRateSettings();
+  const baseModelId = settings.baseModelId;
+  const base: BaseModelContext | null =
+    baseModelId !== null && defaults.rates[baseModelId] !== undefined ? { modelId: baseModelId } : null;
   const settle: SettleParams = {
     userId: user.id,
     modelId: ir.model,
     promptTokens: estimateIrPromptTokens(ir),
-    defaults: { contextSizes: defaults.contextSizes, rates: defaults.rates },
+    defaults: { rates: defaults.rates },
+    base,
   };
 
   if (ir.stream) {

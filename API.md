@@ -446,10 +446,11 @@ interface SessionClaims {
 
 ### GET /api/admin/models/metadata
 
-返回 models.dev（`models.json` + `api.json`）合并的模型元数据，实例内存缓存 24 小时；models.dev 不可用时返回空映射。
+返回 models.dev（`api.json`）按供应商压平合并后的模型倍率元数据，实例内存缓存 24 小时；models.dev 不可用时返回空映射。
 
-- 倍率以 `deepseek/deepseek-v4.1-flash` 的成本为基准归一化（基准恰为 1.0）。
-- 响应 `200`：`{ "metadata": { "gpt-4o": { "contextWindow": 128000, "inputRate": 16.6667, "outputRate": 16.6667 } } }`
+- 输入/输出/缓存读取倍率以 `deepseek/deepseek-v4.1-flash` 的峰时输出成本为基准归一化（基准恰为 1.0）；`cost.cache_read` 缺失时按该模型的输入价折算。
+- 响应 `200`：`{ "metadata": { "gpt-4o": { "inputRate": 0.25, "cacheReadRate": 0.125, "outputRate": 1.0 } } }`
+- 上下文窗口不再由服务端提供（客户端自行从 models.dev `models.json` 推导）。
 - 供「更新元数据」入口与上游元数据展示使用。
 
 ### GET /api/admin/users、PATCH /api/admin/users/{id}
@@ -465,7 +466,6 @@ interface SessionClaims {
 - 响应 `200`：`{ "user": AdminUserView }`；错误：`400` 载荷无效、`404` 用户不存在。
 
 ### GET|POST /api/admin/upstreams、PUT|DELETE /api/admin/upstreams/{id}、POST /api/admin/upstreams/{id}/probe
-
 上游模型服务管理。请求体（`upstreamInputSchema`，strict）：
 
 ```jsonc
@@ -475,8 +475,10 @@ interface SessionClaims {
   "apiKey": "上游密钥",
   "apiFormat": "auto",                        // chat | responses | messages | interactions | auto（跟随客户端）
   "models": ["gpt-4o", "deepseek-chat"],     // 可服务的模型 ID
+  "disabledModels": ["deepseek-chat"],       // 可选：表中保留但停用的模型 ID（不参与服务，仅回显）
+  "multiplier": 1.5,                          // 可选：上游整体倍率（providerRate），乘到本上游全部模型的生效倍率上；缺省 = 1，0 = 不计费
   "modelMeta": {                              // 按上游自定义的模型元数据（按模型粒度）
-    "gpt-4o": { "override": true, "contextWindow": 128000, "inputRate": 16.6667, "outputRate": 16.6667 },
+    "gpt-4o": { "override": true, "inputRate": 0.25, "cacheReadRate": 0.125, "outputRate": 1.0, "multiplier": 2 },
     "deepseek-chat": { "override": false }
   },
   "priority": 0,                              // 越小越优先；同模型多上游自动故障转移
@@ -484,15 +486,28 @@ interface SessionClaims {
 }
 ```
 
-`POST /api/admin/upstreams/probe`：直探模式 —— 请求体 `{ "baseUrl": "https://api.example.com/v1", "apiKey": "…", "apiFormat": "auto" }`，不要求上游已保存，供「新增/编辑上游」表单直接拉取模型列表；与 `{id}/probe` 共享 `lib/upstream-probe.ts` 实现，连接失败返回 `502`。两条探测路由的响应均内联 models.dev 的上下文数据：`{ "models": ["…"], "contextSizes": { "gpt-4o": 128000 } }`。
+实际倍率 = `tokenTypeRate × modelRate × providerRate`：`tokenTypeRate` 即该模型生效的输入/缓存读取/输出倍率（override 开启用自定义值、缺失回退 models.dev，关闭用 models.dev，无数据默认 1x，显式 0 = 不计费）；`modelRate` 为 `modelMeta[modelId].multiplier`（模型整体倍率，与 override 开关无关 —— 未覆盖的模型也可只放大倍率）；`providerRate` 为上游 `multiplier`。三者均缺省 = 1，`modelRate`/`providerRate` 显式 0 = 对应层级不计费。
 
-`POST /api/admin/upstreams/test`：对单个上游模型发一次最小对话（`"Hi"` + `max_tokens: 16`，30s 超时），请求体按 `apiFormat` 编码。请求体 `{ "baseUrl": "…", "apiKey": "…", "model": "…", "apiFormat": "auto" }`；响应 `200` 为 `{ "model": "…", "latencyMs": 832, "reply": "…" }`，失败返回上游的 `error.message`（`502`）。供「新增/编辑上游」表单的逐模型测试与整体测试（整体测试自动选已选模型中输入+输出倍率之和最低者）。
+`POST /api/admin/upstreams/probe`：直探模式 —— 请求体 `{ "baseUrl": "https://api.example.com/v1", "apiKey": "…", "apiFormat": "auto" }`，不要求上游已保存，供「新增/编辑上游」表单直接拉取模型列表；与 `{id}/probe` 共享 `lib/upstream-probe.ts` 实现，连接失败返回 `502`。两条探测路由响应：`{ "models": ["…"] }`。
+
+模型级生命周期：`models` 是可服务模型的唯一事实来源（`listUpstreamsForModel`、模型广场、`/v1/models`、`/v1` 故障转移都只读它）。「停用」= 把模型 ID 写入 `disabledModels` 同时从 `models` 移除 —— 模型不参与任何服务，但保留在编辑表格与 `modelMeta` 中，重新勾选即可恢复；「删除」= 从 `models`、`disabledModels`、`modelMeta` 中一并移除，不可恢复。`disabledModels` 与 `models` 不相交（models 优先），未传视为空。
+
+`POST /api/admin/upstreams/test`：对单个上游模型发一次最小对话（`"Hi"` + `max_tokens: 16`，30s 超时），请求体按 `apiFormat` 编码。请求体 `{ "baseUrl": "…", "apiKey": "…", "model": "…", "apiFormat": "auto" }`；响应 `200` 为 `{ "model": "…", "latencyMs": 832, "reply": "…" }`，失败返回上游的 `error.message`（`502`）。供「新增/编辑上游」表单的逐模型测试与整体测试（整体测试自动选已选模型中输入+缓存+输出倍率之和最低者）。
 
 ### GET /api/admin/models/metadata
 
-返回 models.dev（`https://models.dev/models.json`）的模型元数据映射，实例内存缓存 24 小时；models.dev 不可用时返回空映射。
+返回 models.dev（`https://models.dev/api.json`）按供应商压平合并后的倍率映射，实例内存缓存 24 小时；models.dev 不可用时返回空映射。完整 `vendor/model` 键与 `/` 后的裸 ID 均可命中。
 
-- 响应 `200`：`{ "metadata": { "gpt-4o": { "contextWindow": 128000 }, "…": {} } }` —— 完整 `vendor/model` 键与 `/` 后的裸 ID 均可命中。
+- 响应 `200`：`{ "metadata": { "gpt-4o": { "inputRate": 0.25, "cacheReadRate": 0.125, "outputRate": 1.0 }, "…": {} } }`。
+
+### GET|PUT /api/admin/models/base
+
+1x 基准模型设置（管理员）。基准模型的生效倍率即 1x，其余模型的已存倍率（含「覆盖」自定义值）按当前倍率整体重算为相对新基准的比例 —— 存量数据本身不改写，基准是解析期分母，因此随时可逆、无浮点漂移、模型间相对价格恒定。
+
+- `GET`：响应 `200` 为 `{ "baseModelId": "deepseek-chat" | null, "models": ["…"], "rates": { "<modelId>": { "inputRate": 0.25, "cacheReadRate": 0.125, "outputRate": 1.0 } } }` —— `models` 为启用上游可服务模型的并集，`rates` 为各模型当前生效的 tokenType 倍率（不含 model/provider 整体倍率）。
+- `PUT`：请求体 `{ "baseModelId": "<modelId>" }`（`null` = 清除基准，回到 models.dev 归一化口径），模型 ID 上限 200 字符；响应 `200` 为 `{ "baseModelId": "<modelId>" | null }`。
+- 错误：`400` 载荷无效、`403` 非管理员。
+- 未设基准时全部倍率按 models.dev 归一化口径（`deepseek/deepseek-v4.1-flash` 峰时输出成本 = 1.0）。解析实现为 `lib/model-rates.ts` 的 `resolveModelRates`，`/v1` 计费、模型广场、`/v1/models` 与控制台共用。
 
 ---
 
@@ -543,15 +558,17 @@ interface SessionClaims {
 
 转换覆盖：文本、图片（`data:` URI 与 URL）、函数调用/结果、推理文本、`usage`、`finish_reason`。按设计丢弃：音频/视频块、引用标注、加密思维链签名、平台专有工具（web search / maps / file search）。
 
-计费与用量记账对所有协议一致：可用模型 = 所有启用上游可服务模型的并集；额度在响应完成后按 `ceil(promptTokens × 输入倍率 + completionTokens × 输出倍率)` 扣减（失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`）。元数据解析（按模型）：该模型的 `modelMeta.override` 开启时用其自定义值（缺失字段回退 models.dev），关闭时直接用 models.dev 元数据；倍率无数据时默认 1x（显式配置 0 = 不计费，双倍率为 0 时本条调用免费），contextWindow 0 = 不限制。
+计费与用量记账对所有协议一致：可用模型 = 所有启用上游可服务模型的并集；额度在响应完成后按 `ceil((promptTokens − cachedTokens) × 输入倍率 + cachedTokens × 缓存读取倍率 + completionTokens × 输出倍率)` 扣减（失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`，此时无缓存命中）。元数据解析（按模型）：该模型的 `modelMeta.override` 开启时用其自定义值（缺失字段回退 models.dev），关闭时直接用 models.dev 元数据；倍率无数据时默认 1x（显式配置 0 = 不计费，三倍率为 0 时本条调用免费）。最终实际倍率 = `tokenTypeRate × modelRate × providerRate`：`modelRate` = `modelMeta[modelId].multiplier`（模型整体倍率），`providerRate` = `upstream.multiplier`（上游整体倍率），两者缺省 = 1、显式 0 = 不计费；设了 1x 基准模型（管理后台「1x 基准模型」）时再除以基准模型的 tokenType 倍率，使基准模型自身恒为 1x。缓存读取倍率默认来自 models.dev `api.json` 的 `cost.cache_read`（缺失按输入价折算），客户端自行推导上下文窗口，服务端不再下发。
 
-**模型广场**：公开页面 `GET /models`（无需登录，RSC 直读，`lib/model-plaza.ts`）按同一套解析语义展示全部可服务模型的上下文窗口与输入/输出倍率；同一模型被多个上游提供且倍率不同时显示 `min ~ max` 区间（0 显示为「免费」），并列出提供该模型的上游数量。
+**模型广场**：公开页面 `GET /models`（无需登录，RSC 直读，`lib/model-plaza.ts`）按同一套解析语义展示全部可服务模型的输入/缓存读取/输出倍率；同一模型被多个上游提供且倍率不同时显示 `min ~ max` 区间（0 显示为「免费」），并列出提供该模型的上游数量。
 
 ### GET /v1/models
 
 ```json
-{ "object": "list", "data": [ { "id": "gpt-4o", "object": "model", "created": 1700000000, "owned_by": "messenger-cloud" } ] }
+{ "object": "list", "data": [ { "id": "gpt-4o", "object": "model", "created": 1700000000, "owned_by": "messenger-cloud", "input_rate": 0.25, "cache_read_rate": 0.125, "output_rate": 1.0 } ] }
 ```
+
+`input_rate` / `cache_read_rate` / `output_rate` 为多上游最优惠价（0 = 免费）；上下文窗口不再下发，客户端自行从 models.dev `models.json` 推导。
 
 ### POST /v1/chat/completions
 
@@ -1205,8 +1222,9 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 ### RedemptionDoc（兑换记录）、UpstreamDoc（上游，含按模型 modelMeta 元数据覆盖）、UsageLogDoc（用量）
 
 - `RedemptionDoc`: `{ _id, userId, cardKeyId, cardCode, planId, planName, quotaTokens, validityDays, createdAt }`
-- `UpstreamDoc`: `{ _id, name, baseUrl(含 /v1), apiKey, models: 可服务模型ID[], priority(小者先), enabled, createdAt, updatedAt }`
-- `UsageLogDoc`: `{ _id, userId, modelId, upstreamId, promptTokens, completionTokens, totalTokens, cost, stream, createdAt }`
+- `UpstreamDoc`: `{ _id, name, baseUrl(含 /v1), apiKey, models: 可服务模型ID[], disabledModels: 保留但停用的模型ID[], modelMeta, multiplier(上游整体倍率), priority(小者先), enabled, createdAt, updatedAt }`
+- `model_rate_settings`：单文档（`_id = "default"`）`{ baseModelId: 1x 基准模型 ID | null, createdAt, updatedAt }` —— 基准是解析期分母，切换时不改写任何存量倍率。
+- `UsageLogDoc`: `{ _id, userId, modelId, upstreamId, promptTokens, completionTokens, cachedTokens, totalTokens, cost, stream, createdAt }`
 
 ### system_bootstrap
 

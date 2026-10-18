@@ -45,20 +45,6 @@ function formatRateRange(min: number, max: number): string {
   return lo === hi ? formatRate(lo) : `${formatRate(lo)} ~ ${formatRate(hi)}`;
 }
 
-/** 上下文展示：取能整除的最大单位（1000000 → 1M、1050000 → 1050K、500 → 500），0 = 不限。 */
-function formatContext(tokens: number): string {
-  if (tokens <= 0) {
-    return "不限";
-  }
-  if (tokens >= 1_000_000 && tokens % 1_000_000 === 0) {
-    return `${tokens / 1_000_000}M`;
-  }
-  if (tokens >= 1_000 && tokens % 1_000 === 0) {
-    return `${tokens / 1_000}K`;
-  }
-  return String(tokens);
-}
-
 /** 拆出 models.dev 风格的前缀供应商（deepseek/deepseek-v4.1-flash → deepseek），无前缀只显示裸 ID。 */
 function splitModelId(modelId: string): { vendor?: string; name: string } {
   const separator = modelId.indexOf("/");
@@ -121,15 +107,15 @@ export function ModelPlazaGrid({ models }: { models: PlazaModel[] }) {
                 <CardContent className="grid grid-cols-3 gap-3 text-center">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium tabular-nums">
-                      {formatContext(model.contextWindow)}
-                    </div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">Context</div>
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium tabular-nums">
                       {formatRateRange(model.inputRateMin, model.inputRateMax)}
                     </div>
                     <div className="mt-0.5 text-xs text-muted-foreground">输入倍率</div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium tabular-nums">
+                      {formatRateRange(model.cacheReadRateMin, model.cacheReadRateMax)}
+                    </div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">缓存读取倍率</div>
                   </div>
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium tabular-nums">

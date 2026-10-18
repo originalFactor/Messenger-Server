@@ -18,18 +18,16 @@ import { z } from "zod";
 
 /**
  * models.dev 公开模型元数据：
- * - https://models.dev/models.json：以模型 ID 为键的扁平映射（limit.context
- *   即上下文窗口），用于上下文大小；
  * - https://models.dev/api.json：按供应商嵌套，条目带 cost（每百万 token
- *   的美元成本），用于推导默认输入/输出倍率 —— 基准为
- *   deepseek/deepseek-v4.1-flash 的峰时输出成本（其输出倍率恰为 1.0），
- *   所有模型的输入、输出倍率（含 deepseek-v4.1-flash 自身的输入倍率）都
- *   以该基准输出成本为分母折算，单位在比值中抵消。
- * models.json 里的个别条目 context 为 0，校验放宽并在建映射时跳过。
- * 两个载荷在实例内存中缓存 24 小时；拉取失败回退上一次缓存，永不抛出。
+ *   的美元成本：input / output / cache_read），用于推导默认输入/输出/缓存
+ *   读取倍率 —— 基准为 deepseek/deepseek-v4.1-flash 的峰时输出成本（其
+ *   输出倍率恰为 1.0），所有倍率（含 deepseek-v4.1-flash 自身的输入倍率）
+ *   都以该基准输出成本为分母折算，单位在比值中抵消。
+ * 上下文窗口不再由服务端下发（客户端自行从 models.dev models.json 推导）。
+ * 条目缺 cache_read 时按该模型的输入价折算（不收缓存折扣的供应商即如此）。
+ * 载荷在实例内存中缓存 24 小时；拉取失败回退上一次缓存，永不抛出。
  */
 
-const FLAT_URL = "https://models.dev/models.json";
 const API_URL = "https://models.dev/api.json";
 const METADATA_TTL_MS = 24 * 60 * 60 * 1000;
 const METADATA_TIMEOUT_MS = 10_000;
@@ -38,48 +36,35 @@ const METADATA_TIMEOUT_MS = 10_000;
 const BASELINE_PROVIDER = "deepseek";
 const BASELINE_MODEL = "deepseek-v4.1-flash";
 
-/** 基准取该模型峰时输出费率；输入/输出倍率统一以其为分母（输入也基于输出价，见下方归一化）。 */
+/** 基准取该模型峰时输出费率；三种倍率统一以其为分母（输入也基于输出价，见下方归一化）。 */
 const BASELINE_RATE = "output" as const;
 
 /** 裸 ID 的成本在多家供应商重复出现时，优先采信官方/一线供应商。 */
-const CANONICAL_PROVIDERS = new Set([
-  BASELINE_PROVIDER,
-  "openai",
-  "anthropic",
-  "google",
-  "zhipu",
-  "moonshot",
-  "moonshotai",
-  "alibaba",
-  "qwen",
-  "minimax",
-  "xai",
-  "mistral",
-  "meta",
-  "microsoft",
-  "amazon",
-]);
-
-const flatModelSchema = z.object({
-  limit: z
-    .object({
-      context: z.number(),
-    })
-    .partial()
-    .optional(),
-});
+const CANONICAL_PROVIDERS: Record<string, true> = {
+  [BASELINE_PROVIDER]: true,
+  openai: true,
+  anthropic: true,
+  google: true,
+  zhipu: true,
+  moonshot: true,
+  moonshotai: true,
+  alibaba: true,
+  qwen: true,
+  minimax: true,
+  xai: true,
+  mistral: true,
+  meta: true,
+  microsoft: true,
+  amazon: true,
+};
 
 const apiModelSchema = z.object({
-  limit: z
-    .object({
-      context: z.number(),
-    })
-    .partial()
-    .optional(),
   cost: z
     .object({
       input: z.number(),
       output: z.number(),
+      // api.json 用 snake_case；zod 对象键与输出键一致，直接读取 cache_read。
+      cache_read: z.number(),
     })
     .partial()
     .optional(),
@@ -88,14 +73,14 @@ const apiModelSchema = z.object({
 export interface ModelRates {
   input: number;
   output: number;
+  /** 缓存读取倍率（归一化到同一基准）。 */
+  cacheRead: number;
 }
 
-export type ModelContextSizes = Record<string, number>;
 export type ModelRateMap = Record<string, ModelRates>;
 
 interface MetadataCache {
   fetchedAt: number;
-  contextSizes: ModelContextSizes;
   rates: ModelRateMap;
 }
 
@@ -107,35 +92,12 @@ function round4(value: number): number {
 }
 
 async function fetchMetadata(): Promise<MetadataCache> {
-  const [flatPayload, apiPayload] = await Promise.all([
-    fetch(FLAT_URL, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(METADATA_TIMEOUT_MS) })
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`models.json ${response.status}`))))
-      .catch(() => null),
-    fetch(API_URL, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(METADATA_TIMEOUT_MS) })
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`api.json ${response.status}`))))
-      .catch(() => null),
-  ]);
-
-  // —— 上下文：来自扁平 models.json（含 vendor/model → 裸 ID 别名）——
-  const contextSizes: ModelContextSizes = {};
-  if (flatPayload) {
-    const flat = z.record(z.string(), flatModelSchema).safeParse(flatPayload);
-    if (flat.success) {
-      const entries = flat.data as unknown as Record<string, { limit?: { context?: number } }>;
-      for (const [key, model] of Object.entries(entries)) {
-        const context = model.limit?.context;
-        if (!context || context <= 0) {
-          continue;
-        }
-        contextSizes[key] = Math.max(contextSizes[key] ?? 0, context);
-        const separator = key.indexOf("/");
-        if (separator > 0) {
-          const bareId = key.slice(separator + 1);
-          contextSizes[bareId] = Math.max(contextSizes[bareId] ?? 0, context);
-        }
-      }
-    }
-  }
+  const apiPayload = await fetch(API_URL, {
+    headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+  })
+    .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`api.json ${response.status}`))))
+    .catch(() => null);
 
   // —— 默认倍率：来自 api.json 的 cost，以基准模型的峰时输出成本归一化 ——
   const rates: ModelRateMap = {};
@@ -146,7 +108,7 @@ async function fetchMetadata(): Promise<MetadataCache> {
     if (api.success) {
       const providers = api.data as Record<
         string,
-        { models?: Record<string, { cost?: { input?: number; output?: number } } | undefined> | undefined }
+        { models?: Record<string, { cost?: { input?: number; output?: number; cache_read?: number } } | undefined> | undefined }
       >;
 
       // 两遍扫描：先收集所有有效 cost 条目，再解析基准与裸 ID 别名。
@@ -155,6 +117,8 @@ async function fetchMetadata(): Promise<MetadataCache> {
         modelId: string;
         input: number;
         output: number;
+        /** models.dev 缺 cache_read 时按 1x 归一化（与输入/输出缺数据同规则）。 */
+        cacheRead: number | null;
         canonical: boolean;
       }
       const entries: CostEntry[] = [];
@@ -169,12 +133,13 @@ async function fetchMetadata(): Promise<MetadataCache> {
             modelId,
             input: cost.input,
             output: cost.output,
-            canonical: CANONICAL_PROVIDERS.has(providerName),
+            cacheRead: typeof cost?.cache_read === "number" && cost.cache_read > 0 ? cost.cache_read : null,
+            canonical: CANONICAL_PROVIDERS[providerName] === true,
           });
         }
       }
 
-      const pickCost = (modelId: string, preferredProvider?: string): ModelRates | null => {
+      const pickCost = (modelId: string, preferredProvider?: string): { input: number; output: number } | null => {
         if (preferredProvider) {
           const direct = entries.find((entry) => entry.modelId === modelId && entry.provider === preferredProvider);
           if (direct) {
@@ -192,7 +157,7 @@ async function fetchMetadata(): Promise<MetadataCache> {
 
       // 基准候选链：数据源是活数据，条目会漂移，逐个回退直至命中。
       // 官方 deepseek-v4-flash 与 v4.1-flash 同价，回退不改变基准值。
-      let baseline: ModelRates | null = null;
+      let baseline: { input: number; output: number } | null = null;
       for (const candidate of [
         BASELINE_MODEL,
         `${BASELINE_PROVIDER}/${BASELINE_MODEL}`,
@@ -208,10 +173,15 @@ async function fetchMetadata(): Promise<MetadataCache> {
         for (const entry of entries) {
           // 输入、输出倍率统一以基准峰时输出成本为分母：deepseek-v4.1-flash
           // 输出倍率恰为 1.0，其输入倍率（及一切其他倍率）按该费率折算。
+          // 缓存读取倍率同分母折算；models.dev 缺 cache_read 时按输入价计
+          // （大多数不收缓存折扣的供应商就是这样）。
           const base = baseline[BASELINE_RATE];
+          const cacheRead = entry.cacheRead ?? entry.input;
           const rate: ModelRates = {
             input: round4(entry.input / base),
             output: round4(entry.output / base),
+            // 缓存读取价理论上永不高于输入价；脏报价夹到输入价，避免计费异常。
+            cacheRead: round4(Math.min(cacheRead, entry.input) / base),
           };
           rates[`${entry.provider}/${entry.modelId}`] = rate;
           const existing = rates[entry.modelId];
@@ -226,7 +196,7 @@ async function fetchMetadata(): Promise<MetadataCache> {
     }
   }
 
-  return { fetchedAt: Date.now(), contextSizes, rates };
+  return { fetchedAt: Date.now(), rates };
 }
 
 export async function getModelDefaults(forceRefresh = false): Promise<MetadataCache> {
@@ -241,8 +211,8 @@ export async function getModelDefaults(forceRefresh = false): Promise<MetadataCa
   inflight = fetchMetadata()
     .then((data) => {
       // models.dev 完全不可达时不缓存空结果，避免一次瞬时故障把
-      // 24h 缓存投毒成全空（显示不限/0）；下次请求会重试。
-      if (Object.keys(data.contextSizes).length === 0 && Object.keys(data.rates).length === 0) {
+      // 24h 缓存投毒成全空（显示不计费 1x）；下次请求会重试。
+      if (Object.keys(data.rates).length === 0) {
         throw new Error("models.dev returned no metadata");
       }
       cache = data;
@@ -250,17 +220,12 @@ export async function getModelDefaults(forceRefresh = false): Promise<MetadataCa
     })
     .catch(() => ({
       fetchedAt: cache?.fetchedAt ?? 0,
-      contextSizes: cache?.contextSizes ?? ({} as ModelContextSizes),
       rates: cache?.rates ?? ({} as ModelRateMap),
     }))
     .finally(() => {
       inflight = null;
     });
   return inflight;
-}
-
-export async function getModelContextSizes(): Promise<ModelContextSizes> {
-  return (await getModelDefaults()).contextSizes;
 }
 
 export async function getModelRates(): Promise<ModelRateMap> {

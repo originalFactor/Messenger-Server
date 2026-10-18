@@ -10,7 +10,7 @@
 - Email/password accounts with JWT cookie sessions
 - MongoDB-backed versioned entity synchronization with per-user monotonic watermarks and soft-delete tombstones
 - Card-key (卡密) plan system: admin-defined plans, batch card issuance, user redemption with quota and validity extension
-- Per-model rate billing consumed by the built-in AI API
+- Per-model rate billing consumed by the built-in AI API, with per-model and per-provider overall multipliers plus an admin-selectable 1x base model
 - OpenAI-compatible AI API (`/v1/models`, `/v1/chat/completions`) relaying to admin-managed upstream model services with priority failover
 - Pluggable blob storage for avatars: Vercel Blob backend (existing deployments keep working) or self-hosted filesystem backend replacing the former local emulator
 - Authenticated public Agent Market with publish, update, import, and unpublish workflows
@@ -48,6 +48,7 @@ All documents use application-generated string IDs as MongoDB `_id` values. Time
 - `redemptions`: one document per successful redemption (user, card, plan snapshot, timestamp).
 - `ai_models`: the model catalog consumed by the AI API (`_id` = model ID, `rate` multiplier, `enabled`).
 - `upstreams`: admin-managed upstream OpenAI-compatible services (`baseUrl` including `/v1`, `apiKey`, served `models`, `priority`, `enabled`).
+- `model_rate_settings`: single-document `baseModelId` — the 1x base model; a read-time divisor, so all effective rates rescale when it changes without rewriting stored rates.
 - `usage_logs`: one document per AI API completion (tokens and quota `cost`, upstream, stream flag).
 - `system_bootstrap`: the `admin_bootstrap` marker that makes the first-admin grant race-safe.
 
@@ -126,6 +127,7 @@ All `/api/admin/*` routes require the session user to have `role: "admin"` in th
 - `GET|POST /api/admin/cards`, `PATCH|DELETE /api/admin/cards/{id}` — card listing, batch issuance (1–500 per call), disabling, and deletion
 - `GET|POST /api/admin/models`, `PUT|DELETE /api/admin/models/{id}` — model catalog with per-model billing rates
 - `GET|POST /api/admin/upstreams`, `PUT|DELETE /api/admin/upstreams/{id}`, `POST /api/admin/upstreams/{id}/probe` — upstream CRUD and model-list probing for one-click catalog import
+- `GET|PUT /api/admin/models/base` — read/switch the 1x base model; switching rescales all model rates to the new base without rewriting stored data
 
 ### AI API (OpenAI-compatible)
 

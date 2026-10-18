@@ -16,60 +16,56 @@
 
 /**
  * 模型广场：对每个可服务模型，逐上游解析生效倍率（与 /v1 代理的
- * resolveModelMeta 语义完全一致 —— override 开启用自定义值（缺失回退
- * models.dev），关闭用 models.dev，倍率无数据默认 1x），多上游倍率不一致时
- * 聚合为区间展示。
+ * resolveModelMeta 语义完全一致 —— tokenTypeRate × modelRate ×
+ * providerRate），多上游倍率不一致时聚合为区间展示。
  */
 
 import { getModelDefaults } from "@/lib/model-metadata";
-import { listEnabledUpstreams } from "@/lib/storage";
+import { type BaseModelContext, resolveModelRates } from "@/lib/model-rates";
+import { getModelRateSettings, listEnabledUpstreams } from "@/lib/storage";
 
 export interface PlazaModel {
   modelId: string;
-  /** 各上游生效上下文的最大值（0 = 不限）。 */
-  contextWindow: number;
   inputRateMin: number;
   inputRateMax: number;
   outputRateMin: number;
   outputRateMax: number;
+  cacheReadRateMin: number;
+  cacheReadRateMax: number;
   /** 提供该模型的启用上游数量。 */
   upstreamCount: number;
 }
 
 export async function getModelPlaza(): Promise<PlazaModel[]> {
-  const [upstreams, defaults] = await Promise.all([listEnabledUpstreams(), getModelDefaults()]);
-  const collected = new Map<string, { contexts: number[]; inputs: number[]; outputs: number[] }>();
+  const [upstreams, defaults, settings] = await Promise.all([
+    listEnabledUpstreams(),
+    getModelDefaults(),
+    getModelRateSettings(),
+  ]);
+  const baseId = settings.baseModelId;
+  const base: BaseModelContext | null =
+    baseId !== null && defaults.rates[baseId] !== undefined ? { modelId: baseId } : null;
+  const collected = new Map<string, { inputs: number[]; outputs: number[]; cacheReads: number[] }>();
   for (const upstream of upstreams) {
     for (const modelId of upstream.models) {
-      const devContext = defaults.contextSizes[modelId];
-      const devRate = defaults.rates[modelId];
-      const custom = upstream.modelMeta?.[modelId];
-      const resolved = custom?.override
-        ? {
-            contextWindow: custom.contextWindow ?? devContext ?? 0,
-            inputRate: custom.inputRate ?? devRate?.input ?? 1,
-            outputRate: custom.outputRate ?? devRate?.output ?? 1,
-          }
-        : {
-            contextWindow: devContext ?? 0,
-            inputRate: devRate?.input ?? 1,
-            outputRate: devRate?.output ?? 1,
-          };
-      const entry = collected.get(modelId) ?? { contexts: [], inputs: [], outputs: [] };
-      entry.contexts.push(resolved.contextWindow);
+      // 与 /v1 代理计费同一份解析：override 语义 + modelRate × providerRate。
+      const resolved = resolveModelRates(upstream, modelId, defaults.rates, base);
+      const entry = collected.get(modelId) ?? { inputs: [], outputs: [], cacheReads: [] };
       entry.inputs.push(resolved.inputRate);
       entry.outputs.push(resolved.outputRate);
+      entry.cacheReads.push(resolved.cacheReadRate);
       collected.set(modelId, entry);
     }
   }
   return [...collected.entries()]
     .map(([modelId, entry]) => ({
       modelId,
-      contextWindow: Math.max(...entry.contexts),
       inputRateMin: Math.min(...entry.inputs),
       inputRateMax: Math.max(...entry.inputs),
       outputRateMin: Math.min(...entry.outputs),
       outputRateMax: Math.max(...entry.outputs),
+      cacheReadRateMin: Math.min(...entry.cacheReads),
+      cacheReadRateMax: Math.max(...entry.cacheReads),
       upstreamCount: entry.inputs.length,
     }))
     .sort((a, b) => a.modelId.localeCompare(b.modelId));

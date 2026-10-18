@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Activity, ArrowDownToLine, Plus, RefreshCw, X } from "lucide-react";
+import { Activity, ArrowDownToLine, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,6 +58,7 @@ import {
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import type { UpstreamDoc, UpstreamModelMeta } from "@/lib/types";
+import { BaseModelPicker } from "@/components/admin/base-model-picker";
 
 type UpstreamApiFormatValue = "auto" | "chat" | "responses" | "messages" | "interactions";
 
@@ -68,6 +69,8 @@ interface UpstreamFormState {
   apiFormat: UpstreamApiFormatValue;
   priority: string;
   enabled: string;
+  /** 上游整体倍率（providerRate）草稿；空串 = 1。 */
+  multiplier: string;
 }
 
 const API_FORMAT_LABELS: Record<UpstreamApiFormatValue, string> = {
@@ -85,42 +88,17 @@ const emptyUpstreamForm: UpstreamFormState = {
   apiFormat: "auto",
   priority: "0",
   enabled: "1",
+  multiplier: "",
 };
 
 type DevMeta = Record<string, UpstreamModelMeta>;
 /** 草稿只记录用户动过的字段；未触碰字段缺省，由生效值解析兜底。 */
 interface MetaDraft {
-  context?: string;
   inputRate?: string;
+  cacheReadRate?: string;
   outputRate?: string;
-}
-
-/** 展示形式：取能整除的最大单位（1000000 → 1M、1050000 → 1050K、500 → 500）。 */
-function formatContext(tokens: number): string {
-  if (tokens >= 1_000_000 && tokens % 1_000_000 === 0) {
-    return `${tokens / 1_000_000}M`;
-  }
-  if (tokens >= 1_000 && tokens % 1_000 === 0) {
-    return `${tokens / 1_000}K`;
-  }
-  return String(tokens);
-}
-
-/** 上下文编辑：接受 272K / 1M / 200000（不区分大小写，最多两位小数），空串 = 0（不限）。 */
-function parseContextInput(input: string): number | "invalid" {
-  const trimmed = input.trim().toUpperCase();
-  if (!trimmed) {
-    return 0;
-  }
-  const match = /^([0-9]+(\.[0-9]{1,2})?)\s*(K|M)?$/.exec(trimmed);
-  if (!match) {
-    return "invalid";
-  }
-  const value = Number(match[1]);
-  if (!Number.isFinite(value) || value < 0) {
-    return "invalid";
-  }
-  return Math.round(value * (match[3] === "K" ? 1_000 : match[3] === "M" ? 1_000_000 : 1));
+  /** 模型整体倍率（modelRate）草稿；空串 = 1。 */
+  multiplier?: string;
 }
 
 /** 倍率编辑：非负数字，空串 = 0（不计费）。 */
@@ -133,6 +111,30 @@ function parseRateInput(input: string): number | "invalid" {
   return Number.isFinite(value) && value >= 0 ? value : "invalid";
 }
 
+/** 整体倍率编辑：非负数字，空串 = 1（不缩放）；0 = 免费。 */
+function parseMultiplierInput(input: string): number | "invalid" {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return 1;
+  }
+  const value = Number(trimmed);
+  return Number.isFinite(value) && value >= 0 ? value : "invalid";
+}
+
+/** 整体倍率展示值：缺省/非法 = 1。 */
+function multiplierDisplay(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? String(value) : "1";
+}
+
+/**
+ * 整体倍率解析（提交路径用，输入已在前面校验过）：空串/非法 = 1，
+ * 其余为非负数字。
+ */
+function parseMultiplier(input: string): number {
+  const parsed = parseMultiplierInput(input);
+  return parsed === "invalid" ? 1 : parsed;
+}
+
 export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -140,6 +142,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   const [form, setForm] = useState<UpstreamFormState>(emptyUpstreamForm);
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
+  /** 表中保留但停用的模型：不勾选、不保存进 models，仅在行内显示并可删除。 */
+  const [disabledModels, setDisabledModels] = useState<string[]>([]);
   const [manualModel, setManualModel] = useState("");
   const [fetchingModels, setFetchingModels] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -169,7 +173,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
           setDevMeta(payload.metadata);
         }
       } catch {
-        // 元数据仅用于展示/默认值，拉取失败静默降级（显示 0 = 不限制）。
+        // 元数据仅用于展示/默认值，拉取失败静默降级（倍率按 1x 展示）。
       }
     })();
     return () => {
@@ -182,6 +186,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setForm(emptyUpstreamForm);
     setSelectedModels([]);
     setDiscoveredModels([]);
+    setDisabledModels([]);
     setManualModel("");
     setEditingModelMeta({});
     setMetaDrafts({});
@@ -201,9 +206,11 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       apiFormat: (upstream.apiFormat ?? "auto") as UpstreamApiFormatValue,
       priority: String(upstream.priority),
       enabled: upstream.enabled ? "1" : "0",
+      multiplier: multiplierDisplay(upstream.multiplier),
     });
     setSelectedModels([...upstream.models].sort((a, b) => a.localeCompare(b)));
     setDiscoveredModels([...upstream.models].sort((a, b) => a.localeCompare(b)));
+    setDisabledModels([...(upstream.disabledModels ?? [])].sort((a, b) => a.localeCompare(b)));
     setManualModel("");
     setEditingModelMeta(upstream.modelMeta ?? {});
     setMetaDrafts({});
@@ -215,11 +222,67 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   }
 
   function toggleFormModel(modelId: string) {
+    if (disabledModels.includes(modelId)) {
+      // 停用的模型不在候选集内，勾选即重新启用。
+      setDisabledModels((disabled) => disabled.filter((value) => value !== modelId));
+      return;
+    }
     setSelectedModels((selected) =>
       selected.includes(modelId)
         ? selected.filter((value) => value !== modelId)
         : [...selected, modelId].sort((a, b) => a.localeCompare(b)),
     );
+  }
+
+  /** 停用模型：取消勾选并移出 models；仍留在表格中，可随时重新启用。 */
+  function disableFormModel(modelId: string) {
+    setSelectedModels((selected) => selected.filter((value) => value !== modelId));
+    setDisabledModels((disabled) =>
+      disabled.includes(modelId) ? disabled : [...disabled, modelId].sort((a, b) => a.localeCompare(b)),
+    );
+  }
+
+  /** 从表中彻底删除模型：同时移除 models、停用列表与已存元数据。 */
+  function deleteFormModel(modelId: string) {
+    if (!window.confirm(`确定从该上游删除模型「${modelId}」？`)) {
+      return;
+    }
+    setSelectedModels((selected) => selected.filter((value) => value !== modelId));
+    setDiscoveredModels((models) => models.filter((value) => value !== modelId));
+    setDisabledModels((disabled) => disabled.filter((value) => value !== modelId));
+    setEditingModelMeta((meta) => {
+      if (meta[modelId] === undefined) {
+        return meta;
+      }
+      const next = { ...meta };
+      delete next[modelId];
+      return next;
+    });
+    setOverrideDrafts((drafts) => {
+      if (drafts[modelId] === undefined) {
+        return drafts;
+      }
+      const next = { ...drafts };
+      delete next[modelId];
+      return next;
+    });
+    setMetaDrafts((drafts) => {
+      if (drafts[modelId] === undefined) {
+        return drafts;
+      }
+      const next = { ...drafts };
+      delete next[modelId];
+      return next;
+    });
+    setTestResults((results) => {
+      if (results[modelId] === undefined) {
+        return results;
+      }
+      const next = { ...results };
+      delete next[modelId];
+      return next;
+    });
+    setFormError(null);
   }
 
   function addManualModel() {
@@ -253,21 +316,11 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       });
       const payload = (await response.json().catch(() => null)) as {
         models?: string[];
-        contextSizes?: Record<string, number>;
         error?: string;
       } | null;
       if (!response.ok || !payload?.models) {
         setFormError(payload?.error ?? "拉取失败，请稍后重试。");
         return;
-      }
-      if (payload.contextSizes) {
-        setDevMeta((meta) => {
-          const next = { ...meta };
-          for (const [modelId, contextWindow] of Object.entries(payload.contextSizes ?? {})) {
-            next[modelId] = { ...next[modelId], contextWindow };
-          }
-          return next;
-        });
       }
       setDiscoveredModels((models) =>
         [...new Set([...models, ...payload.models ?? []])].sort((a, b) => a.localeCompare(b)),
@@ -329,32 +382,37 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     }
   }
 
+  /** 模型整体倍率（modelRate）：行草稿 > 已存自定义 > 1（不缩放）。 */
+  function rowMultiplier(modelId: string): string {
+    const draft = metaDrafts[modelId]?.multiplier;
+    if (draft !== undefined) {
+      return draft;
+    }
+    return multiplierDisplay(editingModelMeta[modelId]?.multiplier);
+  }
+
   /** 生效元数据（按模型）：覆盖开启时 草稿 > 自定义 > models.dev > 0（0 = 不计费）；
-   *  关闭时（默认使用 models.dev 数据）models.dev 缺失或为 0 时按 1x 展示。 */
-  function resolvedMeta(modelId: string): { contextWindow: number; inputRate: number; outputRate: number } {
+   *  关闭时（默认使用 models.dev 数据）models.dev 缺失或为 0 时按 1x 展示。
+   *  返回值为 tokenType 倍率（未含 modelRate / providerRate）。 */
+  function resolvedMeta(modelId: string): {
+    inputRate: number;
+    cacheReadRate: number;
+    outputRate: number;
+  } {
     const dev = devMeta[modelId];
     if (!rowOverride(modelId)) {
       const devRate = dev?.inputRate;
       const devOutRate = dev?.outputRate;
+      const devCacheRate = dev?.cacheReadRate;
       return {
-        contextWindow: dev?.contextWindow ?? 0,
         inputRate: devRate && devRate > 0 ? devRate : 1,
+        // 缓存读取缺失按输入价计（不收缓存折扣的供应商即如此）。
+        cacheReadRate: devCacheRate && devCacheRate > 0 ? devCacheRate : (devRate && devRate > 0 ? devRate : 1),
         outputRate: devOutRate && devOutRate > 0 ? devOutRate : 1,
       };
     }
     const stored = editingModelMeta[modelId];
     const draft = metaDrafts[modelId];
-    const pick = (
-      draftValue: string | undefined,
-      storedValue: number | null | undefined,
-      devValue: number | null | undefined,
-    ): number => {
-      if (draftValue !== undefined) {
-        const parsed = parseContextInput(draftValue);
-        return parsed === "invalid" ? (storedValue ?? devValue ?? 0) : parsed;
-      }
-      return storedValue ?? devValue ?? 0;
-    };
     const pickRate = (
       draftValue: string | undefined,
       storedValue: number | null | undefined,
@@ -367,9 +425,26 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       return storedValue ?? devValue ?? 0;
     };
     return {
-      contextWindow: pick(draft?.context, stored?.contextWindow, dev?.contextWindow),
       inputRate: pickRate(draft?.inputRate, stored?.inputRate, dev?.inputRate),
+      cacheReadRate: pickRate(draft?.cacheReadRate, stored?.cacheReadRate, dev?.cacheReadRate),
       outputRate: pickRate(draft?.outputRate, stored?.outputRate, dev?.outputRate),
+    };
+  }
+
+  /** 生效倍率（含 modelRate × providerRate），用于展示实际计费口径。 */
+  function effectiveMeta(modelId: string): {
+    inputRate: number;
+    cacheReadRate: number;
+    outputRate: number;
+  } {
+    const base = resolvedMeta(modelId);
+    const modelMultiplier = parseMultiplier(rowMultiplier(modelId));
+    const providerMultiplier = parseMultiplier(form.multiplier);
+    const scale = modelMultiplier * providerMultiplier;
+    return {
+      inputRate: base.inputRate * scale,
+      cacheReadRate: Math.min(base.cacheReadRate, base.inputRate) * scale,
+      outputRate: base.outputRate * scale,
     };
   }
 
@@ -377,34 +452,55 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     event.preventDefault();
     // 草稿格式校验：无效输入阻止提交。
     for (const [modelId, draft] of Object.entries(metaDrafts)) {
-      if (draft.context !== undefined && parseContextInput(draft.context) === "invalid") {
-        setFormError(`模型 ${modelId} 的上下文格式无效，请使用 272K / 1M 等形式。`);
-        return;
-      }
       const badRate =
         (draft.inputRate !== undefined && parseRateInput(draft.inputRate) === "invalid") ||
+        (draft.cacheReadRate !== undefined && parseRateInput(draft.cacheReadRate) === "invalid") ||
         (draft.outputRate !== undefined && parseRateInput(draft.outputRate) === "invalid");
       if (badRate) {
         setFormError(`模型 ${modelId} 的倍率必须是数字。`);
         return;
       }
+      if (draft.multiplier !== undefined && parseMultiplierInput(draft.multiplier) === "invalid") {
+        setFormError(`模型 ${modelId} 的整体倍率必须是非负数字。`);
+        return;
+      }
+    }
+    const providerMultiplier = parseMultiplierInput(form.multiplier);
+    if (providerMultiplier === "invalid") {
+      setFormError("上游整体倍率必须是非负数字。");
+      return;
     }
     const modelMeta: Record<string, UpstreamModelMeta> = {};
     for (const modelId of discoveredModels) {
-      if (overrideDrafts[modelId] === undefined && editingModelMeta[modelId] === undefined) {
+      const draft = metaDrafts[modelId];
+      const hasDraft = draft !== undefined && Object.keys(draft).length > 0;
+      if (overrideDrafts[modelId] === undefined && editingModelMeta[modelId] === undefined && !hasDraft) {
         continue;
       }
       if (!rowOverride(modelId)) {
-        modelMeta[modelId] = { override: false };
+        // 覆盖关闭：只保留整体倍率草稿（若有），并关闭覆盖开关。
+        const entry: UpstreamModelMeta = { override: false };
+        if (draft?.multiplier !== undefined) {
+          entry.multiplier = parseMultiplier(draft.multiplier);
+        } else if (editingModelMeta[modelId]?.multiplier !== undefined) {
+          entry.multiplier = editingModelMeta[modelId]?.multiplier;
+        }
+        modelMeta[modelId] = entry;
         continue;
       }
       const resolved = resolvedMeta(modelId);
-      modelMeta[modelId] = {
+      const entry: UpstreamModelMeta = {
         override: true,
-        contextWindow: resolved.contextWindow,
+        cacheReadRate: resolved.cacheReadRate,
         inputRate: resolved.inputRate,
         outputRate: resolved.outputRate,
       };
+      if (draft?.multiplier !== undefined) {
+        entry.multiplier = parseMultiplier(draft.multiplier);
+      } else if (editingModelMeta[modelId]?.multiplier !== undefined) {
+        entry.multiplier = editingModelMeta[modelId]?.multiplier;
+      }
+      modelMeta[modelId] = entry;
     }
     const payload: Record<string, unknown> = {
       name: form.name,
@@ -412,6 +508,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       apiKey: form.apiKey,
       apiFormat: form.apiFormat,
       models: selectedModels,
+      disabledModels,
+      multiplier: parseMultiplier(form.multiplier),
       priority: Number(form.priority) || 0,
       enabled: form.enabled === "1",
     };
@@ -464,19 +562,27 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       setError("该上游未配置模型。");
       return;
     }
-    const rateOf = (modelId: string): { inputRate: number; outputRate: number } => {
+    const rateOf = (modelId: string): { inputRate: number; cacheReadRate: number; outputRate: number } => {
       const dev = devMeta[modelId];
       const meta = upstream.modelMeta?.[modelId];
       if (meta?.override) {
-        return { inputRate: meta.inputRate ?? dev?.inputRate ?? 1, outputRate: meta.outputRate ?? dev?.outputRate ?? 1 };
+        return {
+          inputRate: meta.inputRate ?? dev?.inputRate ?? 1,
+          cacheReadRate: meta.cacheReadRate ?? dev?.cacheReadRate ?? dev?.inputRate ?? 1,
+          outputRate: meta.outputRate ?? dev?.outputRate ?? 1,
+        };
       }
-      return { inputRate: dev?.inputRate ?? 1, outputRate: dev?.outputRate ?? 1 };
+      return {
+        inputRate: dev?.inputRate ?? 1,
+        cacheReadRate: dev?.cacheReadRate ?? dev?.inputRate ?? 1,
+        outputRate: dev?.outputRate ?? 1,
+      };
     };
     const cheapest = [...upstream.models].sort((a, b) => {
       const rateA = rateOf(a);
       const rateB = rateOf(b);
-      const sumA = rateA.inputRate + rateA.outputRate;
-      const sumB = rateB.inputRate + rateB.outputRate;
+      const sumA = rateA.inputRate + rateA.cacheReadRate + rateA.outputRate;
+      const sumB = rateB.inputRate + rateB.cacheReadRate + rateB.outputRate;
       return sumA !== sumB ? sumA - sumB : a.localeCompare(b);
     })[0];
     setListTestingId(upstream._id);
@@ -554,9 +660,16 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     }
   }
 
-  const sortedDiscovered = [...discoveredModels].sort((a, b) => {
-    const selectedFirst = Number(selectedModels.includes(b)) - Number(selectedModels.includes(a));
-    return selectedFirst !== 0 ? selectedFirst : a.localeCompare(b);
+  /** 表格行 = 发现的模型 ∪ 停用的模型；未选中的行沉底，停用行比未勾选行更靠下。 */
+  const keptModelIds = new Set([...selectedModels, ...disabledModels]);
+  const tableModelIds = [...new Set([...discoveredModels, ...disabledModels])];
+  const sortedDiscovered = [...tableModelIds].sort((a, b) => {
+    const keptFirst = Number(keptModelIds.has(a)) - Number(keptModelIds.has(b));
+    if (keptFirst !== 0) {
+      return keptFirst;
+    }
+    const disabledLast = Number(disabledModels.includes(a)) - Number(disabledModels.includes(b));
+    return disabledLast !== 0 ? disabledLast : a.localeCompare(b);
   });
   const selectedDiscoveredCount = discoveredModels.filter((modelId) => selectedModels.includes(modelId)).length;
   const allDiscoveredSelected = discoveredModels.length > 0 && selectedDiscoveredCount === discoveredModels.length;
@@ -564,14 +677,17 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
 
   function toggleAllDiscovered() {
     setSelectedModels(
-      allDiscoveredSelected ? [] : [...discoveredModels].sort((a, b) => a.localeCompare(b)),
+      allDiscoveredSelected
+        ? []
+        : discoveredModels
+            .filter((modelId) => !disabledModels.includes(modelId))
+            .sort((a, b) => a.localeCompare(b)),
     );
   }
 
-  /** 只读展示（覆盖关闭或未编辑时）的上下文/倍率文本。 */
-  function contextDisplay(modelId: string): string {
-    const meta = resolvedMeta(modelId);
-    return meta.contextWindow > 0 ? formatContext(meta.contextWindow) : "不限";
+  /** 只读展示（覆盖关闭或未编辑时）的倍率文本。 */
+  function rateDisplay(modelId: string, field: "inputRate" | "cacheReadRate" | "outputRate"): string {
+    return String(resolvedMeta(modelId)[field]);
   }
 
   return (
@@ -582,6 +698,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
           新增上游
         </Button>
       </div>
+
+      <BaseModelPicker />
 
       <Dialog open={showForm} onOpenChange={setShowForm}>
         <DialogContent className="max-h-[calc(100vh-6rem)] overflow-y-auto sm:max-w-5xl">
@@ -667,11 +785,24 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="grid gap-2">
+                <Label htmlFor="upstream-multiplier">上游整体倍率</Label>
+                <Input
+                  id="upstream-multiplier"
+                  inputMode="decimal"
+                  className="font-mono text-xs tabular-nums"
+                  placeholder="1"
+                  value={form.multiplier}
+                  onChange={(event) => setForm({ ...form, multiplier: event.target.value })}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  providerRate：乘到该上游全部模型的生效倍率上；留空 = 1，0 = 不计费。
+                </p>
+              </div>
             </div>
 
             <div className="grid gap-2">
               <div className="flex flex-wrap items-center gap-2">
-                <Label>可服务模型（{selectedModels.length}）</Label>
                 <Button
                   type="button"
                   variant="outline"
@@ -700,28 +831,6 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                   </Button>
                 </div>
               </div>
-
-              {selectedModels.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  尚未选择模型：填写 Base URL 后从上游拉取勾选，或手动添加。
-                </p>
-              ) : (
-                <div className="flex flex-wrap gap-1.5">
-                  {selectedModels.map((modelId) => (
-                    <Badge key={modelId} variant="secondary" className="gap-1.5 py-1 font-mono text-xs">
-                      {modelId}
-                      <button
-                        type="button"
-                        aria-label={`移除 ${modelId}`}
-                        className="rounded-sm opacity-60 transition-opacity hover:opacity-100"
-                        onClick={() => toggleFormModel(modelId)}
-                      >
-                        <X className="size-3" />
-                      </button>
-                    </Badge>
-                  ))}
-                </div>
-              )}
             </div>
 
             <Separator />
@@ -729,9 +838,11 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
             <div className="grid gap-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-xs text-muted-foreground">
-                  每个模型的元数据默认取自 models.dev（上下文 0 = 不限制，倍率 0 = 不计费，
+                  每个模型的元数据默认取自 models.dev（倍率 0 = 不计费，
                   models.dev 无数据的模型倍率默认 1x）；
                   在表格中打开「覆盖」后可为此上游单独自定义。
+                  「停用」把模型从服务中摘除但仍保留在表里（可随时重新启用），
+                  「删除」则连同元数据一起移除。
                 </p>
                 <Button type="button" variant="outline" size="sm" onClick={updateMetaFromModelsDev}>
                   <ArrowDownToLine />
@@ -739,7 +850,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                 </Button>
               </div>
 
-              {discoveredModels.length > 0 ? (
+              {tableModelIds.length > 0 ? (
                 <div className="overflow-hidden rounded-lg border">
                   <Table>
                     <TableHeader>
@@ -755,23 +866,27 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                         </TableHead>
                         <TableHead>模型 ID</TableHead>
                         <TableHead className="w-16">覆盖</TableHead>
-                        <TableHead className="w-36">Context Window</TableHead>
                         <TableHead className="w-24">输入倍率</TableHead>
+                        <TableHead className="w-24">缓存读取倍率</TableHead>
                         <TableHead className="w-24">输出倍率</TableHead>
+                        <TableHead className="w-24">模型整体倍率</TableHead>
+                        <TableHead className="w-28">实际倍率（生效）</TableHead>
                         <TableHead className="w-32">测试</TableHead>
+                        <TableHead className="w-16">操作</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {sortedDiscovered.map((modelId) => {
                         const meta = resolvedMeta(modelId);
                         const editable = rowOverride(modelId);
+                        const rowDisabled = disabledModels.includes(modelId);
                         const rawDraft = metaDraftOf(modelId);
                         // 覆盖开启：未触碰字段显示当前生效值（自定义 > models.dev > 0），
                         // 用户动过的字段（含主动清空 = 0）显示草稿原值。
                         const draft: MetaDraft = editable
                           ? {
-                              context: rawDraft.context ?? (meta.contextWindow > 0 ? formatContext(meta.contextWindow) : ""),
                               inputRate: rawDraft.inputRate ?? String(meta.inputRate),
+                              cacheReadRate: rawDraft.cacheReadRate ?? String(meta.cacheReadRate),
                               outputRate: rawDraft.outputRate ?? String(meta.outputRate),
                             }
                           : rawDraft;
@@ -788,13 +903,17 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                           >
                             <TableCell onClick={(event) => event.stopPropagation()}>
                               <Checkbox
-                                checked={selectedModels.includes(modelId)}
+                                checked={selectedModels.includes(modelId) || rowDisabled}
                                 onCheckedChange={() => toggleFormModel(modelId)}
                               />
                             </TableCell>
                             <TableCell className="font-mono text-xs">
                               {modelId}
-                              {selectedModels.includes(modelId) ? (
+                              {rowDisabled ? (
+                                <Badge variant="secondary" className="ml-2 font-sans text-[10px]">
+                                  已停用
+                                </Badge>
+                              ) : selectedModels.includes(modelId) ? (
                                 <Badge variant="secondary" className="ml-2 font-sans text-[10px]">
                                   已选
                                 </Badge>
@@ -810,14 +929,14 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                             <TableCell onClick={(event) => event.stopPropagation()}>
                               {editable ? (
                                 <Input
-                                  placeholder="272K / 1M"
-                                  className="h-8 font-mono text-xs uppercase"
-                                  value={draft.context}
-                                  onChange={(event) => setDraft("context", event.target.value)}
+                                  inputMode="decimal"
+                                  className="h-8 font-mono text-xs tabular-nums"
+                                  value={draft.inputRate}
+                                  onChange={(event) => setDraft("inputRate", event.target.value)}
                                 />
                               ) : (
-                                <span className="font-mono text-xs text-muted-foreground">
-                                  {contextDisplay(modelId)}
+                                <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                                  {rateDisplay(modelId, "inputRate")}
                                 </span>
                               )}
                             </TableCell>
@@ -826,12 +945,12 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                 <Input
                                   inputMode="decimal"
                                   className="h-8 font-mono text-xs tabular-nums"
-                                  value={draft.inputRate}
-                                  onChange={(event) => setDraft("inputRate", event.target.value)}
+                                  value={draft.cacheReadRate}
+                                  onChange={(event) => setDraft("cacheReadRate", event.target.value)}
                                 />
                               ) : (
                                 <span className="font-mono text-xs text-muted-foreground tabular-nums">
-                                  {meta.inputRate}
+                                  {rateDisplay(modelId, "cacheReadRate")}
                                 </span>
                               )}
                             </TableCell>
@@ -845,9 +964,43 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                 />
                               ) : (
                                 <span className="font-mono text-xs text-muted-foreground tabular-nums">
-                                  {meta.outputRate}
+                                  {rateDisplay(modelId, "outputRate")}
                                 </span>
                               )}
+                            </TableCell>
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              {editable ? (
+                                <Input
+                                  inputMode="decimal"
+                                  className="h-8 font-mono text-xs tabular-nums"
+                                  value={rowMultiplier(modelId)}
+                                  onChange={(event) =>
+                                    setMetaDrafts((drafts) => ({
+                                      ...drafts,
+                                      [modelId]: { ...metaDraftOf(modelId), multiplier: event.target.value },
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                                  {rowMultiplier(modelId)}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              {(() => {
+                                const effective = effectiveMeta(modelId);
+                                return (
+                                  <span
+                                    className="font-mono text-xs tabular-nums"
+                                    title={`实际倍率 = tokenTypeRate × ${rowMultiplier(modelId)} × ${multiplierDisplay(
+                                      Number(form.multiplier) || 1,
+                                    )}`}
+                                  >
+                                    {effective.inputRate} / {effective.cacheReadRate} / {effective.outputRate}
+                                  </span>
+                                );
+                              })()}
                             </TableCell>
                             <TableCell onClick={(event) => event.stopPropagation()}>
                               <div className="flex flex-col items-start gap-0.5">
@@ -873,6 +1026,44 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                     {testResults[modelId].text}
                                   </span>
                                 ) : null}
+                              </div>
+                            </TableCell>
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              <div className="flex flex-col items-start gap-1">
+                                {rowDisabled ? (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 px-2.5 text-xs"
+                                    disabled={busy}
+                                    onClick={() => toggleFormModel(modelId)}
+                                  >
+                                    启用
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 px-2.5 text-xs"
+                                    disabled={busy || !selectedModels.includes(modelId)}
+                                    title={!selectedModels.includes(modelId) ? "仅可停用已启用的模型" : undefined}
+                                    onClick={() => disableFormModel(modelId)}
+                                  >
+                                    停用
+                                  </Button>
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="sm"
+                                  className="h-7 px-2.5 text-xs"
+                                  disabled={busy}
+                                  onClick={() => deleteFormModel(modelId)}
+                                >
+                                  删除
+                                </Button>
                               </div>
                             </TableCell>
                           </TableRow>
