@@ -13,3 +13,6 @@ tsconfig.tsbuildinfo
 # copyWebAppDistribution). Only public/app/.gitkeep is committed.
 public/app/*
 !public/app/.gitkeep
+
+# Local dev auth token scratch file
+.tmp-token.txt
