@@ -91,8 +91,8 @@ export function BaseModelPicker() {
       setView((current) => (current ? { ...current, baseModelId: payload.baseModelId } : current));
       toast.success(
         payload.baseModelId
-          ? `基准模型已切换为 ${payload.baseModelId}，全部模型倍率已按新基准重算`
-          : "已清除基准模型，倍率恢复 models.dev 归一化口径",
+          ? `基准模型已切换为 ${payload.baseModelId}，全部模型价格已按新基准重算`
+          : "已清除基准模型，价格恢复 models.dev 口径",
       );
       router.refresh();
     } catch {
@@ -110,8 +110,8 @@ export function BaseModelPicker() {
       <CardHeader>
         <CardTitle className="text-base">1x 基准模型</CardTitle>
         <CardDescription>
-          选定模型的生效倍率即 1x 基准。切换基准时，所有上游已保存的模型倍率
-          （含「覆盖」自定义值）会按当前倍率整体重算，模型/上游整体倍率不受影响。
+          选定一个模型作为基准（其价格记为 1.0）。切换基准时，全部已保存的模型价格
+          （含覆盖自定义值）会按新基准整体重算，模型和来源的整体倍率不受影响。
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-2">
@@ -124,7 +124,7 @@ export function BaseModelPicker() {
             <SelectValue placeholder={models.length === 0 ? "暂无可选模型" : "选择基准模型"} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={NO_BASE_MODEL}>不设基准（models.dev 归一化）</SelectItem>
+            <SelectItem value={NO_BASE_MODEL}>不设基准（按 models.dev 价格）</SelectItem>
             {models.map((modelId) => {
               const rate = view?.rates[modelId];
               return (
@@ -138,11 +138,11 @@ export function BaseModelPicker() {
         </Select>
         {current ? (
           <p className="text-xs text-muted-foreground">
-            当前基准：<span className="font-mono">{current}</span>，其生效倍率即 1x。
+            当前基准：<span className="font-mono">{current}</span>，其价格即 1.0。
           </p>
         ) : (
           <p className="text-xs text-muted-foreground">
-            未设基准：全部倍率按 models.dev 归一化口径（deepseek-v4.1-flash 峰时输出 = 1.0）。
+            未设基准：全部价格按 models.dev 口径（deepseek-v4.1-flash 输出 = 1.0）。
           </p>
         )}
         {error ? <p className="text-sm text-destructive">{error}</p> : null}

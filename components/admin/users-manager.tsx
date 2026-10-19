@@ -55,7 +55,7 @@ export function UsersManager({ users }: { users: AdminUserView[] }) {
       <CardHeader>
         <CardTitle className="text-base">用户列表（{users.length}）</CardTitle>
         <CardDescription>
-          用户可同时持有多个套餐条目，各自额度与有效期独立计算；列表显示未过期条目的汇总。
+          用户可同时持有多个套餐条目，各自额度与有效期独立计算；列表显示的是未过期条目的汇总。
           额度与角色调整在用户详情页内进行。
         </CardDescription>
       </CardHeader>

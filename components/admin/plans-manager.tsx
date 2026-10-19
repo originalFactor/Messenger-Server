@@ -213,7 +213,7 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
                   <Label htmlFor="plan-price">价格文案（选填）</Label>
                   <Input
                     id="plan-price"
-                    placeholder="¥9.9"
+                    placeholder="￥9.9"
                     value={form.price}
                     onChange={(event) => setForm({ ...form, price: event.target.value })}
                   />

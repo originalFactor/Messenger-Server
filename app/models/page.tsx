@@ -17,25 +17,35 @@
 import Link from "next/link";
 import { BackButton } from "@/components/back-button";
 import { ModelPlazaGrid } from "@/components/model-plaza-grid";
-import { getModelPlaza } from "@/lib/model-plaza";
+import { DEFAULT_BASELINE_MODEL } from "@/lib/model-metadata";
+import { getModelPlaza, type PlazaModel } from "@/lib/model-plaza";
+import { getModelRateSettings } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 export const metadata = {
   title: "模型广场 - Messenger Cloud",
 };
 
+interface PlazaPageData {
+  models: PlazaModel[];
+  baseModelId: string | null;
+  failed: boolean;
+}
+
 /** 数据装配放在组件外的普通函数里，避免在渲染期间直接调用 Date.now()。 */
-async function loadPlaza(): Promise<{ models: Awaited<ReturnType<typeof getModelPlaza>>; failed: boolean }> {
+async function loadPlaza(): Promise<PlazaPageData> {
   try {
-    return { models: await getModelPlaza(), failed: false };
+    const [models, settings] = await Promise.all([getModelPlaza(), getModelRateSettings()]);
+    return { models, baseModelId: settings.baseModelId, failed: false };
   } catch (error) {
     console.error("Unable to load the model plaza.", error);
-    return { models: [], failed: true };
+    return { models: [], baseModelId: null, failed: true };
   }
 }
 
 export default async function ModelPlazaPage() {
-  const { models, failed } = await loadPlaza();
+  const { models, baseModelId, failed } = await loadPlaza();
+  const baselineModel = baseModelId ?? DEFAULT_BASELINE_MODEL;
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -54,10 +64,9 @@ export default async function ModelPlazaPage() {
         <div className="mb-8">
           <h1 className="text-2xl font-semibold tracking-tight">模型广场</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            当前可用的全部模型及其计费倍率。基准为 deepseek-v4.1-flash 的峰时输出费率（定为 1.0），
-            其余模型的输入/输出/缓存读取倍率及 deepseek-v4.1-flash 自身的输入倍率均按该基准折算。
-            单次调用费用 = 输入 tokens × 输入倍率 + 输出 tokens × 输出倍率 + 命中缓存的 tokens × 缓存读取倍率
-            （向上取整，至少 1）；多个上游提供同一模型且倍率不同时显示区间，实际按为你服务的上游计费。
+            这里是当前可用的全部模型及其价格。以 <span className="font-medium text-foreground">{baselineModel}</span>{" "}
+            为基准（记为 1.0），其他模型的数字越大表示越贵；输入、输出和缓存读取分别计价。
+            同一模型若由多个来源提供且价格不同，显示为区间，按实际服务的来源结算。
           </p>
         </div>
 

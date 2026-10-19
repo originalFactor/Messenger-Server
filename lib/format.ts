@@ -25,6 +25,15 @@ export function formatTokens(tokens: number): string {
   return String(tokens);
 }
 
+/**
+ * 套餐价格展示：统一以全角 ￥（U+FFE5，与中文排版一致）前缀。历史价格
+ * 文案可能已自带 "¥"/"￥"（或只有数字），去掉已有货币符号后重加，
+ * 避免出现 "￥￥9.9"。
+ */
+export function formatPlanPrice(price: string): string {
+  return `￥${price.trim().replace(/^[¥￥$]+\s*/, "")}`;
+}
+
 const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
   month: "2-digit",

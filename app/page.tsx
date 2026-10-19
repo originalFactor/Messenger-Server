@@ -15,15 +15,20 @@
  */
 
 import Link from "next/link";
-import { ArrowRight, CloudCog, CreditCard, RefreshCw } from "lucide-react";
+import { AppWindow, ArrowRight, CloudCog, CreditCard, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUserSession } from "@/lib/auth";
-import { listPlans } from "@/lib/storage";
+import { formatPlanPrice } from "@/lib/format";
+import { DEFAULT_BASELINE_MODEL } from "@/lib/model-metadata";
+import { getModelRateSettings, listPlans } from "@/lib/storage";
 import type { PlanDoc } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+
+/** 编译期常量（next.config.ts 的 env）：只有构建时 public/app/ 存在才挂载 /app。 */
+const WEB_CLIENT_AVAILABLE = process.env.WEB_CLIENT_AVAILABLE === "1";
 
 function formatQuota(tokens: number): string {
   if (tokens >= 100_000_000) return `${(tokens / 100_000_000).toFixed(tokens % 100_000_000 === 0 ? 0 : 1)} 亿 tokens`;
@@ -35,33 +40,42 @@ const features = [
   {
     icon: RefreshCw,
     kicker: "SYNC",
-    title: "版本化增量同步",
+    title: "多端同步",
     description:
-      "会话、Agent 与服务商配置按版本水位增量同步，手机、平板、桌面与手表数据一致，换机不丢历史。",
+      "会话、智能体与 AI 服务商配置在多端间自动同步，手机、平板、桌面与手表数据一致，换机不丢历史。",
   },
   {
     icon: CloudCog,
     kicker: "AI API",
-    title: "内置云 AI 服务商",
+    title: "内置 AI 服务",
     description:
-      "登录即自动配置，对话直接可用。标准 OpenAI 兼容协议（/v1/models、/v1/chat/completions），额度按模型倍率计费。",
+      "登录后自动配好，打开 Messenger 即可对话。额度按所用模型计费，并同时兼容 OpenAI Chat、OpenAI Responses（Codex）、Anthropic Messages（Claude Code）与 Gemini Interactions 协议。",
   },
   {
     icon: CreditCard,
     kicker: "BILLING",
-    title: "卡密套餐体系",
-    description: "卡密兑换套餐额度，有效期自动顺延；控制台随时查看余额、用量明细与兑换记录。",
+    title: "卡密套餐",
+    description: "用卡密兑换套餐即可获得额度，有效期自动顺延；控制台随时查看余额、用量明细与兑换记录。",
   },
 ];
 
 export default async function HomePage() {
   const session = await requireUserSession();
   let plans: PlanDoc[] = [];
+  let baseModelId: string | null = null;
   try {
-    plans = await listPlans({ enabledOnly: true });
+    const [listedPlans, rateSettings] = await Promise.all([
+      listPlans({ enabledOnly: true }),
+      getModelRateSettings(),
+    ]);
+    plans = listedPlans;
+    baseModelId = rateSettings.baseModelId;
   } catch (error) {
     console.error("Unable to load public plans for the homepage.", error);
   }
+  // 套餐额度以管理员选定的 1x 基准模型的峰时输出为基准；未设基准时回退
+  // 到 models.dev 归一化口径的基准模型（见 lib/model-metadata.ts）。
+  const baselineModel = baseModelId ?? DEFAULT_BASELINE_MODEL;
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -121,8 +135,8 @@ export default async function HomePage() {
               </span>
             </h1>
             <p className="max-w-xl text-balance text-muted-foreground">
-              一个账号，多端一致。Messenger Cloud 为 Messenger 提供账号体系、增量云同步与
-              OpenAI 兼容的 AI API —— 使用卡密兑换套餐，无需自备 API Key。
+              一个账号，多端一致。Messenger Cloud 为 Messenger 提供账号体系、云同步与
+              内置 AI 服务 —— 用卡密兑换套餐即可获得额度，无需自备 API Key。
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3">
               <Button asChild>
@@ -131,6 +145,14 @@ export default async function HomePage() {
                   <ArrowRight />
                 </Link>
               </Button>
+              {WEB_CLIENT_AVAILABLE ? (
+                <Button asChild variant="outline">
+                  <Link href="/app">
+                    <AppWindow />
+                    打开网页版
+                  </Link>
+                </Button>
+              ) : null}
               <Button asChild variant="outline">
                 <Link href="https://github.com/ECSDevs/Messenger">下载 Messenger</Link>
               </Button>
@@ -163,24 +185,34 @@ export default async function HomePage() {
               <CardContent className="text-sm text-muted-foreground">暂无可售套餐，敬请期待。</CardContent>
             </Card>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {plans.map((plan) => (
-                <Card key={plan._id} className="transition-colors hover:border-muted-foreground/40">
-                  <CardHeader>
-                    <CardTitle className="text-sm font-medium text-muted-foreground">{plan.name}</CardTitle>
-                    <div className="text-3xl font-bold tracking-tighter">
-                      {plan.price || formatQuota(plan.quotaTokens)}
-                    </div>
-                    <CardDescription>
-                      {formatQuota(plan.quotaTokens)} · 有效期 {plan.validityDays} 天
-                    </CardDescription>
-                  </CardHeader>
-                  {plan.description ? (
-                    <CardContent className="text-sm text-muted-foreground">{plan.description}</CardContent>
-                  ) : null}
-                </Card>
-              ))}
-            </div>
+            <>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {plans.map((plan) => (
+                  <Card key={plan._id} className="transition-colors hover:border-muted-foreground/40">
+                    <CardHeader>
+                      <CardTitle className="text-sm font-medium text-muted-foreground">{plan.name}</CardTitle>
+                      <div className="text-3xl font-bold tracking-tighter">
+                        {plan.price ? formatPlanPrice(plan.price) : formatQuota(plan.quotaTokens)}
+                      </div>
+                      <CardDescription>
+                        {formatQuota(plan.quotaTokens)} · 有效期 {plan.validityDays} 天
+                      </CardDescription>
+                    </CardHeader>
+                    {plan.description ? (
+                      <CardContent className="text-sm text-muted-foreground">{plan.description}</CardContent>
+                    ) : null}
+                  </Card>
+                ))}
+              </div>
+              <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
+                套餐额度以 <span className="font-medium text-foreground">{baselineModel}</span> 的价格为基准折算；
+                各模型的具体价格请参考{" "}
+                <Link className="underline underline-offset-4 hover:text-foreground" href="/models">
+                  模型广场
+                </Link>{" "}
+                页，实际消耗按所选模型计算。
+              </p>
+            </>
           )}
         </section>
       </main>

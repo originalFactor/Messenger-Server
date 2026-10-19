@@ -29,14 +29,26 @@ import {
 import { Input } from "@/components/ui/input";
 import type { PlazaModel } from "@/lib/model-plaza";
 
-/** 倍率展示：四舍五入到 0.1（区间先取整再比较，避免 0.2 ~ 0.2 这类退化）；0 = 不计费。 */
+/**
+ * 倍率展示：严格保留 2 位有效数字（`Intl.NumberFormat` 的
+ * `minimumSignificantDigits`/`maximumSignificantDigits` 二者都设为 2，
+ * 自带尾零且不走科学计数法：1.234 → 1.2、0.567 → 0.57、12.34 → 12、
+ * 0.0123 → 0.012、1 → 1.0、0.3 → 0.30、100 → 100、99.99 → 100）。
+ * 区间先按 2 位有效数字四舍五入再比较，避免 0.25 ~ 0.24 这类被舍入成
+ * 不同精度后看起来像区间；0 = 不计费。
+ */
+const rateFormatter = new Intl.NumberFormat("en-US", {
+  minimumSignificantDigits: 2,
+  maximumSignificantDigits: 2,
+});
+
 function roundRate(rate: number): number {
-  return Math.round(rate * 10) / 10;
+  return Number(rate.toPrecision(2));
 }
 
 function formatRate(rate: number): string {
   const rounded = roundRate(rate);
-  return rounded <= 0 ? "免费" : rounded.toFixed(1);
+  return rounded <= 0 ? "免费" : rateFormatter.format(rounded);
 }
 
 function formatRateRange(min: number, max: number): string {

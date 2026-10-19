@@ -50,7 +50,7 @@ export function ApiKeyCard({ apiKey }: { apiKey: string }) {
   async function regenerate() {
     if (
       hasKey &&
-      !window.confirm("重置后旧 Key 将立即失效，Messenger 应用内置服务商也需要重新同步。确定重置？")
+      !window.confirm("重置后旧密钥将立即失效，已登录的 Messenger 也需要重新登录才能继续使用。确定重置？")
     ) {
       return;
     }
@@ -78,8 +78,10 @@ export function ApiKeyCard({ apiKey }: { apiKey: string }) {
       <CardHeader>
         <CardTitle className="text-base">AI API 密钥</CardTitle>
         <CardDescription>
-          Messenger 应用登录后会自动以此密钥配置内置的 Messenger Cloud AI 服务商；也可用于任意
-          OpenAI 兼容客户端，Base URL 填 <code className="font-mono text-xs">/v1</code>。
+          Messenger 应用登录后会自动配好内置 AI 服务，无需手动填写此密钥。也可接入其他客户端，
+          同一接口地址（本站 <code className="font-mono text-xs">/v1</code>）同时支持
+          OpenAI Chat Completions、OpenAI Responses（Codex）、Anthropic Messages（Claude Code）
+          与 Gemini Interactions 四种协议。
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">

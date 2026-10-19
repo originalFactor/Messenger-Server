@@ -135,9 +135,9 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Messenger Sync</CardTitle>
+          <CardTitle className="text-base">云同步</CardTitle>
           <CardDescription>
-            云同步的活跃数据（不含已删除的墓碑）
+            用户当前在云端的活跃数据（不含已删除项）
             {sync.lastSyncAt ? ` · 最近同步 ${formatDateTime(sync.lastSyncAt)}` : " · 尚无同步数据"}
           </CardDescription>
         </CardHeader>

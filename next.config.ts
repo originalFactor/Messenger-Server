@@ -14,10 +14,20 @@
  * limitations under the License.
  */
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // `/app` is only meaningful when the compiled web client was fetched into
+  // public/app/ during the build (`pnpm web:client`). The homepage links to it
+  // only when it exists, so the check runs where the bundle actually lives:
+  // here (dev, `next build`, and `next start` after the Docker COPY) rather
+  // than in the server component, whose public/ path is not traceable on Vercel.
+  env: {
+    WEB_CLIENT_AVAILABLE: existsSync(join(process.cwd(), "public", "app", "index.html")) ? "1" : "",
+  },
   async rewrites() {
     return [
       {

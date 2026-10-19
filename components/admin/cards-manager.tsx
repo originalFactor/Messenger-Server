@@ -179,7 +179,7 @@ export function CardsManager({ plans }: { plans: PlanDoc[] }) {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">批量开卡</CardTitle>
-          <CardDescription>卡密内嵌创建时刻的套餐快照，之后修改或删除套餐不影响已开出的卡。</CardDescription>
+          <CardDescription>每张卡密绑定开卡时的套餐内容，之后修改或删除套餐不影响已开出的卡。</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3">
           {plans.length === 0 ? (
