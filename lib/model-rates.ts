@@ -29,7 +29,9 @@
  * 口径、不改任何存量数据，因此随时可逆、不产生浮点漂移，模型间的相对
  * 价格关系恒定。未设基准时分母取 1（models.dev 归一化口径）。
  *
- * 缓存读取价高于输入价的报价视为脏数据，夹到输入价。
+ * 缓存读取倍率按配置原样生效，不做「不得高于输入价」的夹取 —— 个别
+ * 供应商的缓存读取报价确实高于输入价（也有把缓存写入价填进该字段的
+ * 情况），静默改写会让命中缓存反而按输入价计费。
  */
 
 import type { UpstreamModelMeta } from "@/lib/types";
@@ -49,10 +51,6 @@ export interface BaseModelContext {
 /** 倍率有效化：有限且 >= 0 才采纳，其余（含 undefined/null）按 1（不缩放）处理。 */
 export function normalizeMultiplier(value: number | null | undefined): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 1;
-}
-
-function clampCacheRead(cacheReadRate: number, inputRate: number): number {
-  return cacheReadRate > inputRate ? inputRate : cacheReadRate;
 }
 
 function rateOrOne(value: number | undefined): number {
@@ -82,13 +80,17 @@ export function currentStoredRates(
   if (stored?.override) {
     const inputRate = stored.inputRate ?? devInput;
     const outputRate = stored.outputRate ?? devOutput;
-    const rawCache = stored.cacheReadRate ?? devCache;
-    return { inputRate, outputRate, cacheReadRate: clampCacheRead(rawCache, inputRate) };
+    // 缓存价未自定义时按 models.dev 的折扣比例（cache ÷ input）折算到实际
+    // 输入价，而不是直接沿用 models.dev 的绝对倍率 —— 两套口径不同，直接
+    // 取用会得到数倍于输入价的缓存价（如 gemini-3.8-flash 的 0.9375 vs 0.0625）。
+    const cacheReadRate = stored.cacheReadRate
+      ?? round4(inputRate * (devRate && devRate.input > 0 ? devRate.cacheRead / devRate.input : 1));
+    return { inputRate, outputRate, cacheReadRate };
   }
   return {
     inputRate: devInput,
     outputRate: devOutput,
-    cacheReadRate: clampCacheRead(devCache, devInput),
+    cacheReadRate: devCache,
   };
 }
 

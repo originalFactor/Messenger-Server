@@ -15,10 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+
 import {
+  Activity,
   ArrowLeftRight,
   Boxes,
   CreditCard,
@@ -124,6 +125,14 @@ export function ConsoleShell({ email, role, children }: ConsoleShellProps) {
                     <Link href="/console/admin">
                       <Globe />
                       <span>全站概览</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={isActive("/console/admin/usage")}>
+                    <Link href="/console/admin/usage">
+                      <Activity />
+                      <span>调用记录</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

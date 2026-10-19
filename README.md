@@ -132,7 +132,7 @@ All `/api/admin/*` routes require the session user to have `role: "admin"` in th
 ### AI API (OpenAI-compatible)
 
 - `GET /v1/models` — enabled catalog models served by at least one enabled upstream
-- `POST /v1/chat/completions` — streaming and non-streaming relay; injects `stream_options.include_usage`, fails over across upstreams by priority, and deducts `ceil(totalTokens × rate)` from the user's quota after completion (402 when the quota is exhausted or expired)
+- `POST /v1/chat/completions` — streaming and non-streaming relay; injects `stream_options.include_usage`, fails over across upstreams by priority, and deducts `ceil((prompt − cached) × inputRate + cached × cacheReadRate + completion × outputRate)` from the user's quota after completion (402 when the quota is exhausted or expired)
 
 ### Entity Synchronization
 

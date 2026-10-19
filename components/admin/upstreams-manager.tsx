@@ -423,9 +423,17 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       }
       return storedValue ?? devValue ?? 0;
     };
+    const inputRate = pickRate(draft?.inputRate, stored?.inputRate, dev?.inputRate);
+    // 缓存价未自定义时沿用 models.dev 的折扣比例（cache ÷ input）而不是其
+    // 绝对倍率 —— 与 lib/model-rates.ts 的解析口径保持一致。
+    const devDiscount = dev?.inputRate && dev.inputRate > 0 && typeof dev.cacheReadRate === "number"
+      ? dev.cacheReadRate / dev.inputRate
+      : 1;
     return {
-      inputRate: pickRate(draft?.inputRate, stored?.inputRate, dev?.inputRate),
-      cacheReadRate: pickRate(draft?.cacheReadRate, stored?.cacheReadRate, dev?.cacheReadRate),
+      inputRate,
+      cacheReadRate: draft?.cacheReadRate !== undefined || stored?.cacheReadRate != null
+        ? pickRate(draft?.cacheReadRate, stored?.cacheReadRate, dev?.cacheReadRate)
+        : inputRate * devDiscount,
       outputRate: pickRate(draft?.outputRate, stored?.outputRate, dev?.outputRate),
     };
   }
@@ -442,7 +450,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     const scale = modelMultiplier * providerMultiplier;
     return {
       inputRate: base.inputRate * scale,
-      cacheReadRate: Math.min(base.cacheReadRate, base.inputRate) * scale,
+      cacheReadRate: base.cacheReadRate * scale,
       outputRate: base.outputRate * scale,
     };
   }
@@ -564,10 +572,14 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     const rateOf = (modelId: string): { inputRate: number; cacheReadRate: number; outputRate: number } => {
       const dev = devMeta[modelId];
       const meta = upstream.modelMeta?.[modelId];
+      const devDiscount = dev?.inputRate && dev.inputRate > 0 && typeof dev.cacheReadRate === "number"
+        ? dev.cacheReadRate / dev.inputRate
+        : 1;
       if (meta?.override) {
+        const inputRate = meta.inputRate ?? dev?.inputRate ?? 1;
         return {
-          inputRate: meta.inputRate ?? dev?.inputRate ?? 1,
-          cacheReadRate: meta.cacheReadRate ?? dev?.cacheReadRate ?? dev?.inputRate ?? 1,
+          inputRate,
+          cacheReadRate: meta.cacheReadRate ?? inputRate * devDiscount,
           outputRate: meta.outputRate ?? dev?.outputRate ?? 1,
         };
       }
@@ -705,11 +717,11 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
           <DialogHeader className="pr-8">
             <DialogTitle>{editingId ? "编辑上游" : "新增上游"}</DialogTitle>
             <DialogDescription>
-              Base URL 填含版本段的根地址，例如{" "}
+              填写模型服务的接口地址，例如{" "}
               <code className="font-mono text-xs">https://api.example.com/v1</code> 或{" "}
               <code className="font-mono text-xs">https://generativelanguage.googleapis.com/v1beta</code>
-              ；上游协议决定请求/响应的线格式（「跟随客户端」按调用方使用的 API 自动转换）；
-              优先级数字越小越优先，同模型多个上游时自动故障转移。
+              ；协议决定请求与响应的格式（「跟随客户端」按调用方使用的 API 自动转换）；
+              优先级数字越小越优先，同一模型有多个来源时会自动按优先级切换。
             </DialogDescription>
           </DialogHeader>
           <form id="upstream-form" className="grid gap-4" onSubmit={submit}>
@@ -795,7 +807,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                   onChange={(event) => setForm({ ...form, multiplier: event.target.value })}
                 />
                 <p className="text-[10px] text-muted-foreground">
-                  providerRate：乘到该上游全部模型的生效倍率上；留空 = 1，0 = 不计费。
+                  统一乘到该来源全部模型的生效价格上；留空 = 1，0 = 免费。
                 </p>
               </div>
             </div>
@@ -980,7 +992,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                 return (
                                   <span
                                     className="font-mono text-xs tabular-nums"
-                                    title={`实际倍率 = tokenTypeRate × ${rowMultiplier(modelId)} × ${multiplierDisplay(
+                                    title={`实际倍率 = 基础倍率 × ${rowMultiplier(modelId)} × ${multiplierDisplay(
                                       Number(form.multiplier) || 1,
                                     )}`}
                                   >

@@ -22,6 +22,7 @@ import { quotaStateFromEntitlements } from "@/lib/quota";
 import { getDb, getMongoClient } from "@/lib/mongo";
 import type {
   AdminRecentUser,
+  AdminUsageRow,
   AgentDoc,
   AgentUpsertInput,
   CardKeyDoc,
@@ -1765,7 +1766,13 @@ export async function listEnabledUpstreams(): Promise<UpstreamDoc[]> {
 
 export async function recordUsage(log: Omit<UsageLogDoc, "_id" | "createdAt">, createdAt?: number): Promise<void> {
   const db = await getDb();
-  await db.collection<UsageLogDoc>("usage_logs").insertOne({ ...log, _id: randomUUID(), createdAt: createdAt ?? Date.now() });
+  // inputExcludesCache 标记让老数据迁移不会二次扣减新写入的记录。
+  await db.collection<UsageLogDoc>("usage_logs").insertOne({
+    ...log,
+    inputExcludesCache: true,
+    _id: randomUUID(),
+    createdAt: createdAt ?? Date.now(),
+  });
 }
 
 export async function listUsageLogs(userId: string, limit = 10): Promise<UsageLogDoc[]> {
@@ -1777,13 +1784,142 @@ export async function listUsageLogs(userId: string, limit = 10): Promise<UsageLo
     .toArray();
 }
 
-export async function listRecentUsage(limit = 10): Promise<UsageLogDoc[]> {
+/** 调用记录页每页条数（明细表分页大小）。 */
+export const USAGE_PAGE_SIZE = 20;
+
+export interface UsageListOptions {
+  /** 时间范围下界（毫秒）；`createdAt >= sinceTs` 复用 `{ createdAt: -1, _id: -1 }` 前缀索引。 */
+  sinceTs?: number;
+  /**
+   * 时间范围上界（毫秒，开区间）：`createdAt < untilTs`。仅管理后台
+   * 「调用记录」页的自定义起止日期用到；缺省时取无上界（兼容历史调用方）。
+   * 与 `sinceTs` 复用同一前缀索引服务范围过滤。
+   */
+  untilTs?: number;
+  /** 从 1 开始的页码；`page=1` 取最新的一页。 */
+  page?: number;
+  /** 覆盖默认页大小；上限 200，下限 1。 */
+  limit?: number;
+}
+
+export interface UsageListPage {
+  logs: UsageLogDoc[];
+  /** 所选范围内符合过滤的调用总数（驱动分页器总页数）。 */
+  total: number;
+  /** 当前页码（从 1 开始）。 */
+  page: number;
+  /** 实际生效的页大小。 */
+  pageSize: number;
+}
+
+/**
+ * 全站近期调用记录（管理后台「调用记录」页数据源）。跨用户拉取全站
+ * 最新调用，用于解析「调用方账号」列。按 `(createdAt, _id)` 倒序做
+ * **偏移分页**：分页器需要总页数，故用 `countDocuments` 取总数、
+ * `skip/limit` 取当前页。复用 `usage_logs` 的 `{ createdAt: -1, _id: -1 }`
+ * 索引：前缀 `createdAt` 同时服务范围过滤、计数与倒序扫描，无需额外索引。
+ */
+export async function listSiteRecentUsage(options: UsageListOptions = {}): Promise<UsageListPage> {
   const db = await getDb();
-  return db.collection<UsageLogDoc>("usage_logs")
-    .find({})
-    .sort({ createdAt: -1, _id: -1 })
-    .limit(Math.min(Math.max(limit, 1), 100))
+  const pageSize = Math.min(Math.max(options.limit ?? USAGE_PAGE_SIZE, 1), 200);
+  const createdAt: Record<string, number> = {};
+  if (typeof options.sinceTs === "number") {
+    createdAt.$gte = options.sinceTs;
+  }
+  if (typeof options.untilTs === "number") {
+    createdAt.$lt = options.untilTs;
+  }
+  const filter: Filter<UsageLogDoc> = Object.keys(createdAt).length > 0 ? { createdAt } : {};
+  const requestedPage = Math.max(1, Math.floor(options.page ?? 1));
+
+  const [total, logs] = await Promise.all([
+    db.collection<UsageLogDoc>("usage_logs").countDocuments(filter),
+    db.collection<UsageLogDoc>("usage_logs")
+      .find(filter)
+      .sort({ createdAt: -1, _id: -1 })
+      .skip((requestedPage - 1) * pageSize)
+      .limit(pageSize)
+      .toArray(),
+  ]);
+
+  // 越界回退到最后一页（例如删数据后页码超出），保证分页器不指向空页。
+  const totalPages = total === 0 ? 1 : Math.ceil(total / pageSize);
+  const page = Math.min(requestedPage, totalPages);
+  return { logs, total, page, pageSize };
+}
+/**
+ * 当前用户分页调用记录（用户概览页「近期用量」数据源）。与
+ * `listSiteRecentUsage` 同样的偏移分页 + 范围过滤，额外限定 `userId`，
+ * 复用 `{ userId: 1, createdAt: -1, _id: -1 }` 索引同时服务 userId 等值、
+ * createdAt 范围过滤、计数与倒序扫描，无需额外索引。
+ */
+export async function listUserRecentUsage(
+  userId: string,
+  options: UsageListOptions = {},
+): Promise<UsageListPage> {
+  const db = await getDb();
+  const pageSize = Math.min(Math.max(options.limit ?? USAGE_PAGE_SIZE, 1), 200);
+  const createdAt: Record<string, number> = {};
+  if (typeof options.sinceTs === "number") {
+    createdAt.$gte = options.sinceTs;
+  }
+  if (typeof options.untilTs === "number") {
+    createdAt.$lt = options.untilTs;
+  }
+  const filter: Filter<UsageLogDoc> = { userId, ...(Object.keys(createdAt).length > 0 ? { createdAt } : {}) };
+  const requestedPage = Math.max(1, Math.floor(options.page ?? 1));
+
+  const [total, logs] = await Promise.all([
+    db.collection<UsageLogDoc>("usage_logs").countDocuments(filter),
+    db.collection<UsageLogDoc>("usage_logs")
+      .find(filter)
+      .sort({ createdAt: -1, _id: -1 })
+      .skip((requestedPage - 1) * pageSize)
+      .limit(pageSize)
+      .toArray(),
+  ]);
+
+  // 越界回退到最后一页（例如删数据后页码超出），保证分页器不指向空页。
+  const totalPages = total === 0 ? 1 : Math.ceil(total / pageSize);
+  const page = Math.min(requestedPage, totalPages);
+  return { logs, total, page, pageSize };
+}
+
+/**
+ * 批量按 `_id` 查询用户邮箱（调用方账号展示）。仅在展示层调用，
+ * 不读密钥/额度等敏感字段；缺失的 id 不出现在结果里，由调用方兜底「—」。
+ */
+export async function listUserEmailsByIds(userIds: string[]): Promise<Map<string, string>> {
+  if (userIds.length === 0) {
+    return new Map();
+  }
+  const db = await getDb();
+  const docs = await db.collection<UserDoc>("users")
+    .find({ _id: { $in: userIds } }, { projection: { _id: 1, email: 1 } })
     .toArray();
+  return new Map(docs.map((doc) => [doc._id, doc.email]));
+}
+
+/**
+ * 把调用日志展开为明细表展示行：批量解析调用方邮箱与上游名称。
+ * 邮箱缺失（用户被删）→ `null`；上游名称缺失（upstreamId 为空或上游被删）
+ * → `null`，由调用方兜底展示。两个解析各自单次查询，跨页可重复调用。
+ */
+export async function resolveUsageRows(logs: UsageLogDoc[]): Promise<AdminUsageRow[]> {
+  const userIds = [...new Set(logs.map((log) => log.userId))];
+  const upstreamIds = logs
+    .map((log) => log.upstreamId)
+    .filter((id): id is string => id !== null && id !== undefined);
+  const [emailMap, upstreams] = await Promise.all([
+    listUserEmailsByIds(userIds),
+    upstreamIds.length === 0 ? Promise.resolve([]) : listUpstreams(),
+  ]);
+  const nameMap = new Map(upstreams.map((upstream) => [upstream._id, upstream.name]));
+  return logs.map((log) => ({
+    ...log,
+    email: emailMap.get(log.userId) ?? null,
+    upstreamName: log.upstreamId ? (nameMap.get(log.upstreamId) ?? null) : null,
+  }));
 }
 
 export async function sumUsage(userId: string | null, sinceTs: number): Promise<UsageStats> {
@@ -1828,10 +1964,15 @@ export async function sumUsageByModelBuckets(
   userId: string | null,
   sinceTs: number,
   bucketMs: number,
+  untilTs?: number,
 ): Promise<UsageModelBucket[]> {
   const db = await getDb();
+  const createdAt: Record<string, number> = { $gte: sinceTs };
+  if (typeof untilTs === "number") {
+    createdAt.$lt = untilTs;
+  }
   const pipeline: Record<string, unknown>[] = [
-    { $match: { createdAt: { $gte: sinceTs }, ...(userId ? { userId } : {}) } },
+    { $match: { createdAt, ...(userId ? { userId } : {}) } },
     {
       $group: {
         _id: {
@@ -1851,6 +1992,59 @@ export async function sumUsageByModelBuckets(
   return (rows as unknown as { _id: { bucket: Date; modelId: string }; tokens: number }[]).map((row) => ({
     ts: row._id.bucket.getTime(),
     modelId: row._id.modelId,
+    tokens: row.tokens,
+  }));
+}
+
+/**
+ * 一条 per-upstream 用量曲线数据点：某时间桶内某上游的 tokens。
+ * `upstreamId` 为 `null` 表示调用时尚未落库上游（极少见，曲线单独成线）。
+ */
+export interface UsageUpstreamBucket {
+  /** 桶起始时间（毫秒）。 */
+  ts: number;
+  upstreamId: string | null;
+  tokens: number;
+}
+
+/**
+ * 按上游 + 时间桶分桶的用量聚合（per-upstream 曲线图数据源）。
+ * 桶内无调用的上游不出现在结果里，由调用方补齐空桶。复用
+ * `{userId, createdAt}` 前缀索引服务 `$match`；`upstreamId` 缺失的
+ * 老记录归到 `null` 分组单独成线。
+ */
+export async function sumUsageByUpstreamBuckets(
+  userId: string | null,
+  sinceTs: number,
+  bucketMs: number,
+  untilTs?: number,
+): Promise<UsageUpstreamBucket[]> {
+  const db = await getDb();
+  const createdAt: Record<string, number> = { $gte: sinceTs };
+  if (typeof untilTs === "number") {
+    createdAt.$lt = untilTs;
+  }
+  const pipeline: Record<string, unknown>[] = [
+    { $match: { createdAt, ...(userId ? { userId } : {}) } },
+    {
+      $group: {
+        _id: {
+          bucket: {
+            $toDate: {
+              $subtract: [{ $toLong: "$createdAt" }, { $mod: [{ $toLong: "$createdAt" }, bucketMs] }],
+            },
+          },
+          upstreamId: { $ifNull: ["$upstreamId", null] },
+        },
+        tokens: { $sum: "$totalTokens" },
+      },
+    },
+    { $sort: { "_id.bucket": 1 } },
+  ];
+  const rows = await db.collection<UsageLogDoc>("usage_logs").aggregate(pipeline).toArray();
+  return (rows as unknown as { _id: { bucket: Date; upstreamId: string | null }; tokens: number }[]).map((row) => ({
+    ts: row._id.bucket.getTime(),
+    upstreamId: row._id.upstreamId,
     tokens: row.tokens,
   }));
 }
@@ -1972,7 +2166,6 @@ export async function getSiteOverview(): Promise<SiteOverview> {
     totalUpstreams,
     enabledUpstreams,
     recentUsers,
-    recentUsage,
   ] = await Promise.all([
     users.estimatedDocumentCount(),
     users.countDocuments({ role: "admin" }),
@@ -1989,7 +2182,6 @@ export async function getSiteOverview(): Promise<SiteOverview> {
     db.collection<UpstreamDoc>("upstreams").countDocuments({ enabled: true }),
     users.find({}, { projection: { email: 1, role: 1, createdAt: 1 } })
       .sort({ createdAt: -1, _id: -1 }).limit(5).toArray(),
-    listRecentUsage(10),
   ]);
 
   const recent: AdminRecentUser[] = recentUsers.map((user) => ({
@@ -2006,6 +2198,5 @@ export async function getSiteOverview(): Promise<SiteOverview> {
     plans: { total: totalPlans, enabled: enabledPlans },
     upstreams: { total: totalUpstreams, enabled: enabledUpstreams },
     recentUsers: recent,
-    recentUsage,
   };
 }

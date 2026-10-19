@@ -13,10 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 import { redirect } from "next/navigation";
 import { ApiKeyCard } from "@/components/console/api-key-card";
-import { UsageModelChart } from "@/components/console/usage-model-chart";
+import { UsageTrendChart } from "@/components/console/usage-trend-chart";
+import { UsageTable } from "@/components/admin/usage-table";
+import { UsageRangePicker } from "@/components/admin/usage-range-picker";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -25,41 +26,160 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { requireUserSession } from "@/lib/auth";
-import { formatDateTime, formatTokens, formatTps } from "@/lib/format";
-import { getUserById, getUserQuotaState, getUserSyncSummary, listUsageLogs, sumUsage, sumUsageByModelBuckets } from "@/lib/storage";
+import { formatDateTime, formatTokens } from "@/lib/format";
+import {
+  getUserById,
+  getUserQuotaState,
+  getUserSyncSummary,
+  listUserRecentUsage,
+  resolveUsageRows,
+  sumUsage,
+  sumUsageByModelBuckets,
+} from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
-/** 数据装配放在组件外的普通函数里，避免在渲染期间直接调用 Date.now()。 */
-async function loadOverviewData(userId: string) {
-  const now = Date.now();
-  const [today, recentUsage, quota, sync] = await Promise.all([
-    sumUsage(userId, now - 24 * 60 * 60 * 1000),
-    listUsageLogs(userId, 10),
-    getUserQuotaState(userId),
-    getUserSyncSummary(userId),
-  ]);
-  // 曲线窗口自适应：近 24 小时（小时桶）无数据时回退近 30 天（天桶），
-  // 否则老用户的曲线图永远空白；usageWindowMs 决定 X 轴刻度格式。
-  let usageBuckets = await sumUsageByModelBuckets(userId, now - 24 * 60 * 60 * 1000, 60 * 60 * 1000);
-  let usageWindowMs = 24 * 60 * 60 * 1000;
-  if (usageBuckets.length === 0) {
-    usageBuckets = await sumUsageByModelBuckets(userId, now - 30 * 24 * 60 * 60 * 1000, 24 * 60 * 60 * 1000);
-    usageWindowMs = 30 * 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+/** 时间范围选项：value 进 searchParam，windowMs 决定 sinceTs/bucketMs/曲线窗口。 */
+const RANGE_OPTIONS = [
+  { value: "24h", label: "近 24 小时", windowMs: DAY_MS, bucketMs: HOUR_MS },
+  { value: "7d", label: "近 7 天", windowMs: 7 * DAY_MS, bucketMs: DAY_MS },
+  { value: "30d", label: "近 30 天", windowMs: 30 * DAY_MS, bucketMs: DAY_MS },
+] as const;
+
+type RangeValue = (typeof RANGE_OPTIONS)[number]["value"];
+
+/**
+ * 把 `YYYY-MM-DD` 解释为服务器本地时区的当天 00:00 毫秒。用 `new Date(s)`
+ * 会被当成 UTC 午夜导致跨时区偏移，所以显式取 y/m/d 构造本地 Date。
+ * 非法格式返回 `null`，由调用方回退到默认范围。与 admin usage 页共享同一逻辑。
+ */
+function parseLocalMidnight(value: string | undefined): number | null {
+  if (value === undefined || value === "" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return null;
   }
-  return { today, recentUsage, quota, sync, usageBuckets, usageWindowMs, now };
+  const [y, m, d] = value.split("-").map(Number);
+  const date = new Date(y, m - 1, d, 0, 0, 0, 0);
+  if (date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) {
+    return null;
+  }
+  return date.getTime();
 }
 
-export default async function ConsoleOverviewPage() {
+interface ResolvedRange {
+  sinceTs?: number;
+  untilTs?: number;
+  windowMs: number;
+  bucketMs: number;
+  now: number;
+  activeRange: RangeValue | "custom";
+  rangeForTable: string;
+  from?: string;
+  to?: string;
+  rangeLabel?: string;
+}
+
+/**
+ * 解析 URL 参数为统一查询范围。优先级：`from`/`to` 任一存在即视为自定义区间
+ * （缺失侧无界）；否则回落到 `range` 预设，`range` 非法再回落到默认 `24h`。
+ * 自定义区间内若 from > to（按日期），视为非法整体回退到 `24h`，避免空结果。
+ * 与 admin usage 页共享同一逻辑。
+ */
+function resolveRange(
+  range: string | undefined,
+  from: string | undefined,
+  to: string | undefined,
+): ResolvedRange {
+  const fromMs = parseLocalMidnight(from);
+  const toMs = parseLocalMidnight(to);
+
+  if (fromMs !== null || toMs !== null) {
+    if (fromMs !== null && toMs !== null && fromMs > toMs) {
+      const option = RANGE_OPTIONS[0];
+      const now = Date.now();
+      return {
+        sinceTs: now - option.windowMs,
+        windowMs: option.windowMs,
+        bucketMs: option.bucketMs,
+        now,
+        activeRange: option.value,
+        rangeForTable: option.value,
+        from,
+        to,
+      };
+    }
+    const untilTs = toMs === null ? undefined : toMs + DAY_MS;
+    const windowMs = fromMs !== null && untilTs !== undefined
+      ? Math.max(HOUR_MS, untilTs - fromMs)
+      : 30 * DAY_MS;
+    const bucketMs = windowMs > DAY_MS ? DAY_MS : HOUR_MS;
+    const rangeLabel = from ?? to
+      ? `${from ?? "—"} ~ ${to ?? "—"}`
+      : undefined;
+    return {
+      sinceTs: fromMs ?? undefined,
+      untilTs,
+      windowMs,
+      bucketMs,
+      now: untilTs ?? Date.now(),
+      activeRange: "custom",
+      rangeForTable: "custom",
+      from,
+      to,
+      rangeLabel,
+    };
+  }
+
+  const match = RANGE_OPTIONS.find((option) => option.value === range);
+  const option = match ?? RANGE_OPTIONS[0];
+  const now = Date.now();
+  return {
+    sinceTs: now - option.windowMs,
+    windowMs: option.windowMs,
+    bucketMs: option.bucketMs,
+    now,
+    activeRange: option.value,
+    rangeForTable: option.value,
+  };
+}
+
+/** 概览页 KPI 卡数据（始终取近 24h，与所选时间范围解耦）+ 所选范围内明细/曲线。 */
+async function loadOverviewData(
+  userId: string,
+  sinceTs: number | undefined,
+  untilTs: number | undefined,
+  bucketMs: number,
+  page: number,
+) {
+  const now = Date.now();
+  const [today, usagePage, quota, sync, modelBuckets] = await Promise.all([
+    sumUsage(userId, now - 24 * 60 * 60 * 1000),
+    listUserRecentUsage(userId, { sinceTs, untilTs, page }),
+    getUserQuotaState(userId),
+    getUserSyncSummary(userId),
+    sumUsageByModelBuckets(userId, sinceTs ?? -Infinity, bucketMs, untilTs),
+  ]);
+  const rows = await resolveUsageRows(usagePage.logs);
+  const modelTrend = modelBuckets.map((bucket) => ({ ts: bucket.ts, id: bucket.modelId, tokens: bucket.tokens }));
+  return {
+    today,
+    rows,
+    total: usagePage.total,
+    page: usagePage.page,
+    pageSize: usagePage.pageSize,
+    quota,
+    sync,
+    modelTrend,
+  };
+}
+export default async function ConsoleOverviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ range?: string; from?: string; to?: string; page?: string }>;
+}) {
   const session = await requireUserSession();
   if (!session) {
     redirect("/login");
@@ -69,7 +189,31 @@ export default async function ConsoleOverviewPage() {
     redirect("/login");
   }
 
-  const { today, recentUsage, quota, sync, usageBuckets, usageWindowMs, now } = await loadOverviewData(user.id);
+  const params = await searchParams;
+  const {
+    sinceTs,
+    untilTs,
+    windowMs,
+    bucketMs,
+    now,
+    activeRange,
+    rangeForTable,
+    from,
+    to,
+    rangeLabel,
+  } = resolveRange(params.range, params.from, params.to);
+  const pageParam = Number(params.page ?? "1");
+  const requestedPage = Number.isFinite(pageParam) && pageParam >= 1 ? Math.floor(pageParam) : 1;
+  const {
+    today,
+    rows,
+    total,
+    page,
+    pageSize,
+    quota,
+    sync,
+    modelTrend,
+  } = await loadOverviewData(user.id, sinceTs, untilTs, bucketMs, requestedPage);
 
   return (
     <div className="grid gap-6">
@@ -110,11 +254,11 @@ export default async function ConsoleOverviewPage() {
             <CardDescription className="font-mono text-xs uppercase tracking-wider">近 24 小时 tokens</CardDescription>
             <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(today.tokens)}</CardTitle>
           </CardHeader>
-          <CardContent className="text-xs text-muted-foreground">按模型倍率折算</CardContent>
+          <CardContent className="text-xs text-muted-foreground">已按所选模型价格折算</CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">Messenger Sync</CardDescription>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">云同步</CardDescription>
             <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(sync.conversations)}</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
@@ -126,50 +270,40 @@ export default async function ConsoleOverviewPage() {
 
       <ApiKeyCard apiKey={user.aiApiKey} />
 
-      <UsageModelChart buckets={usageBuckets} windowMs={usageWindowMs} now={now} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-xl font-semibold tracking-tight">调用记录</h2>
+        <UsageRangePicker
+          key={`${activeRange}:${from ?? ""}:${to ?? ""}`}
+          activeRange={activeRange}
+          from={from}
+          to={to}
+          basePath="/console"
+        />
+      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">近期用量</CardTitle>
-          <CardDescription>
-            在 Messenger 中使用 Messenger Cloud AI 服务商发起对话后，这里会展示明细。
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {recentUsage.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">暂无调用记录。</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>时间</TableHead>
-                  <TableHead>模型</TableHead>
-                  <TableHead>输入</TableHead>
-                  <TableHead>缓存</TableHead>
-                  <TableHead>输出</TableHead>
-                  <TableHead>输出 TPS</TableHead>
-                  <TableHead>消耗额度</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {recentUsage.map((log) => (
-                  <TableRow key={log._id}>
-                    <TableCell className="whitespace-nowrap">{formatDateTime(log.createdAt)}</TableCell>
-                    <TableCell className="font-mono text-xs">{log.modelId}</TableCell>
-                    <TableCell className="tabular-nums">{formatTokens(log.promptTokens)}</TableCell>
-                    <TableCell className="tabular-nums">{formatTokens(log.cachedTokens ?? 0)}</TableCell>
-                    <TableCell className="tabular-nums">{formatTokens(log.completionTokens)}</TableCell>
-                    <TableCell className="tabular-nums text-muted-foreground">
-                      {formatTps(log.completionTokens, log.durationMs)}
-                    </TableCell>
-                    <TableCell className="tabular-nums">{log.cost}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+      <UsageTrendChart
+        buckets={modelTrend}
+        windowMs={windowMs}
+        now={now}
+        sinceTs={sinceTs}
+        dimensionLabel="模型"
+        rangeLabel={rangeLabel}
+      />
+
+      <UsageTable
+        rows={rows}
+        total={total}
+        page={page}
+        pageSize={pageSize}
+        range={rangeForTable}
+        from={from}
+        to={to}
+        showCallerColumn={false}
+        showUpstreamColumn={false}
+        title="近期用量"
+        description="每页 {pageSize} 条，按调用时间倒序；共 {total} 条 / {totalPages} 页。TPS 由输出 tokens ÷ 耗时换算。"
+        basePath="/console"
+      />
     </div>
   );
 }

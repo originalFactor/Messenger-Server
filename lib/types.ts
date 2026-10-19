@@ -199,16 +199,28 @@ export interface UsageLogDoc {
   userId: string;
   modelId: string;
   upstreamId?: string | null;
+  /** 未命中缓存的输入 token 数（上游 prompt_tokens − cachedTokens）。 */
   promptTokens: number;
   completionTokens: number;
   /** 命中的缓存读取 token 数（0 = 无缓存命中）。 */
   cachedTokens: number;
+  /** 完整用量：未缓存输入 + 缓存读取 + 输出。 */
   totalTokens: number;
   /** 实际扣减的额度。 */
   cost: number;
   /** 请求耗时（毫秒）；老数据与缺失时为 null，输出 TPS 不可计算。 */
   durationMs: number | null;
+  /** 迁移标记：该记录的 promptTokens 已剔除缓存读取部分（老数据迁移后补写）。 */
+  inputExcludesCache?: boolean;
   createdAt: number;
+}
+
+/** 调用记录明细表展示行：`UsageLogDoc` 展开 + 调用方邮箱 + 上游名称（用于页面/API 共用）。 */
+export interface AdminUsageRow extends UsageLogDoc {
+  /** 调用方账号：用户邮箱；用户被删除时为 null（页面兜底「—」）。 */
+  email: string | null;
+  /** 上游名称；`upstreamId` 为空或上游被删时为 null（页面兜底 id 或「—」）。 */
+  upstreamName: string | null;
 }
 
 export interface UsageStats {
@@ -510,7 +522,6 @@ export interface SiteOverview {
     enabled: number;
   };
   recentUsers: AdminRecentUser[];
-  recentUsage: UsageLogDoc[];
 }
 
 export interface SessionClaims extends JWTPayload {

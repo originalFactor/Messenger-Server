@@ -36,6 +36,12 @@ const METADATA_TIMEOUT_MS = 10_000;
 const BASELINE_PROVIDER = "deepseek";
 const BASELINE_MODEL = "deepseek-v4.1-flash";
 
+/**
+ * models.dev 归一化口径的 1x 基准模型：未设管理员基准（或所选模型没有
+ * 倍率数据）时，全部倍率以此为分母。展示层也应回退到该模型名。
+ */
+export const DEFAULT_BASELINE_MODEL = BASELINE_MODEL;
+
 /** 基准取该模型峰时输出费率；三种倍率统一以其为分母（输入也基于输出价，见下方归一化）。 */
 const BASELINE_RATE = "output" as const;
 
@@ -180,8 +186,9 @@ async function fetchMetadata(): Promise<MetadataCache> {
           const rate: ModelRates = {
             input: round4(entry.input / base),
             output: round4(entry.output / base),
-            // 缓存读取价理论上永不高于输入价；脏报价夹到输入价，避免计费异常。
-            cacheRead: round4(Math.min(cacheRead, entry.input) / base),
+            // 缓存读取价按 models.dev 原值折算：少数供应商的缓存读取报价
+            // 高于输入价（或把缓存写入价填在该字段），夹取会静默改价。
+            cacheRead: round4(cacheRead / base),
           };
           rates[`${entry.provider}/${entry.modelId}`] = rate;
           const existing = rates[entry.modelId];

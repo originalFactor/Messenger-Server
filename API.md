@@ -418,7 +418,11 @@ interface SessionClaims {
 
 ### GET /api/admin/overview
 
-全站概览统计（用户、近 24h/7 天用量、卡密、套餐、上游、最新注册用户与全站近期调用）。
+全站概览统计（用户、近 24h/7 天用量、卡密、套餐、上游、最新注册用户）。
+
+### `/console/admin/usage` 页面（RSC，非 API）
+
+调用记录页直接在服务端组件内分页（无独立 API 路由）。查询参数 `range`（`24h|7d|30d`，反推 `sinceTs`）与 `page`（从 1 开始，每页 20 条）。明细按 `(createdAt, _id)` 倒序偏移分页（`countDocuments` 取总数、`skip/limit` 取当前页）；曲线聚合整个所选范围。明细行类型 `AdminUsageRow` 在 `UsageLogDoc` 上展开 `email`（调用方账号，用户被删为 `null`）与 `upstreamName`（上游被删为 `null`，曲线图例亦用名称而非 id）。
 
 ### GET|POST /api/admin/plans、PUT|DELETE /api/admin/plans/{id}
 
@@ -559,7 +563,9 @@ interface SessionClaims {
 
 转换覆盖：文本、图片（`data:` URI 与 URL）、函数调用/结果、推理文本、`usage`、`finish_reason`。按设计丢弃：音频/视频块、引用标注、加密思维链签名、平台专有工具（web search / maps / file search）。
 
-计费与用量记账对所有协议一致：可用模型 = 所有启用上游可服务模型的并集；额度在响应完成后按 `ceil((promptTokens − cachedTokens) × 输入倍率 + cachedTokens × 缓存读取倍率 + completionTokens × 输出倍率)` 扣减（失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`，此时无缓存命中）。元数据解析（按模型）：该模型的 `modelMeta.override` 开启时用其自定义值（缺失字段回退 models.dev），关闭时直接用 models.dev 元数据；倍率无数据时默认 1x（显式配置 0 = 不计费，三倍率为 0 时本条调用免费）。最终实际倍率 = `tokenTypeRate × modelRate × providerRate`：`modelRate` = `modelMeta[modelId].multiplier`（模型整体倍率），`providerRate` = `upstream.multiplier`（上游整体倍率），两者缺省 = 1、显式 0 = 不计费；设了 1x 基准模型（管理后台「1x 基准模型」）时再除以基准模型的 tokenType 倍率，使基准模型自身恒为 1x。缓存读取倍率默认来自 models.dev `api.json` 的 `cost.cache_read`（缺失按输入价折算），客户端自行推导上下文窗口，服务端不再下发。
+计费与用量记账对所有协议一致：可用模型 = 所有启用上游可服务模型的并集；额度在响应完成后按 `ceil((promptTokens − cachedTokens) × 输入倍率 + cachedTokens × 缓存读取倍率 + completionTokens × 输出倍率)` 扣减（失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`，此时无缓存命中）。`promptTokens` 为上游报告的提示总量（含缓存命中部分），`cachedTokens` 夹到 `[0, promptTokens]`。缓存读取倍率按配置原样生效，不做「不得高于输入价」的夹取。元数据解析（按模型）：该模型的 `modelMeta.override` 开启时用其自定义值（缺失字段回退 models.dev），关闭时直接用 models.dev 元数据；倍率无数据时默认 1x（显式配置 0 = 不计费，三倍率为 0 时本条调用免费）。最终实际倍率 = `tokenTypeRate × modelRate × providerRate`：`modelRate` = `modelMeta[modelId].multiplier`（模型整体倍率），`providerRate` = `upstream.multiplier`（上游整体倍率），两者缺省 = 1、显式 0 = 不计费；设了 1x 基准模型（管理后台「1x 基准模型」）时再除以基准模型的 tokenType 倍率，使基准模型自身恒为 1x。缓存读取倍率默认来自 models.dev `api.json` 的 `cost.cache_read`（缺失按输入价折算），客户端自行推导上下文窗口，服务端不再下发。
+
+`usage_logs.promptTokens` 只记未命中缓存的输入 token（上游 `prompt_tokens` − `cachedTokens`），缓存读取 token 单独记在 `cachedTokens`；`totalTokens` 仍为完整用量（未缓存输入 + 缓存读取 + 输出），用于汇总与趋势图。
 
 **模型广场**：公开页面 `GET /models`（无需登录，RSC 直读，`lib/model-plaza.ts`）按同一套解析语义展示全部可服务模型的输入/缓存读取/输出倍率；同一模型被多个上游提供且倍率不同时显示 `min ~ max` 区间（0 显示为「免费」），并列出提供该模型的上游数量。
 
@@ -1225,7 +1231,7 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 - `RedemptionDoc`: `{ _id, userId, cardKeyId, cardCode, planId, planName, quotaTokens, validityDays, createdAt }`
 - `UpstreamDoc`: `{ _id, name, baseUrl(含 /v1), apiKey, models: 可服务模型ID[], disabledModels: 保留但停用的模型ID[], modelMeta, multiplier(上游整体倍率), priority(小者先), enabled, createdAt, updatedAt }`
 - `model_rate_settings`：单文档（`_id = "default"`）`{ baseModelId: 1x 基准模型 ID | null, createdAt, updatedAt }` —— 基准是解析期分母，切换时不改写任何存量倍率。
-- `UsageLogDoc`: `{ _id, userId, modelId, upstreamId, promptTokens, completionTokens, cachedTokens, totalTokens, cost, durationMs(请求耗时毫秒；老数据为 null), createdAt }`
+- `UsageLogDoc`: `{ _id, userId, modelId, upstreamId, promptTokens(未命中缓存的输入 token), completionTokens, cachedTokens(缓存读取 token), totalTokens(未缓存输入 + 缓存读取 + 输出), cost, durationMs(请求耗时毫秒；老数据为 null), inputExcludesCache(新口径标记), createdAt }`
 
 ### system_bootstrap
 
@@ -1244,6 +1250,8 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 - `redemptions`: `{ userId: 1, createdAt: -1, _id: 1 }`
 - `usage_logs`: `{ userId: 1, createdAt: -1, _id: 1 }`、`{ createdAt: -1, _id: 1 }`
 - 额外的部分唯一索引保护「每用户一个活跃默认 Agent」不变式
+
+首次连接还会执行记账口径迁移：没有 `inputExcludesCache` 标记的老 `usage_logs` 把 `promptTokens` 改为「上游提示总量 − `cachedTokens`」并补写标记（可重入，不重复扣减）。
 
 ### 头像 Blob 路径
 

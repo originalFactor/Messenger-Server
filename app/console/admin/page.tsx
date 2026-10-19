@@ -106,7 +106,7 @@ export default async function AdminOverviewPage() {
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">Messenger Sync</CardDescription>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">云同步</CardDescription>
             <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(sync.conversations)}</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
@@ -117,75 +117,41 @@ export default async function AdminOverviewPage() {
         </Card>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">最新注册用户</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {overview.recentUsers.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">暂无用户。</p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>邮箱</TableHead>
-                    <TableHead>角色</TableHead>
-                    <TableHead className="text-right">注册时间</TableHead>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">最新注册用户</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {overview.recentUsers.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">暂无用户。</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>邮箱</TableHead>
+                  <TableHead>角色</TableHead>
+                  <TableHead className="text-right">注册时间</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {overview.recentUsers.map((user) => (
+                  <TableRow key={user.id}>
+                    <TableCell className="max-w-52 truncate">{user.email}</TableCell>
+                    <TableCell>
+                      <Badge variant={user.role === "admin" ? "default" : "secondary"}>
+                        {user.role === "admin" ? "管理员" : "用户"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-right text-muted-foreground">
+                      {formatDateTime(user.createdAt)}
+                    </TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {overview.recentUsers.map((user) => (
-                    <TableRow key={user.id}>
-                      <TableCell className="max-w-52 truncate">{user.email}</TableCell>
-                      <TableCell>
-                        <Badge variant={user.role === "admin" ? "default" : "secondary"}>
-                          {user.role === "admin" ? "管理员" : "用户"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-right text-muted-foreground">
-                        {formatDateTime(user.createdAt)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
         </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">全站近期调用</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {overview.recentUsage.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">暂无调用记录。</p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>时间</TableHead>
-                    <TableHead>模型</TableHead>
-                    <TableHead>tokens</TableHead>
-                    <TableHead className="text-right">额度</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {overview.recentUsage.map((log) => (
-                    <TableRow key={log._id}>
-                      <TableCell className="whitespace-nowrap">{formatDateTime(log.createdAt)}</TableCell>
-                      <TableCell className="font-mono text-xs">{log.modelId}</TableCell>
-                      <TableCell className="tabular-nums">{formatTokens(log.totalTokens)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{log.cost}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-      </div>
     </div>
   );
 }

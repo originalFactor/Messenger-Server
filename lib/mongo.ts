@@ -74,6 +74,7 @@ async function ensureIndexesFor(database: Db): Promise<void> {
     globalThis.messengerMongoIndexesPromise = indexes
       .then(() => ensureUserDocumentBackfill(database))
       .then(() => ensureQuotaEntitlementMigration(database))
+      .then(() => ensureUsageInputExcludesCacheMigration(database))
       .catch((error: unknown) => {
         globalThis.messengerMongoIndexesPromise = undefined;
         throw error;
@@ -195,6 +196,36 @@ async function ensureQuotaEntitlementMigration(database: Db): Promise<void> {
     }
   } catch (error) {
     console.error("Unable to run the quota entitlement migration.", error);
+  }
+}
+
+interface LegacyUsageLogDoc {
+  _id: string;
+  promptTokens: number;
+  cachedTokens?: number;
+}
+
+/**
+ * 记账口径迁移：老 `usage_logs` 的 `promptTokens` 是上游报告的提示总量
+ * （含缓存命中部分），而新口径只记未命中缓存的输入。这里把老记录改成
+ * 新口径（`promptTokens -= cachedTokens`）并打上 `inputExcludesCache`
+ * 标记，迁移可重入、不重复扣减；`totalTokens` 保持完整用量不变。
+ */
+async function ensureUsageInputExcludesCacheMigration(database: Db): Promise<void> {
+  try {
+    const logs = database.collection<LegacyUsageLogDoc>("usage_logs");
+    await logs.updateMany({ inputExcludesCache: { $exists: false } }, [
+      {
+        $set: {
+          promptTokens: {
+            $max: [0, { $subtract: ["$promptTokens", { $ifNull: ["$cachedTokens", 0] }] }],
+          },
+          inputExcludesCache: true,
+        },
+      },
+    ]);
+  } catch (error) {
+    console.error("Unable to run the usage input migration.", error);
   }
 }
 

@@ -77,8 +77,7 @@ interface SettleParams {
  * 默认 1x（显式配置 0 = 不计费）。最终实际倍率再乘以模型整体倍率
  * modelRate（modelMeta[model].multiplier）与上游整体倍率 providerRate
  * （upstream.multiplier）：实际倍率 = tokenTypeRate × modelRate × providerRate。
- * 设了 1x 基准模型时基准模型自身恒为 1x。缓存读取价高于输入价的报价
- * 视为脏数据，夹到输入价。
+ * 设了 1x 基准模型时基准模型自身恒为 1x。缓存读取倍率按配置原样生效。
  */
 function resolveModelMeta(upstream: UpstreamDoc, model: string, defaults: ModelDefaults, base: BaseModelContext | null) {
   return resolveModelRates(upstream, model, defaults.rates, base);
@@ -87,6 +86,10 @@ function resolveModelMeta(upstream: UpstreamDoc, model: string, defaults: ModelD
 /**
  * 请求完成后按 usage 扣减额度并记录用量。usage 缺失时按完成文本的
  * 字符长度估算 completion tokens。失败只记日志，不影响响应送达。
+ *
+ * 记账口径：`usage_logs.promptTokens` 只记未命中缓存的输入 token，
+ * 缓存读取 token 单独记在 `cachedTokens`；`totalTokens` 仍是完整用量
+ * （未缓存输入 + 缓存读取 + 输出），供趋势图与汇总统计使用。
  */
 async function settleUsage(
   params: SettleParams & {
@@ -103,8 +106,10 @@ async function settleUsage(
   const usage = params.usage;
   const completionTokens = usage?.completionTokens ?? Math.ceil(params.completionChars / 4);
   const promptTokens = usage?.promptTokens ?? params.promptTokens;
+  // 上游的 prompt tokens 含缓存命中部分；缓存量不会超过提示总量。
+  const cachedTokens = Math.min(usage?.cachedTokens ?? 0, promptTokens);
+  const uncachedTokens = promptTokens - cachedTokens;
   const totalTokens = usage?.totalTokens ?? promptTokens + completionTokens;
-  const cachedTokens = usage?.cachedTokens ?? 0;
   const cost = computeCost(
     promptTokens,
     completionTokens,
@@ -119,7 +124,7 @@ async function settleUsage(
       userId: params.userId,
       modelId: params.modelId,
       upstreamId: params.upstreamId,
-      promptTokens,
+      promptTokens: uncachedTokens,
       completionTokens,
       cachedTokens,
       totalTokens,
