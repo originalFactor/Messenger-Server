@@ -15,6 +15,7 @@
  */
 
 import { z } from "zod";
+import { getDb } from "@/lib/mongo";
 
 /**
  * models.dev 公开模型元数据：
@@ -25,7 +26,8 @@ import { z } from "zod";
  *   都以该基准输出成本为分母折算，单位在比值中抵消。
  * 上下文窗口不再由服务端下发（客户端自行从 models.dev models.json 推导）。
  * 条目缺 cache_read 时按该模型的输入价折算（不收缓存折扣的供应商即如此）。
- * 载荷在实例内存中缓存 24 小时；拉取失败回退上一次缓存，永不抛出。
+ * 载荷在实例内存中缓存 24 小时，并每次成功拉取后落库一份快照；拉取失败
+ * 时回退内存缓存，冷实例再回退数据库快照，永不抛出。
  */
 
 const API_URL = "https://models.dev/api.json";
@@ -206,6 +208,47 @@ async function fetchMetadata(): Promise<MetadataCache> {
   return { fetchedAt: Date.now(), rates };
 }
 
+/**
+ * models.dev 元数据的进程内缓存 + MongoDB 持久化兜底。
+ *
+ * 只放进程内缓存在 serverless 上不够：冷启动遇到 models.dev 不可达时
+ * `rates` 为空，所有模型都会按 1x 计费（模型间相对价格全丢）。因此每次
+ * 成功拉取都写一份快照，冷启动/故障时用最后一份好数据。
+ */
+interface MetadataSnapshotDoc {
+  _id: string;
+  fetchedAt: number;
+  rates: ModelRateMap;
+}
+
+const SNAPSHOT_ID = "models_dev";
+
+async function readSnapshot(): Promise<MetadataCache | null> {
+  try {
+    const db = await getDb();
+    const doc = await db.collection<MetadataSnapshotDoc>("model_metadata").findOne({ _id: SNAPSHOT_ID });
+    if (!doc || !doc.rates || Object.keys(doc.rates).length === 0) {
+      return null;
+    }
+    return { fetchedAt: doc.fetchedAt, rates: doc.rates };
+  } catch {
+    return null;
+  }
+}
+
+async function writeSnapshot(cache: MetadataCache): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.collection<MetadataSnapshotDoc>("model_metadata").updateOne(
+      { _id: SNAPSHOT_ID },
+      { $set: { fetchedAt: cache.fetchedAt, rates: cache.rates } },
+      { upsert: true },
+    );
+  } catch {
+    // 快照只是兜底：写失败不影响本次请求。
+  }
+}
+
 export async function getModelDefaults(forceRefresh = false): Promise<MetadataCache> {
   if (!forceRefresh) {
     if (cache && Date.now() - cache.fetchedAt < METADATA_TTL_MS) {
@@ -216,25 +259,31 @@ export async function getModelDefaults(forceRefresh = false): Promise<MetadataCa
     }
   }
   inflight = fetchMetadata()
-    .then((data) => {
+    .then(async (data) => {
       // models.dev 完全不可达时不缓存空结果，避免一次瞬时故障把
       // 24h 缓存投毒成全空（显示不计费 1x）；下次请求会重试。
       if (Object.keys(data.rates).length === 0) {
         throw new Error("models.dev returned no metadata");
       }
       cache = data;
+      await writeSnapshot(data);
       return data;
     })
-    .catch(() => ({
-      fetchedAt: cache?.fetchedAt ?? 0,
-      rates: cache?.rates ?? ({} as ModelRateMap),
-    }))
+    .catch(async () => {
+      if (cache) {
+        return cache;
+      }
+      // 冷实例 + 拉取失败：退回数据库里的最后一份好数据，而不是让
+      // 所有模型都按 1x 计费。
+      const snapshot = await readSnapshot();
+      if (snapshot) {
+        cache = snapshot;
+        return snapshot;
+      }
+      return { fetchedAt: 0, rates: {} as ModelRateMap };
+    })
     .finally(() => {
       inflight = null;
     });
   return inflight;
-}
-
-export async function getModelRates(): Promise<ModelRateMap> {
-  return (await getModelDefaults()).rates;
 }
