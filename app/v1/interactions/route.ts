@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-import { relayCompletion } from "@/lib/ai-relay";
+import { RELAY_MAX_DURATION_SECONDS, relayCompletion } from "@/lib/ai-relay";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = RELAY_MAX_DURATION_SECONDS;
 
 /** Gemini Interactions 兼容入口。 */
 export async function POST(request: Request) {

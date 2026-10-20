@@ -135,7 +135,12 @@ export interface IrResponse {
   text: string;
   reasoning?: string;
   toolCalls: IrToolCall[];
-  usage: IrUsage;
+  /**
+   * 上游报告的用量；上游未提供 usage 块时为 undefined。必须区分「没有」
+   * 与「全 0」：计费在缺失时要按文本长度估算，全 0 会被当成真实用量
+   * 从而只扣 1 token。
+   */
+  usage?: IrUsage;
   finishReason: string;
 }
 
@@ -1173,12 +1178,14 @@ function decodeChatResponse(record: Json): IrResponse {
     text,
     reasoning: reasoning || undefined,
     toolCalls,
-    usage: usageOf(
-      num(usage?.prompt_tokens) ?? 0,
-      num(usage?.completion_tokens) ?? 0,
-      num(usage?.total_tokens),
-      num(details?.cached_tokens),
-    ),
+    usage: usage
+      ? usageOf(
+          num(usage.prompt_tokens) ?? 0,
+          num(usage.completion_tokens) ?? 0,
+          num(usage.total_tokens),
+          num(details?.cached_tokens),
+        )
+      : undefined,
     finishReason: normalizeFinishReason(str(choice.finish_reason)),
   };
 }
@@ -1219,12 +1226,14 @@ function decodeResponsesResponse(record: Json): IrResponse {
     text,
     reasoning: reasoning || undefined,
     toolCalls,
-    usage: usageOf(
-      num(usage?.input_tokens) ?? 0,
-      num(usage?.output_tokens) ?? 0,
-      num(usage?.total_tokens),
-      num(details?.cached_tokens),
-    ),
+    usage: usage
+      ? usageOf(
+          num(usage.input_tokens) ?? 0,
+          num(usage.output_tokens) ?? 0,
+          num(usage.total_tokens),
+          num(details?.cached_tokens),
+        )
+      : undefined,
     finishReason:
       toolCalls.length > 0
         ? "tool_calls"
@@ -1261,12 +1270,14 @@ function decodeMessagesResponse(record: Json): IrResponse {
     text,
     reasoning: reasoning || undefined,
     toolCalls,
-    usage: usageOf(
-      num(usage?.input_tokens) ?? 0,
-      num(usage?.output_tokens) ?? 0,
-      undefined,
-      num(usage?.cache_read_input_tokens),
-    ),
+    usage: usage
+      ? usageOf(
+          num(usage.input_tokens) ?? 0,
+          num(usage.output_tokens) ?? 0,
+          undefined,
+          num(usage.cache_read_input_tokens),
+        )
+      : undefined,
     finishReason: normalizeFinishReason(str(record.stop_reason)),
   };
 }
@@ -1308,12 +1319,14 @@ function decodeInteractionsResponse(record: Json): IrResponse {
     text,
     reasoning: reasoning || undefined,
     toolCalls,
-    usage: usageOf(
-      num(usage?.total_input_tokens) ?? 0,
-      num(usage?.total_output_tokens) ?? 0,
-      num(usage?.total_tokens),
-      num(usage?.total_cached_tokens),
-    ),
+    usage: usage
+      ? usageOf(
+          num(usage.total_input_tokens) ?? 0,
+          num(usage.total_output_tokens) ?? 0,
+          num(usage.total_tokens),
+          num(usage.total_cached_tokens),
+        )
+      : undefined,
     finishReason: toolCalls.length > 0 ? "tool_calls" : "stop",
   };
 }
@@ -1840,6 +1853,7 @@ function encodeChatResponse(response: IrResponse, model: string): Json {
       function: { name: call.name, arguments: call.arguments },
     }));
   }
+  const usage = response.usage ?? usageOf(0, 0);
   return {
     id: newId("chatcmpl"),
     object: "chat.completion",
@@ -1847,11 +1861,11 @@ function encodeChatResponse(response: IrResponse, model: string): Json {
     model,
     choices: [{ index: 0, message, finish_reason: response.finishReason }],
     usage: {
-      prompt_tokens: response.usage.promptTokens,
-      completion_tokens: response.usage.completionTokens,
-      total_tokens: response.usage.totalTokens,
-      ...(response.usage.cachedTokens !== undefined
-        ? { prompt_tokens_details: { cached_tokens: response.usage.cachedTokens } }
+      prompt_tokens: usage.promptTokens,
+      completion_tokens: usage.completionTokens,
+      total_tokens: usage.totalTokens,
+      ...(usage.cachedTokens !== undefined
+        ? { prompt_tokens_details: { cached_tokens: usage.cachedTokens } }
         : {}),
     },
   };
@@ -1885,6 +1899,7 @@ function encodeResponsesResponse(response: IrResponse, model: string): Json {
       status: "completed",
     });
   }
+  const usage = response.usage ?? usageOf(0, 0);
   return {
     id: newId("resp"),
     object: "response",
@@ -1894,11 +1909,11 @@ function encodeResponsesResponse(response: IrResponse, model: string): Json {
     output,
     output_text: response.text,
     usage: {
-      input_tokens: response.usage.promptTokens,
-      output_tokens: response.usage.completionTokens,
-      total_tokens: response.usage.totalTokens,
-      ...(response.usage.cachedTokens !== undefined
-        ? { input_tokens_details: { cached_tokens: response.usage.cachedTokens } }
+      input_tokens: usage.promptTokens,
+      output_tokens: usage.completionTokens,
+      total_tokens: usage.totalTokens,
+      ...(usage.cachedTokens !== undefined
+        ? { input_tokens_details: { cached_tokens: usage.cachedTokens } }
         : {}),
     },
   };
@@ -1916,6 +1931,7 @@ function encodeMessagesResponse(response: IrResponse, model: string): Json {
       input: parseJsonObject(call.arguments),
     });
   }
+  const usage = response.usage ?? usageOf(0, 0);
   return {
     id: newId("msg"),
     type: "message",
@@ -1925,10 +1941,10 @@ function encodeMessagesResponse(response: IrResponse, model: string): Json {
     stop_reason: response.finishReason,
     stop_sequence: null,
     usage: {
-      input_tokens: response.usage.promptTokens,
-      output_tokens: response.usage.completionTokens,
-      ...(response.usage.cachedTokens !== undefined
-        ? { cache_read_input_tokens: response.usage.cachedTokens }
+      input_tokens: usage.promptTokens,
+      output_tokens: usage.completionTokens,
+      ...(usage.cachedTokens !== undefined
+        ? { cache_read_input_tokens: usage.cachedTokens }
         : {}),
     },
   };
@@ -1950,6 +1966,7 @@ function encodeInteractionsResponse(response: IrResponse, model: string): Json {
       arguments: parseJsonObject(call.arguments),
     });
   }
+  const usage = response.usage ?? usageOf(0, 0);
   return {
     id: newId("int"),
     object: "interaction",
@@ -1957,11 +1974,11 @@ function encodeInteractionsResponse(response: IrResponse, model: string): Json {
     status: "completed",
     steps,
     usage: {
-      total_input_tokens: response.usage.promptTokens,
-      total_output_tokens: response.usage.completionTokens,
-      total_tokens: response.usage.totalTokens,
-      ...(response.usage.cachedTokens !== undefined
-        ? { total_cached_tokens: response.usage.cachedTokens }
+      total_input_tokens: usage.promptTokens,
+      total_output_tokens: usage.completionTokens,
+      total_tokens: usage.totalTokens,
+      ...(usage.cachedTokens !== undefined
+        ? { total_cached_tokens: usage.cachedTokens }
         : {}),
     },
   };
@@ -2058,6 +2075,9 @@ class ChatStreamEncoder implements StreamEncoder {
             prompt_tokens: this.usage.promptTokens,
             completion_tokens: this.usage.completionTokens,
             total_tokens: this.usage.totalTokens,
+            ...(this.usage.cachedTokens !== undefined
+              ? { prompt_tokens_details: { cached_tokens: this.usage.cachedTokens } }
+              : {}),
           },
         });
       }
@@ -2210,6 +2230,9 @@ class ResponsesStreamEncoder implements StreamEncoder {
             input_tokens: usage.promptTokens,
             output_tokens: usage.completionTokens,
             total_tokens: usage.totalTokens,
+            ...(usage.cachedTokens !== undefined
+              ? { input_tokens_details: { cached_tokens: usage.cachedTokens } }
+              : {}),
           },
         },
       });
@@ -2339,6 +2362,9 @@ class MessagesStreamEncoder implements StreamEncoder {
       this.usage.promptTokens = event.usage.promptTokens || this.usage.promptTokens;
       this.usage.completionTokens = event.usage.completionTokens || this.usage.completionTokens;
       this.usage.totalTokens = this.usage.promptTokens + this.usage.completionTokens;
+      if (event.usage.cachedTokens !== undefined) {
+        this.usage.cachedTokens = event.usage.cachedTokens;
+      }
       return "";
     }
     if (event.type === "error") {
@@ -2353,6 +2379,9 @@ class MessagesStreamEncoder implements StreamEncoder {
         usage: {
           input_tokens: this.usage.promptTokens,
           output_tokens: this.usage.completionTokens,
+          ...(this.usage.cachedTokens !== undefined
+            ? { cache_read_input_tokens: this.usage.cachedTokens }
+            : {}),
         },
       });
       out += sse("message_stop", { type: "message_stop" });
@@ -2476,6 +2505,9 @@ class InteractionsStreamEncoder implements StreamEncoder {
               total_input_tokens: usage.promptTokens,
               total_output_tokens: usage.completionTokens,
               total_tokens: usage.totalTokens,
+              ...(usage.cachedTokens !== undefined
+                ? { total_cached_tokens: usage.cachedTokens }
+                : {}),
             },
           },
         })

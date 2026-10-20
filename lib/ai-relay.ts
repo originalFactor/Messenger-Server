@@ -26,6 +26,12 @@
  * 计费与用量记账沿用原 chat 代理语义：请求完成后按 usage 扣减额度，
  * usage 缺失时按完成文本字符数估算；5xx/连接失败切换下一个上游，
  * 4xx 原样透传（但错误体转换为客户端格式）。
+ *
+ * 上游协议为 `auto`（跟随客户端）时不做 IR 往返：客户端请求体与上游
+ * 响应/SSE 字节原样转发，服务端只旁路解析 `data:` 载荷以嗅探 `usage`
+ * 用于计费（上游未报 usage 时按字符长度估算）。请求体一个字节都不改，
+ * 因此 `response_format`、`stop`、`seed`、`tool_choice`、`stream_options`
+ * 等 IR 不承载的参数全部原样到达上游。
  */
 
 import { NextResponse } from "next/server";
@@ -57,7 +63,15 @@ import { consumeQuota, getModelRateSettings, getUserQuotaState, listUpstreamsFor
 import type { UpstreamDoc } from "@/lib/types";
 import { createLogger } from "@/lib/runtime-logs";
 
-export const UPSTREAM_TIMEOUT_MS = 120_000;
+/**
+ * /v1 路由的执行预算（秒）。路由必须 `export const maxDuration =
+ * RELAY_MAX_DURATION_SECONDS`，否则平台会在上游超时之前杀掉函数：客户端
+ * 拿到无响应、用量也不会结算。
+ */
+export const RELAY_MAX_DURATION_SECONDS = 120;
+
+/** 上游单次尝试的超时；留出 5 秒给结算与响应收尾。 */
+export const UPSTREAM_TIMEOUT_MS = (RELAY_MAX_DURATION_SECONDS - 5) * 1000;
 
 /** AI 中继业务事件日志器（source="relay"）。 */
 const relayLog = createLogger("relay");
@@ -101,7 +115,8 @@ async function settleUsage(
     outputRate: number;
     cacheReadRate: number;
     upstreamId: string | null;
-    usage: IrUsage | null;
+    /** 上游报告的用量；undefined = 上游未提供，按文本长度估算。 */
+    usage: IrUsage | null | undefined;
     completionChars: number;
     /** 请求耗时（毫秒，从上游请求开始到 usage 结算）。 */
     durationMs: number;
@@ -135,7 +150,8 @@ async function settleUsage(
       cost,
       durationMs: params.durationMs,
     });
-    relayLog.info("Usage settled.", { userId: params.userId, modelId: params.modelId, upstreamId: params.upstreamId, promptTokens: uncachedTokens, completionTokens, cachedTokens, totalTokens, cost, durationMs: params.durationMs });
+    // 成功记账不写 runtime_logs：usage_logs 已经保存了同一份数据，逐请求
+    // 再插一行只会让日志表无谓膨胀（失败路径仍然记 error）。
   } catch (error) {
     relayLog.error("Unable to settle usage after completion.", { userId: params.userId, modelId: params.modelId, upstreamId: params.upstreamId, error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : error });
   }
@@ -200,13 +216,56 @@ function upstreamErrorMessage(raw: string, status: number): string {
   return raw.trim() || `Upstream returned ${status}.`;
 }
 
-/** 把一次失败的上游响应完整读入失败记录（读掉 body，避免连接悬挂）。 */
+/** 上游错误体的保留长度（字节）：错误响应只需要可读摘要，不应让上游用
+ *  巨型 body 逼本实例分配任意大小的内存。 */
+const UPSTREAM_ERROR_BODY_LIMIT_BYTES = 64 * 1024;
+
+/**
+ * 读入上游错误体，最多保留 [UPSTREAM_ERROR_BODY_LIMIT_BYTES]。
+ *
+ * 必须流式读取：`response.text()` 会先把整个 body 拉进内存，之后再截断
+ * 已经没有意义（一个 1 GiB 的错误页就能打爆实例）。读满上限后取消剩余
+ * 读取，同时保证连接被正常释放而不是悬挂。
+ */
+async function readUpstreamErrorBody(response: Response): Promise<string> {
+  if (!response.body) {
+    return "";
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value) {
+        continue;
+      }
+      const remaining = UPSTREAM_ERROR_BODY_LIMIT_BYTES - total;
+      if (value.byteLength >= remaining) {
+        chunks.push(value.subarray(0, remaining));
+        total += remaining;
+        await reader.cancel().catch(() => undefined);
+        break;
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } catch {
+    // 上游中途断开：保留已读到的部分。
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
+}
+
+/** 把一次失败的上游响应读入失败记录（读掉 body，避免连接悬挂）。 */
 async function recordUpstreamFailure(
   response: Response,
   upstream: UpstreamDoc,
   upstreamFormat: ApiFormat,
 ): Promise<UpstreamFailure> {
-  const raw = await response.text().catch(() => "");
+  const raw = await readUpstreamErrorBody(response);
   return {
     upstreamId: upstream._id,
     upstreamFormat,
@@ -224,7 +283,10 @@ function upstreamFailureResponse(failure: UpstreamFailure, clientFormat: ApiForm
   if (clientFormat === failure.upstreamFormat) {
     return new Response(failure.raw || JSON.stringify(formatErrorBody(clientFormat, failure.message)), {
       status,
-      headers: { "content-type": failure.contentType ?? "application/json" },
+      headers: {
+        "content-type": failure.contentType ?? "application/json",
+        "x-content-type-options": "nosniff",
+      },
     });
   }
   return NextResponse.json(formatErrorBody(clientFormat, failure.message, "upstream_error"), { status });
@@ -237,6 +299,45 @@ function upstreamRequestBody(upstreamFormat: ApiFormat, ir: IrRequest): Record<s
     body.stream_options = { include_usage: true };
   }
   return body;
+}
+
+/**
+ * 直通响应的头：照抄上游，但剔除逐跳头与长度/编码头 —— `fetch` 已经解码
+ * `content-encoding` 并重新分块，照抄会让客户端按错误长度或错误的压缩
+ * 声明去读 body。
+ */
+const HOP_BY_HOP_HEADERS: Record<string, true> = {
+  connection: true,
+  "keep-alive": true,
+  "transfer-encoding": true,
+  "content-encoding": true,
+  "content-length": true,
+  upgrade: true,
+  "proxy-authenticate": true,
+  "proxy-authorization": true,
+  te: true,
+  trailer: true,
+  // 上游不得借直通给本域写 cookie。
+  "set-cookie": true,
+};
+
+function forwardedResponseHeaders(response: Response, streaming: boolean): Headers {
+  const headers = new Headers();
+  response.headers.forEach((value, name) => {
+    if (HOP_BY_HOP_HEADERS[name.toLowerCase()] !== true) {
+      headers.set(name, value);
+    }
+  });
+  headers.set("x-content-type-options", "nosniff");
+  if (!headers.has("content-type")) {
+    headers.set("content-type", streaming ? "text/event-stream; charset=utf-8" : "application/json");
+  }
+  if (streaming) {
+    headers.set("cache-control", "no-cache");
+    // 反向代理不得缓冲 SSE（否则流式响应会攒到结束才吐出）。
+    headers.set("x-accel-buffering", "no");
+  }
+  return headers;
 }
 
 /**
@@ -293,11 +394,15 @@ function exhaustedResponse(
 async function nonStreamProxy(
   clientFormat: ApiFormat,
   ir: IrRequest,
+  clientBody: string,
   upstreams: UpstreamDoc[],
   settle: SettleParams,
+  clientSignal: AbortSignal,
 ): Promise<Response> {
   const failures: UpstreamFailure[] = [];
   for (const upstream of upstreams) {
+    // `auto` = 跟随客户端：请求体与响应体都按客户端协议原样转发。
+    const passThrough = (upstream.apiFormat ?? "auto") === "auto";
     const upstreamFormat = resolveUpstreamFormat(upstream, clientFormat);
     let response: Response;
     const startedAt = Date.now();
@@ -305,8 +410,11 @@ async function nonStreamProxy(
       response = await fetch(`${upstream.baseUrl.replace(/\/+$/, "")}${formatPath(upstreamFormat)}`, {
         method: "POST",
         headers: upstreamHeaders(upstreamFormat, upstream.apiKey),
-        body: JSON.stringify(upstreamRequestBody(upstreamFormat, { ...ir, stream: false })),
-        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+        body: passThrough
+          ? clientBody
+          : JSON.stringify(upstreamRequestBody(upstreamFormat, { ...ir, stream: false })),
+        // 客户端断连时立即放弃上游请求，不再为无人接收的结果付费。
+        signal: AbortSignal.any([AbortSignal.timeout(UPSTREAM_TIMEOUT_MS), clientSignal]),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -332,9 +440,20 @@ async function nonStreamProxy(
       return upstreamFailureResponse(failure, clientFormat);
     }
 
-    const payload = await response.json().catch(() => null);
-    if (!payload) {
-      failures.push({ upstreamId: upstream._id, upstreamFormat, status: response.status, message: "Unreadable JSON response body.", raw: "", contentType: response.headers.get("content-type"), retryable: true });
+    // 直通必须读完整 body 才能取到 usage；读到的原文随后原样回传。
+    const raw = passThrough ? await response.text() : null;
+    let payload: unknown = null;
+    if (passThrough) {
+      try {
+        payload = JSON.parse(raw!);
+      } catch {
+        payload = null;
+      }
+    } else {
+      payload = await response.json().catch(() => null);
+    }
+    if (payload === null) {
+      failures.push({ upstreamId: upstream._id, upstreamFormat, status: response.status, message: "Unreadable JSON response body.", raw: raw ?? "", contentType: response.headers.get("content-type"), retryable: true });
       relayLog.warn("Upstream response body is not JSON, failing over.", { userId: settle.userId, modelId: settle.modelId, upstreamId: upstream._id, upstreamFormat, status: response.status });
       continue;
     }
@@ -349,6 +468,9 @@ async function nonStreamProxy(
       completionChars: decoded.text.length,
       durationMs: Date.now() - startedAt,
     });
+    if (passThrough) {
+      return new Response(raw, { status: response.status, headers: forwardedResponseHeaders(response, false) });
+    }
     return NextResponse.json(encodeClientResponse(clientFormat, decoded, ir.model), {
       status: response.status,
     });
@@ -360,19 +482,27 @@ async function nonStreamProxy(
 async function streamProxy(
   clientFormat: ApiFormat,
   ir: IrRequest,
+  clientBody: string,
   upstreams: UpstreamDoc[],
   settle: SettleParams,
+  clientSignal: AbortSignal,
 ): Promise<Response> {
   const failures: UpstreamFailure[] = [];
   for (const upstream of upstreams) {
+    // `auto` = 跟随客户端：请求体与 SSE 字节都原样转发，仅旁路嗅探 usage。
+    const passThrough = (upstream.apiFormat ?? "auto") === "auto";
     const upstreamFormat = resolveUpstreamFormat(upstream, clientFormat);
     let response: Response;
     try {
       response = await fetch(`${upstream.baseUrl.replace(/\/+$/, "")}${formatPath(upstreamFormat)}`, {
         method: "POST",
         headers: upstreamHeaders(upstreamFormat, upstream.apiKey),
-        body: JSON.stringify(upstreamRequestBody(upstreamFormat, { ...ir, stream: true })),
-        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+        body: passThrough
+          ? clientBody
+          : JSON.stringify(upstreamRequestBody(upstreamFormat, { ...ir, stream: true })),
+        // 响应头到达后 body 由 buildStreamingResponse 的 cancel() 负责中止，
+        // 这里的 signal 覆盖「还没拿到响应头就断连」的窗口。
+        signal: AbortSignal.any([AbortSignal.timeout(UPSTREAM_TIMEOUT_MS), clientSignal]),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -401,6 +531,9 @@ async function streamProxy(
       relayLog.warn("Upstream stream response has no body, failing over.", { userId: settle.userId, modelId: settle.modelId, upstreamId: upstream._id, upstreamFormat });
       continue;
     }
+    if (passThrough) {
+      return buildPassThroughStreamingResponse(upstreamFormat, response, upstream, settle);
+    }
     return buildStreamingResponse(clientFormat, upstreamFormat, response, upstream, ir.model, settle);
   }
 
@@ -426,7 +559,26 @@ export function buildStreamingResponse(
     usage: null as IrUsage | null,
     completionChars: 0,
     finishReason: "stop",
-    finished: false,
+    /** 上游给出过终止信号（finish_reason / message_stop / response.completed / [DONE]）。 */
+    sawTerminal: false,
+  };
+  let settled = false;
+
+  // 结算必须恰好发生一次：正常结束走 flush（await，保证 serverless 实例
+  // 在函数返回前写完额度），客户端断连走 cancel（无响应可等，只能尽力）。
+  const settleOnce = (): Promise<void> | null => {
+    if (settled) {
+      return null;
+    }
+    settled = true;
+    return settleUsage({
+      ...settle,
+      ...resolveModelMeta(upstream, settle.modelId, settle.defaults, settle.base),
+      upstreamId: upstream._id,
+      usage: sniffed.usage,
+      completionChars: sniffed.completionChars,
+      durationMs: Date.now() - startedAt,
+    });
   };
 
   // Deltas go out as they arrive; the terminal event waits for the stream's
@@ -434,7 +586,11 @@ export function buildStreamingResponse(
   const emit = (event: IrEvent, controller: TransformStreamDefaultController<Uint8Array>) => {
     if (event.type === "finish") {
       sniffed.finishReason = event.reason;
+      sniffed.sawTerminal = true;
       return;
+    }
+    if (event.type === "error") {
+      sniffed.sawTerminal = true;
     }
     absorbEvent(event, sniffed);
     const out = encoder.push(event);
@@ -443,13 +599,13 @@ export function buildStreamingResponse(
 
   const handlePayload = (payload: string, controller: TransformStreamDefaultController<Uint8Array>) => {
     if (payload === "[DONE]") {
-      sniffed.finished = true;
+      sniffed.sawTerminal = true;
       return;
     }
     for (const event of decoder.feed(payload)) emit(event, controller);
   };
 
-  const stream = response.body!.pipeThrough(
+  const transformed = response.body!.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
       start(controller) {
         const opening = encoder.start();
@@ -474,22 +630,72 @@ export function buildStreamingResponse(
           const payload = trailing.slice(5).trim();
           if (payload) handlePayload(payload, controller);
         }
+        // 先取快照：decoder.finish() 会补一个 finish 事件，那会把
+        // sawTerminal 置真，从而掩盖「上游根本没给终止信号」。
+        const terminated = sniffed.sawTerminal;
         for (const event of decoder.finish()) emit(event, controller);
+        // 上游在没有任何终止信号的情况下断开（连接被掐、超时、网关截断）：
+        // 绝不能补一个 finish_reason=stop 冒充正常完成。
+        if (!terminated) {
+          relayLog.warn("Upstream stream ended without a terminal event.", {
+            userId: settle.userId,
+            modelId: settle.modelId,
+            upstreamId: upstream._id,
+            upstreamFormat,
+            completionChars: sniffed.completionChars,
+          });
+          const failure = encoder.push({
+            type: "error",
+            message: "Upstream stream ended unexpectedly.",
+          });
+          if (failure) controller.enqueue(textEncoder.encode(failure));
+        }
         const terminal = encoder.push({ type: "finish", reason: sniffed.finishReason });
         if (terminal) controller.enqueue(textEncoder.encode(terminal));
         const closing = encoder.end();
         if (closing) controller.enqueue(textEncoder.encode(closing));
-        await settleUsage({
-          ...settle,
-          ...resolveModelMeta(upstream, settle.modelId, settle.defaults, settle.base),
-          upstreamId: upstream._id,
-          usage: sniffed.usage,
-          completionChars: sniffed.completionChars,
-          durationMs: Date.now() - startedAt,
-        });
+        await settleOnce();
       },
     }),
   );
+
+  // Transformer 没有 cancel 钩子（取消时 flush 不会执行）。用一个显式的
+  // ReadableStream 包住转换结果，才能在客户端断连时中止上游并结算。
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      reader = transformed.getReader();
+      const pump = async () => {
+        try {
+          for (;;) {
+            const { done, value } = await reader!.read();
+            if (cancelled) {
+              return;
+            }
+            if (done) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(value);
+          }
+        } catch (error) {
+          // 取消后 controller 已失效，再 error() 会抛二次异常。
+          if (!cancelled) {
+            controller.error(error);
+          }
+        }
+      };
+      void pump();
+    },
+    cancel(reason) {
+      // 客户端断连：停止读取上游（释放连接与上游生成成本），并按已产生
+      // 的内容结算，避免「中断即免费」。
+      cancelled = true;
+      void reader?.cancel(reason).catch(() => undefined);
+      void settleOnce();
+    },
+  });
 
   return new Response(stream, {
     status: 200,
@@ -497,6 +703,9 @@ export function buildStreamingResponse(
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache",
       connection: "keep-alive",
+      // 反向代理不得缓冲 SSE（否则流式响应会攒到结束才吐出）。
+      "x-accel-buffering": "no",
+      "x-content-type-options": "nosniff",
     },
   });
 }
@@ -510,6 +719,128 @@ function absorbEvent(
   } else if (event.type === "usage") {
     sniffed.usage = event.usage;
   }
+}
+
+/**
+ * 直通模式的流式响应：上游 SSE 字节原样转发，只在旁边解析 `data:` 载荷
+ * 嗅探 usage 与完成文本长度用于计费。不重新编码、不补事件、不改终止符 ——
+ * 客户端看到的与直连上游完全一致。
+ */
+function buildPassThroughStreamingResponse(
+  upstreamFormat: ApiFormat,
+  response: Response,
+  upstream: UpstreamDoc,
+  settle: SettleParams,
+): Response {
+  const decoder = createStreamDecoder(upstreamFormat);
+  const textDecoder = new TextDecoder();
+  const startedAt = Date.now();
+  const sniffed = { usage: null as IrUsage | null, completionChars: 0 };
+  let buffer = "";
+  let sawDataLine = false;
+  let settled = false;
+
+  const settleOnce = (): Promise<void> | null => {
+    if (settled) {
+      return null;
+    }
+    settled = true;
+    return settleUsage({
+      ...settle,
+      ...resolveModelMeta(upstream, settle.modelId, settle.defaults, settle.base),
+      upstreamId: upstream._id,
+      usage: sniffed.usage,
+      completionChars: sniffed.completionChars,
+      durationMs: Date.now() - startedAt,
+    });
+  };
+
+  const sniffPayload = (payload: string) => {
+    if (payload === "[DONE]") {
+      return;
+    }
+    for (const event of decoder.feed(payload)) absorbEvent(event, sniffed);
+  };
+
+  const transformed = response.body!.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        // 先原样转发，再解析副本：嗅探失败绝不能影响客户端收到的字节。
+        controller.enqueue(chunk);
+        buffer += textDecoder.decode(chunk, { stream: true });
+        let newlineIndex: number;
+        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newlineIndex).replace(/\r$/, "");
+          buffer = buffer.slice(newlineIndex + 1);
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) {
+            continue;
+          }
+          sawDataLine = true;
+          const payload = trimmed.slice(5).trim();
+          if (payload) sniffPayload(payload);
+        }
+      },
+      async flush() {
+        const trailing = buffer.trim();
+        if (trailing.startsWith("data:")) {
+          sawDataLine = true;
+          const payload = trailing.slice(5).trim();
+          if (payload) sniffPayload(payload);
+        } else if (!sawDataLine && trailing) {
+          // 上游对 stream 请求回了单行 JSON：按普通响应嗅探 usage。
+          try {
+            const decoded = decodeUpstreamResponse(upstreamFormat, JSON.parse(trailing));
+            sniffed.usage = decoded.usage ?? null;
+            sniffed.completionChars = decoded.text.length;
+          } catch {
+            // 非 JSON 的尾部内容按原样转发，计费退化为按提示词估算。
+          }
+        }
+        for (const event of decoder.finish()) absorbEvent(event, sniffed);
+        await settleOnce();
+      },
+    }),
+  );
+
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      reader = transformed.getReader();
+      const pump = async () => {
+        try {
+          for (;;) {
+            const { done, value } = await reader!.read();
+            if (cancelled) {
+              return;
+            }
+            if (done) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(value);
+          }
+        } catch (error) {
+          if (!cancelled) {
+            controller.error(error);
+          }
+        }
+      };
+      void pump();
+    },
+    cancel(reason) {
+      // 客户端断连：停止读取上游，并按已转发的内容结算。
+      cancelled = true;
+      void reader?.cancel(reason).catch(() => undefined);
+      void settleOnce();
+    },
+  });
+
+  return new Response(stream, {
+    status: response.status,
+    headers: forwardedResponseHeaders(response, true),
+  });
 }
 
 export interface RelayOptions {
@@ -529,7 +860,13 @@ export async function relayCompletion({ format, request }: RelayOptions): Promis
     return clientError(format, "Invalid API key.", 401, "authentication_error");
   }
 
-  const body = await request.json().catch(() => null);
+  const rawBody = await request.text().catch(() => "");
+  let body: unknown = null;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    body = null;
+  }
   let ir: IrRequest;
   try {
     ir = decodeClientRequest(format, body);
@@ -543,7 +880,14 @@ export async function relayCompletion({ format, request }: RelayOptions): Promis
     );
   }
 
-  const quota = await getUserQuotaState(user.id);
+  // 四个独立读取并行：额度、上游列表、models.dev 元数据、基准设置互不依赖，
+  // 串行会让每次对话多付约 3 个 RTT。
+  const [quota, upstreams, defaults, settings] = await Promise.all([
+    getUserQuotaState(user.id),
+    listUpstreamsForModel(ir.model),
+    getModelDefaults(),
+    getModelRateSettings(),
+  ]);
   if (!quota.available) {
     relayLog.warn("Quota unavailable.", { userId: user.id, modelId: ir.model, stream: ir.stream, reason: quota.reason });
     return clientError(
@@ -555,30 +899,26 @@ export async function relayCompletion({ format, request }: RelayOptions): Promis
       "insufficient_quota",
     );
   }
-
-  const upstreams = await listUpstreamsForModel(ir.model);
   if (upstreams.length === 0) {
     relayLog.warn("No upstream available for model.", { userId: user.id, modelId: ir.model, stream: ir.stream });
     return clientError(format, `Model '${ir.model}' has no available upstream.`, 404, "model_not_found");
   }
 
-  relayLog.info("Relay request started.", { userId: user.id, modelId: ir.model, stream: ir.stream, upstreamCount: upstreams.length, promptTokens: estimateIrPromptTokens(ir) });
-
-  const defaults = await getModelDefaults();
-  const settings = await getModelRateSettings();
   const baseModelId = settings.baseModelId;
   const base: BaseModelContext | null =
     baseModelId !== null && defaults.rates[baseModelId] !== undefined ? { modelId: baseModelId } : null;
+  // 提示词估算要遍历全部消息与工具定义，只算一次。
+  const promptTokens = estimateIrPromptTokens(ir);
   const settle: SettleParams = {
     userId: user.id,
     modelId: ir.model,
-    promptTokens: estimateIrPromptTokens(ir),
+    promptTokens,
     defaults: { rates: defaults.rates },
     base,
   };
 
   if (ir.stream) {
-    return streamProxy(format, ir, upstreams, settle);
+    return streamProxy(format, ir, rawBody, upstreams, settle, request.signal);
   }
-  return nonStreamProxy(format, ir, upstreams, settle);
+  return nonStreamProxy(format, ir, rawBody, upstreams, settle, request.signal);
 }

@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
-import { relayCompletion } from "@/lib/ai-relay";
+import { RELAY_MAX_DURATION_SECONDS, relayCompletion } from "@/lib/ai-relay";
 
 export const runtime = "nodejs";
-// 流式对话可能远超默认时长；Vercel 会按套餐静默钳制该上限。
-export const maxDuration = 60;
+// 必须 ≥ 上游超时（UPSTREAM_TIMEOUT_MS），否则平台会在上游返回前杀掉
+// 函数：客户端拿到空响应、用量也不会结算。Vercel 会按套餐静默钳制该值，
+// 部署时需要保证套餐上限不低于此数。
+export const maxDuration = RELAY_MAX_DURATION_SECONDS;
 
 /** OpenAI Chat Completions 兼容入口。 */
 export async function POST(request: Request) {

@@ -16,7 +16,6 @@
 
 import { NextResponse } from "next/server";
 import { getUserByAiApiKey } from "@/lib/storage";
-import { estimateTokens } from "@/lib/quota";
 import type { StoredUser } from "@/lib/types";
 
 export interface OpenAiErrorOptions {
@@ -49,21 +48,3 @@ export async function authenticateAiKey(request: Request): Promise<StoredUser | 
   return getUserByAiApiKey(apiKey);
 }
 
-/** 粗略估算 prompt tokens；multimodal content 一并按序列化长度折算。 */
-export function estimatePromptTokens(messages: unknown): number {
-  if (!Array.isArray(messages)) {
-    return 0;
-  }
-  let total = 0;
-  for (const message of messages) {
-    const role = (message as { role?: unknown } | null)?.role;
-    const content = (message as { content?: unknown } | null)?.content;
-    total += estimateTokens(typeof role === "string" ? role : "");
-    total += estimateTokens(JSON.stringify(content ?? ""));
-  }
-  return total;
-}
-
-export function joinUpstreamUrl(baseUrl: string, path: string): string {
-  return `${baseUrl.replace(/\/+$/, "")}${path}`;
-}
