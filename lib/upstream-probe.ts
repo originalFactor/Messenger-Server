@@ -17,6 +17,9 @@
 /** 上游 /models 探测的共享实现，供已存上游与表单直探两条路由使用。 */
 
 import { type ApiFormat, MODELS_PATH, normalizeApiFormat, upstreamHeaders } from "@/lib/ai-formats";
+import { createLogger } from "@/lib/runtime-logs";
+
+const relayLog = createLogger("relay");
 
 export class UpstreamProbeError extends Error {
   constructor(
@@ -49,11 +52,12 @@ export async function fetchUpstreamModelIds(
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
   } catch (error) {
-    console.error("Upstream probe failed.", { url, error });
+    relayLog.warn("Upstream probe failed.", { url, error: error instanceof Error ? { name: error.name, message: error.message } : error });
     throw new UpstreamProbeError("无法连接上游服务，请检查地址与密钥。", 502);
   }
 
   if (!response.ok) {
+    relayLog.warn("Upstream probe returned non-OK.", { url, status: response.status });
     throw new UpstreamProbeError(`上游返回 ${response.status}，请检查地址与密钥。`, 502);
   }
 
@@ -69,11 +73,13 @@ export async function fetchUpstreamModelIds(
     throw new UpstreamProbeError("上游响应格式不是可识别的模型列表。", 502);
   }
 
-  return entries
+  const models = entries
     .map((entry) => {
       const record = (entry ?? {}) as { id?: unknown; name?: unknown };
       const value = typeof record.id === "string" ? record.id : record.name;
       return typeof value === "string" ? value.replace(/^models\//, "") : null;
     })
     .filter((value): value is string => value !== null);
+  relayLog.info("Upstream probe succeeded.", { url, modelCount: models.length });
+  return models;
 }

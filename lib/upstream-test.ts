@@ -25,6 +25,9 @@ import {
   normalizeApiFormat,
   upstreamHeaders,
 } from "@/lib/ai-formats";
+import { createLogger } from "@/lib/runtime-logs";
+
+const relayLog = createLogger("relay");
 
 export class UpstreamTestError extends Error {
   constructor(
@@ -71,7 +74,7 @@ export async function testUpstreamModel(
       signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
     });
   } catch (error) {
-    console.error("Upstream test failed.", { url, model, error });
+    relayLog.warn("Upstream test failed.", { url, model, error: error instanceof Error ? { name: error.name, message: error.message } : error });
     throw new UpstreamTestError("无法连接上游服务，请检查地址与密钥。", 502);
   }
   const latencyMs = Date.now() - startedAt;
@@ -88,10 +91,13 @@ export async function testUpstreamModel(
           : typeof detail?.message === "string"
             ? detail.message
             : `上游返回 ${response.status}。`;
+    relayLog.warn("Upstream test returned non-OK.", { url, model, status: response.status, latencyMs });
     throw new UpstreamTestError(message, 502);
   }
 
   const payload = await response.json().catch(() => null);
   const reply = payload ? decodeUpstreamResponse(format, payload).text : "";
-  return { latencyMs, reply: reply.slice(0, MAX_REPLY_LENGTH) };
+  const result = { latencyMs, reply: reply.slice(0, MAX_REPLY_LENGTH) };
+  relayLog.info("Upstream test succeeded.", { url, model, latencyMs, replyLength: result.reply.length });
+  return result;
 }

@@ -215,6 +215,44 @@ export interface UsageLogDoc {
   createdAt: number;
 }
 
+/** 运行时日志级别：error = 5xx/未捕获异常；warn = 4xx/降级；info = 正常事件。 */
+export type RuntimeLogLevel = "error" | "warn" | "info";
+
+/** 日志来源：业务域标签，用于「日志页」按域筛选。 */
+export type RuntimeLogSource =
+  | "api"
+  | "relay"
+  | "auth"
+  | "billing"
+  | "admin"
+  | "sync"
+  | "market"
+  | "avatar"
+  | "storage"
+  | "migration";
+
+/**
+ * 系统运行日志文档（管理后台「日志页」数据源）。按 `(createdAt, _id)` 倒序
+ * 做偏移分页，复用 `runtime_logs` 的 `{ createdAt: -1, _id: -1 }` 前缀索引。
+ * `level`/`source` 仅用于筛选，`details` 存原始错误/上下文对象，不保证模式稳定。
+ */
+export interface RuntimeLogDoc {
+  _id: string;
+  level: RuntimeLogLevel;
+  source: RuntimeLogSource;
+  /** 触发日志的请求方法（GET/POST…），无法关联时为 null。 */
+  method: string | null;
+  /** 触发日志的请求路径，脱敏后存储；非 HTTP 来源为 null。 */
+  path: string | null;
+  /** HTTP 状态码；非 HTTP 来源为 null。 */
+  status: number | null;
+  /** 人读摘要：错误名 + fallbackMessage 或事件描述。 */
+  message: string;
+  /** 原始错误/上下文（name/message/stack/cause 或自由结构），不做模式约束。 */
+  details: unknown;
+  createdAt: number;
+}
+
 /** 调用记录明细表展示行：`UsageLogDoc` 展开 + 调用方邮箱 + 上游名称（用于页面/API 共用）。 */
 export interface AdminUsageRow extends UsageLogDoc {
   /** 调用方账号：用户邮箱；用户被删除时为 null（页面兜底「—」）。 */

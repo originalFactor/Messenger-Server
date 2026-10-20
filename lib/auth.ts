@@ -17,10 +17,14 @@
 import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 import { env } from "@/lib/env";
+import { createLogger } from "@/lib/runtime-logs";
 import { getUserById } from "@/lib/storage";
 import type { SessionClaims, UserRole } from "@/lib/types";
 
 const USER_COOKIE = "messenger_session";
+
+/** 认证域日志器；仅记录低频、可审计的失败（避免匿名请求刷屏）。 */
+const authLog = createLogger("auth");
 
 function secretKey() {
   return new TextEncoder().encode(env.jwtSecret());
@@ -91,6 +95,7 @@ export async function requireAdminUser(): Promise<AdminSessionContext | null> {
   }
   const user = await getUserById(claims.sub);
   if (!user || user.role !== "admin") {
+    authLog.warn("Admin access denied.", { userId: claims.sub, email: claims.email, reason: user ? "not-admin" : "user-missing" });
     return null;
   }
   return { claims, role: user.role };

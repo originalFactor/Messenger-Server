@@ -16,11 +16,14 @@
 
 import { requireUserSession } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { hashPassword, verifyPassword } from "@/lib/security";
 import { getUserById, updateUserPassword } from "@/lib/storage";
 import { passwordChangeSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+const authLog = createLogger("auth");
 
 export async function PUT(request: Request) {
   const session = await requireUserSession();
@@ -38,12 +41,15 @@ export async function PUT(request: Request) {
     return jsonError("User not found.", 404);
   }
   if (!(await verifyPassword(parsed.data.currentPassword, user.passwordHash))) {
+    authLog.warn("Password change rejected: wrong current password.", { userId: session.sub });
     return jsonError("The current password is incorrect.", 401);
   }
   if (parsed.data.currentPassword === parsed.data.newPassword) {
+    authLog.warn("Password change rejected: unchanged.", { userId: session.sub });
     return jsonError("The new password must be different.", 400);
   }
 
   await updateUserPassword(session.sub, await hashPassword(parsed.data.newPassword));
+  authLog.info("Password changed.", { userId: session.sub });
   return jsonOk({ success: true });
 }

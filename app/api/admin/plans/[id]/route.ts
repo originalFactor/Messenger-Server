@@ -16,11 +16,14 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { deletePlan, updatePlan } from "@/lib/storage";
 import { planInputSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+const adminLog = createLogger("admin");
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -38,6 +41,7 @@ export async function PUT(request: Request, context: RouteContext) {
 
   try {
     const plan = await updatePlan(id, parsed.data);
+    adminLog.info("Plan updated.", { adminId: admin.claims.sub, entity: "plan", entityId: id, planName: plan.name });
     return jsonOk({ plan });
   } catch (error) {
     return storageErrorResponse(error, "Unable to update the plan.");
@@ -53,6 +57,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
   const { id } = await context.params;
   try {
     await deletePlan(id);
+    adminLog.info("Plan deleted.", { adminId: admin.claims.sub, entity: "plan", entityId: id });
     return jsonOk({ success: true });
   } catch (error) {
     return storageErrorResponse(error, "Unable to delete the plan.");

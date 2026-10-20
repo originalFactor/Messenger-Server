@@ -17,11 +17,14 @@
 import { createUserSessionToken, setUserSessionCookie } from "@/lib/auth";
 import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { verifyPassword } from "@/lib/security";
 import { getUserByEmail, updateUserLastLogin } from "@/lib/storage";
 import { credentialsSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+const authLog = createLogger("auth");
 
 export async function POST(request: Request) {
   const parsed = credentialsSchema.safeParse(await request.json().catch(() => null));
@@ -32,6 +35,7 @@ export async function POST(request: Request) {
   const { email, password } = parsed.data;
   const user = await getUserByEmail(email);
   if (!user || !(await verifyPassword(password, user.passwordHash))) {
+    authLog.warn("Login failed.", { email, reason: "invalid-credentials" });
     return jsonError("Invalid email or password.", 401);
   }
 
@@ -39,6 +43,7 @@ export async function POST(request: Request) {
   await updateUserLastLogin(user.id, now);
   const token = await createUserSessionToken(user.id, user.email, user.role);
   await setUserSessionCookie(token);
+  authLog.info("Login succeeded.", { userId: user.id, email: user.email, role: user.role });
 
   return jsonOk({
     user: {

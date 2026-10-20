@@ -18,11 +18,14 @@ import { randomUUID } from "node:crypto";
 import { createUserSessionToken, setUserSessionCookie } from "@/lib/auth";
 import { generateAiApiKey } from "@/lib/apikeys";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { hashPassword } from "@/lib/security";
 import { getUserByEmail, isDuplicateKeyError, saveUser } from "@/lib/storage";
 import { credentialsSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+const authLog = createLogger("auth");
 
 export async function POST(request: Request) {
   const parsed = credentialsSchema.safeParse(await request.json().catch(() => null));
@@ -33,6 +36,7 @@ export async function POST(request: Request) {
   const { email, password } = parsed.data;
   const existing = await getUserByEmail(email);
   if (existing) {
+    authLog.warn("Registration rejected: email exists.", { email });
     return jsonError("An account with this email already exists.", 409);
   }
 
@@ -62,12 +66,14 @@ export async function POST(request: Request) {
     role = saved.role;
   } catch (error) {
     if (isDuplicateKeyError(error)) {
+      authLog.warn("Registration rejected: duplicate key.", { email, userId: user.id });
       return jsonError("An account with this email already exists.", 409);
     }
     throw error;
   }
   const token = await createUserSessionToken(user.id, user.email, role);
   await setUserSessionCookie(token);
+  authLog.info("Registration succeeded.", { userId: user.id, email: user.email, role });
 
   return jsonOk({
     user: {

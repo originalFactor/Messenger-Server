@@ -16,12 +16,15 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { issueCards, listCards } from "@/lib/storage";
 import { cardIssueSchema } from "@/lib/validation";
 import type { CardKeyStatus } from "@/lib/types";
 
 export const runtime = "nodejs";
+
+const adminLog = createLogger("admin");
 
 const cardStatuses: CardKeyStatus[] = ["unused", "redeemed", "disabled"];
 

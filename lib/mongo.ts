@@ -18,12 +18,16 @@ import { randomUUID } from "node:crypto";
 import { Db, MongoClient } from "mongodb";
 import { generateAiApiKey } from "@/lib/apikeys";
 import { env } from "@/lib/env";
+import { createLogger } from "@/lib/runtime-logs";
 import type { UserQuotaDoc } from "@/lib/types";
 
 declare global {
   var messengerMongoClientPromise: Promise<MongoClient> | undefined;
   var messengerMongoIndexesPromise: Promise<void> | undefined;
 }
+
+/** 迁移/启动域日志器（source="migration"）。 */
+const migrationLog = createLogger("migration");
 
 export function getMongoClient(): Promise<MongoClient> {
   if (!globalThis.messengerMongoClientPromise) {
@@ -38,6 +42,7 @@ export function getMongoClient(): Promise<MongoClient> {
       serverSelectionTimeoutMS: 5_000,
     });
     globalThis.messengerMongoClientPromise = client.connect().catch((error: unknown) => {
+      migrationLog.error("MongoDB connection failed.", { error: error instanceof Error ? { name: error.name, message: error.message } : error });
       globalThis.messengerMongoClientPromise = undefined;
       throw error;
     });
@@ -69,13 +74,20 @@ async function ensureIndexesFor(database: Db): Promise<void> {
       database.collection("usage_logs").createIndex({ userId: 1, createdAt: -1, _id: 1 }),
       database.collection("usage_logs").createIndex({ createdAt: -1, _id: 1 }),
       database.collection("user_quotas").createIndex({ userId: 1, expiresAt: 1 }),
-      database.collection("user_quotas").createIndex({ userId: 1, createdAt: -1, _id: 1 }),
+      database.collection("runtime_logs").createIndex({ createdAt: -1, _id: 1 }),
+      database.collection("runtime_logs").createIndex({ level: 1, createdAt: -1, _id: 1 }),
+      database.collection("runtime_logs").createIndex({ source: 1, createdAt: -1, _id: 1 }),
     ]).then(() => undefined);
+    const startedAt = Date.now();
     globalThis.messengerMongoIndexesPromise = indexes
       .then(() => ensureUserDocumentBackfill(database))
       .then(() => ensureQuotaEntitlementMigration(database))
       .then(() => ensureUsageInputExcludesCacheMigration(database))
+      .then(() => {
+        migrationLog.info("Indexes and migrations completed.", { durationMs: Date.now() - startedAt });
+      })
       .catch((error: unknown) => {
+        migrationLog.error("Index/migration setup failed.", { error: error instanceof Error ? { name: error.name, message: error.message } : error });
         globalThis.messengerMongoIndexesPromise = undefined;
         throw error;
       });
@@ -119,6 +131,9 @@ async function ensureUserDocumentBackfill(database: Db): Promise<void> {
     for (const user of legacyKeys) {
       await users.updateOne({ _id: user._id }, { $set: { aiApiKey: generateAiApiKey() } });
     }
+    if (legacyKeys.length > 0) {
+      migrationLog.info("Backfilled legacy user documents.", { migration: "user-backfill", legacyKeyCount: legacyKeys.length });
+    }
 
     const admin = await users.findOne({ role: "admin" }, { projection: { _id: 1 } });
     if (admin) {
@@ -139,8 +154,9 @@ async function ensureUserDocumentBackfill(database: Db): Promise<void> {
       grantedToUserId: earliest._id,
       createdAt: Date.now(),
     });
+    migrationLog.info("Admin bootstrap promoted earliest user.", { migration: "admin-bootstrap", userId: earliest._id });
   } catch (error) {
-    console.error("Unable to run the user document backfill migration.", error);
+    migrationLog.error("Unable to run the user document backfill migration.", { migration: "user-backfill", error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : error });
   }
 }
 
@@ -194,8 +210,11 @@ async function ensureQuotaEntitlementMigration(database: Db): Promise<void> {
         { $set: { quotaBalance: 0, quotaExpiresAt: null, updatedAt: Date.now() } },
       );
     }
+    if (legacy.length > 0) {
+      migrationLog.info("Migrated legacy quota entitlements.", { migration: "quota-entitlement", legacyUserCount: legacy.length });
+    }
   } catch (error) {
-    console.error("Unable to run the quota entitlement migration.", error);
+    migrationLog.error("Unable to run the quota entitlement migration.", { migration: "quota-entitlement", error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : error });
   }
 }
 
@@ -214,7 +233,7 @@ interface LegacyUsageLogDoc {
 async function ensureUsageInputExcludesCacheMigration(database: Db): Promise<void> {
   try {
     const logs = database.collection<LegacyUsageLogDoc>("usage_logs");
-    await logs.updateMany({ inputExcludesCache: { $exists: false } }, [
+    const result = await logs.updateMany({ inputExcludesCache: { $exists: false } }, [
       {
         $set: {
           promptTokens: {
@@ -224,8 +243,11 @@ async function ensureUsageInputExcludesCacheMigration(database: Db): Promise<voi
         },
       },
     ]);
+    if (result.modifiedCount > 0) {
+      migrationLog.info("Migrated usage input cache accounting.", { migration: "usage-input-excludes-cache", modifiedCount: result.modifiedCount });
+    }
   } catch (error) {
-    console.error("Unable to run the usage input migration.", error);
+    migrationLog.error("Unable to run the usage input migration.", { migration: "usage-input-excludes-cache", error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : error });
   }
 }
 

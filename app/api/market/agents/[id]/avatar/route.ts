@@ -25,11 +25,14 @@ import {
 import { requireUserSession } from "@/lib/auth";
 import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { getMarketAgent, updateMarketAgentAvatar } from "@/lib/storage";
 import { entityIdSchema, getAvatarUpload } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+const avatarLog = createLogger("avatar");
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -101,6 +104,7 @@ export async function PUT(request: Request, context: RouteContext) {
         avatar.contentType,
       );
       const updated = await updateMarketAgentAvatar(session.sub, id, replacement.url);
+      avatarLog.info("Market agent avatar updated.", { ownerUserId: session.sub, agentId: id, version: updated.version, avatarVersion: updated.avatarVersion, contentType: avatar.contentType });
       return jsonOk({ url: appUrl(`/api/market/agents/${id}/avatar`), version: updated.version, avatarVersion: updated.avatarVersion });
     } catch (error) {
       const restored = replacement
@@ -109,6 +113,7 @@ export async function PUT(request: Request, context: RouteContext) {
       if (metadataCleared && restored && canRestore && agent.avatarUrl) {
         await updateMarketAgentAvatar(session.sub, id, agent.avatarUrl);
       }
+      avatarLog.warn("Market agent avatar replacement failed.", { ownerUserId: session.sub, agentId: id, restored, reason: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   } catch (error) {
@@ -127,6 +132,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
     if (!agent || agent.ownerUserId !== session.sub) return jsonError("Market Agent not found.", 404);
     const updated = await updateMarketAgentAvatar(session.sub, id, null);
     await deleteMarketAgentAvatar(id);
+    avatarLog.info("Market agent avatar deleted.", { ownerUserId: session.sub, agentId: id, version: updated.version });
     return jsonOk({ url: null, version: updated.version, avatarVersion: null });
   } catch (error) {
     return storageErrorResponse(error, "Unable to delete the market avatar.");

@@ -17,11 +17,14 @@
 import { clearUserSessionCookie, requireUserSession } from "@/lib/auth";
 import { deleteAgentAvatar, deleteMarketAgentAvatar, deleteUserAvatar } from "@/lib/avatars";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { getUserById, deleteUserAccount } from "@/lib/storage";
 import { verifyPassword } from "@/lib/security";
 import { passwordDeleteSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+const authLog = createLogger("auth");
 
 export async function DELETE(request: Request) {
   const session = await requireUserSession();
@@ -39,6 +42,7 @@ export async function DELETE(request: Request) {
     return jsonOk({ success: true });
   }
   if (!(await verifyPassword(parsed.data.currentPassword, user.passwordHash))) {
+    authLog.warn("Account deletion rejected: wrong current password.", { userId: session.sub });
     return jsonError("The current password is incorrect.", 401);
   }
 
@@ -50,9 +54,10 @@ export async function DELETE(request: Request) {
   ]);
   for (const result of avatarCleanup) {
     if (result.status === "rejected") {
-      console.error("Unable to clean up account avatar blob after account deletion.", result.reason);
+      authLog.error("Unable to clean up account avatar blob after account deletion.", { userId: session.sub, reason: result.reason instanceof Error ? result.reason.message : String(result.reason) });
     }
   }
   await clearUserSessionCookie();
+  authLog.info("Account deleted.", { userId: session.sub, email: user.email, agentCount: agentIds.length, marketAgentCount: marketAgentIds.length });
   return jsonOk({ success: true });
 }

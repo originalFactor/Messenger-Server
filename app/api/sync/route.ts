@@ -17,6 +17,7 @@
 import { requireUserSession } from "@/lib/auth";
 import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { storageErrorResponse } from "@/lib/route-errors";
 import {
   getDeltaSince,
@@ -27,6 +28,8 @@ import {
 } from "@/lib/storage";
 
 export const runtime = "nodejs";
+
+const syncLog = createLogger("sync");
 
 const ALLOWED_COLLECTIONS: ReadonlySet<SyncCollection> = new Set([
   "agents",
@@ -52,6 +55,7 @@ export async function GET(request: Request) {
   const sinceValue = searchParams.get("since");
   const since = sinceValue === null ? 0 : Number(sinceValue);
   if (!Number.isSafeInteger(since) || since < 0) {
+    syncLog.warn("Sync rejected: invalid since.", { userId: session.sub, reason: "bad-since" });
     return jsonError("The since parameter must be a non-negative integer.", 400);
   }
 
@@ -63,6 +67,7 @@ export async function GET(request: Request) {
   if (!collectionParam) {
     try {
       const delta = await getDeltaSince(session.sub, since);
+      syncLog.info("Sync delta served.", { userId: session.sub, since, mode: "merged", latestVersion: delta.latestVersion, agentCount: delta.agents.length, conversationCount: delta.conversations.length, providerCount: delta.providers.length, projectCount: delta.projects.length });
       return jsonOk({
         ...delta,
         agents: rewriteAgentAvatars(delta.agents),
@@ -73,6 +78,7 @@ export async function GET(request: Request) {
   }
 
   if (!ALLOWED_COLLECTIONS.has(collectionParam as SyncCollection)) {
+    syncLog.warn("Sync rejected: invalid collection.", { userId: session.sub, collection: collectionParam, reason: "bad-collection" });
     return jsonError("collection must be one of: agents, conversations, providers, projects.", 400);
   }
   if (cursor !== null && cursor !== undefined && cursor === "") {
@@ -99,6 +105,10 @@ export async function GET(request: Request) {
     const documents = page.collection === "agents"
       ? rewriteAgentAvatars(page.documents as { _id: string; avatarUrl?: string | null }[])
       : page.documents;
+    syncLog.info("Sync page served.", { userId: session.sub, since, mode: "paged", collection: page.collection, limit, documentCount: page.documents.length, hasMore: page.hasMore, latestVersion: page.latestVersion });
+    if (page.documents.length >= limit) {
+      syncLog.warn("Sync page reached limit.", { userId: session.sub, collection: page.collection, limit, hasMore: page.hasMore });
+    }
     return jsonOk({
       collection: page.collection,
       documents,

@@ -20,6 +20,7 @@ import { renewAvatarLock, type AvatarLock } from "@/lib/avatar-locks";
 import { generateCardCode, normalizeCardCode } from "@/lib/apikeys";
 import { quotaStateFromEntitlements } from "@/lib/quota";
 import { getDb, getMongoClient } from "@/lib/mongo";
+import { createLogger } from "@/lib/runtime-logs";
 import type {
   AdminRecentUser,
   AdminUsageRow,
@@ -54,6 +55,9 @@ import type { AdminUserView, UserQuotaDoc } from "@/lib/types";
 import type { QuotaEntitlementView, QuotaState } from "@/lib/quota";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** 计费域日志器（开卡/兑换/额度）。 */
+const billingLog = createLogger("billing");
 
 export class NotFoundError extends Error {}
 export class ConflictError extends Error {}
@@ -1096,6 +1100,7 @@ export async function issueCards(input: CardIssueInput): Promise<CardKeyDoc[]> {
     }
     issued.push(card);
   }
+  billingLog.info("Cards issued.", { adminId: input.createdByUserId, planId: plan._id, planName: plan.name, count: issued.length, quotaTokens: plan.quotaTokens, validityDays: plan.validityDays });
   return issued;
 }
 
@@ -1255,6 +1260,7 @@ export async function grantUserQuota(userId: string, input: GrantQuotaInput): Pr
     createdAt: now,
   };
   await db.collection<UserQuotaDoc>("user_quotas").insertOne(entitlement);
+  billingLog.info("Quota granted.", { userId, source: input.source, amount: input.amount, validDays: input.validDays ?? null, planId: input.planId ?? null, cardKeyId: input.cardKeyId ?? null, expiresAt: entitlement.expiresAt });
   return entitlement;
 }
 
@@ -1305,6 +1311,10 @@ export async function deductUserQuota(userId: string, amount: number): Promise<n
   } finally {
     await session.endSession();
   }
+  // 扣减不足 = 额度耗尽（请求量大于余额）；记录短缺口用于计费对账与告警。
+  if (deducted < amount) {
+    billingLog.warn("Quota exhausted during deduction.", { userId, requestedAmount: amount, deductedAmount: deducted, shortfall: amount - deducted });
+  }
   return deducted;
 }
 
@@ -1324,10 +1334,9 @@ export async function redeemCard(userId: string, rawCode: string): Promise<Redee
   const code = normalizeCardCode(rawCode);
   const client = await getMongoClient();
   const session = client.startSession();
-  let result: RedeemResult | null = null;
 
   try {
-    await session.withTransaction(async () => {
+    const redeemed = await session.withTransaction(async () => {
       const db = await getDb();
       const now = Date.now();
       const card = await db.collection<CardKeyDoc>("card_keys").findOneAndUpdate(
@@ -1376,16 +1385,22 @@ export async function redeemCard(userId: string, rawCode: string): Promise<Redee
         createdAt: now,
       };
       await db.collection<RedemptionDoc>("redemptions").insertOne(redemption, { session });
-      result = { card, redemption, quota: quotaStateFromEntitlements(await activeQuotaEntitlements(db, userId, session)) };
+      return { card, redemption, quota: quotaStateFromEntitlements(await activeQuotaEntitlements(db, userId, session)) };
     });
+    billingLog.info("Card redeemed.", { userId, cardId: redeemed.card._id, planId: redeemed.card.planId, planName: redeemed.card.planName, quotaTokens: redeemed.card.quotaTokens, validityDays: redeemed.card.validityDays, balance: redeemed.quota.balance, expiresAt: redeemed.quota.expiresAt });
+    return redeemed;
+  } catch (error) {
+    // 兑换失败（不存在/已用/停用/用户缺失）是预期业务结果，记 warn 便于审计与滥用检测。
+    const reason = error instanceof NotFoundError
+      ? (error.message.includes("卡密") ? "card-not-found" : "user-not-found")
+      : error instanceof ConflictError
+        ? (error.message.includes("已被使用") ? "already-redeemed" : "disabled")
+        : "transaction-failed";
+    billingLog.warn("Card redeem failed.", { userId, reason });
+    throw error;
   } finally {
     await session.endSession();
   }
-
-  if (result === null) {
-    throw new Error("The redemption transaction did not commit.");
-  }
-  return result;
 }
 
 /**

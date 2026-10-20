@@ -26,11 +26,14 @@ import { withAvatarLock } from "@/lib/avatar-locks";
 import { requireUserSession } from "@/lib/auth";
 import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { getUserById, updateUserAvatar } from "@/lib/storage";
 import { getAvatarUpload } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+const avatarLog = createLogger("avatar");
 
 function userAvatarUrl(): string {
   return appUrl("/api/avatars/user");
@@ -113,6 +116,7 @@ export async function PUT(request: Request) {
         );
         const avatarVersion = Date.now();
         const version = await updateUserAvatar(session.sub, replacement.url, lock, avatarVersion);
+        avatarLog.info("User avatar updated.", { userId: session.sub, version, avatarVersion, contentType: avatar.contentType });
         return jsonOk({ url: userAvatarUrl(), version, avatarVersion });
       } catch (error) {
         const restored = replacement
@@ -121,6 +125,7 @@ export async function PUT(request: Request) {
         if (metadataCleared && restored && canRestorePriorAvatar && user.avatarUrl) {
           await updateUserAvatar(session.sub, user.avatarUrl, lock, user.avatarVersion);
         }
+        avatarLog.warn("User avatar replacement failed.", { userId: session.sub, restored, reason: error instanceof Error ? error.message : String(error) });
         throw error;
       }
     });
@@ -143,6 +148,7 @@ export async function DELETE() {
       }
       const version = await updateUserAvatar(session.sub, null, lock);
       await deleteUserAvatar(session.sub, verify);
+      avatarLog.info("User avatar deleted.", { userId: session.sub, version });
       return jsonOk({ url: null, version, avatarVersion: null });
     });
   } catch (error) {

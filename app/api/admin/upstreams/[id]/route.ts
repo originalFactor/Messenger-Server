@@ -16,11 +16,14 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { deleteUpstream, updateUpstream } from "@/lib/storage";
 import { upstreamInputSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+const adminLog = createLogger("admin");
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -38,6 +41,7 @@ export async function PUT(request: Request, context: RouteContext) {
 
   try {
     const upstream = await updateUpstream(id, parsed.data);
+    adminLog.info("Upstream updated.", { adminId: admin.claims.sub, entity: "upstream", entityId: id, name: upstream.name, modelCount: upstream.models?.length ?? 0, enabled: upstream.enabled });
     return jsonOk({ upstream });
   } catch (error) {
     return storageErrorResponse(error, "Unable to update the upstream.");
@@ -53,6 +57,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
   const { id } = await context.params;
   try {
     await deleteUpstream(id);
+    adminLog.info("Upstream deleted.", { adminId: admin.claims.sub, entity: "upstream", entityId: id });
     return jsonOk({ success: true });
   } catch (error) {
     return storageErrorResponse(error, "Unable to delete the upstream.");

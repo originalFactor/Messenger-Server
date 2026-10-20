@@ -27,6 +27,7 @@ import {
   Layers,
   LayoutDashboard,
   LogOut,
+  ScrollText,
   Server,
   Users,
   Wallet,
@@ -165,6 +166,14 @@ export function ConsoleShell({ email, role, children }: ConsoleShellProps) {
                     <Link href="/console/admin/users">
                       <Users />
                       <span>用户管理</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={isActive("/console/admin/logs")}>
+                    <Link href="/console/admin/logs">
+                      <ScrollText />
+                      <span>系统日志</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

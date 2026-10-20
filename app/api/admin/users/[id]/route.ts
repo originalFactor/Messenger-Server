@@ -16,10 +16,13 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { adminUpdateUser, ConflictError, NotFoundError } from "@/lib/storage";
 import { adminUserPatchSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+const adminLog = createLogger("admin");
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -38,12 +41,14 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   try {
     const user = await adminUpdateUser(admin.claims.sub, id, parsed.data);
+    adminLog.info("User updated by admin.", { adminId: admin.claims.sub, entity: "user", entityId: id, patch: parsed.data, role: user.role, quotaBalance: user.quotaBalance });
     return jsonOk({ user });
   } catch (error) {
     if (error instanceof NotFoundError) {
       return jsonError(error.message, 404);
     }
     if (error instanceof ConflictError) {
+      adminLog.warn("User update rejected by admin.", { adminId: admin.claims.sub, entityId: id, reason: error.message });
       return jsonError(error.message, 409);
     }
     throw error;

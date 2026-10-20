@@ -16,10 +16,13 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { createPlan, listPlans } from "@/lib/storage";
 import { planInputSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+const adminLog = createLogger("admin");
 
 export async function GET() {
   const admin = await requireAdminUser();
@@ -43,5 +46,6 @@ export async function POST(request: Request) {
   }
 
   const plan = await createPlan(parsed.data);
+  adminLog.info("Plan created.", { adminId: admin.claims.sub, entity: "plan", entityId: plan._id, planName: plan.name, quotaTokens: plan.quotaTokens, validityDays: plan.validityDays });
   return jsonOk({ plan }, 201);
 }

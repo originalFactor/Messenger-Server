@@ -17,12 +17,15 @@
 import { requireUserSession } from "@/lib/auth";
 import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { createMarketAgent, encodeMarketCursor, listMarketAgents } from "@/lib/storage";
 import { marketAgentSchema } from "@/lib/validation";
 import type { MarketAgentDoc } from "@/lib/types";
 
 export const runtime = "nodejs";
+
+const marketLog = createLogger("market");
 
 const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 50;
@@ -82,6 +85,7 @@ export async function POST(request: Request) {
 
   try {
     const agent = await createMarketAgent(session.sub, parsed.data);
+    marketLog.info("Market agent published.", { ownerUserId: session.sub, agentId: agent._id, name: agent.name, version: agent.version });
     return jsonOk({ agent: responseAgent(agent) }, 201);
   } catch (error) {
     return storageErrorResponse(error, "Unable to publish the market agent.");

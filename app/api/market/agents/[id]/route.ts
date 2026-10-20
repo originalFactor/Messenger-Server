@@ -17,12 +17,15 @@
 import { requireUserSession } from "@/lib/auth";
 import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { deleteMarketAgent, getMarketAgent, updateMarketAgent } from "@/lib/storage";
 import { entityIdSchema, marketAgentSchema } from "@/lib/validation";
 import type { MarketAgentDoc } from "@/lib/types";
 
 export const runtime = "nodejs";
+
+const marketLog = createLogger("market");
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -73,6 +76,7 @@ export async function PUT(request: Request, context: RouteContext) {
 
   try {
     const agent = await updateMarketAgent(session.sub, id, parsed.data);
+    marketLog.info("Market agent updated.", { ownerUserId: session.sub, agentId: id, name: agent.name, version: agent.version });
     return jsonOk({ agent: responseAgent(agent) });
   } catch (error) {
     return storageErrorResponse(error, "Unable to update the market agent.");
@@ -87,6 +91,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
 
   try {
     await deleteMarketAgent(session.sub, id);
+    marketLog.info("Market agent unpublished.", { ownerUserId: session.sub, agentId: id });
     return jsonOk({ success: true });
   } catch (error) {
     return storageErrorResponse(error, "Unable to remove the market agent.");

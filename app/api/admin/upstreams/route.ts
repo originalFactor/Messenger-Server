@@ -16,10 +16,13 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { createUpstream, listUpstreams } from "@/lib/storage";
 import { upstreamInputSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+const adminLog = createLogger("admin");
 
 export async function GET() {
   const admin = await requireAdminUser();
@@ -43,5 +46,6 @@ export async function POST(request: Request) {
   }
 
   const upstream = await createUpstream(parsed.data);
+  adminLog.info("Upstream created.", { adminId: admin.claims.sub, entity: "upstream", entityId: upstream._id, name: upstream.name, modelCount: upstream.models?.length ?? 0, enabled: upstream.enabled });
   return jsonOk({ upstream }, 201);
 }

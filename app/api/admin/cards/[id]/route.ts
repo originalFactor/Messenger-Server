@@ -16,11 +16,14 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { deleteCard, disableCard } from "@/lib/storage";
 import { cardPatchSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+const adminLog = createLogger("admin");
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -38,6 +41,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   try {
     const card = await disableCard(id);
+    adminLog.info("Card disabled.", { adminId: admin.claims.sub, entity: "card", entityId: id, status: card.status });
     return jsonOk({ card });
   } catch (error) {
     return storageErrorResponse(error, "Unable to disable the card key.");
@@ -53,6 +57,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
   const { id } = await context.params;
   try {
     await deleteCard(id);
+    adminLog.info("Card deleted.", { adminId: admin.claims.sub, entity: "card", entityId: id });
     return jsonOk({ success: true });
   } catch (error) {
     return storageErrorResponse(error, "Unable to delete the card key.");

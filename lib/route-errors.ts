@@ -44,6 +44,8 @@ export function storageErrorResponse(error: unknown, fallbackMessage: string) {
   if (isDuplicateKeyError(error)) {
     return jsonError("The requested change conflicts with existing data.", 409);
   }
+  // 5xx 兜底：经 instrumentation 的 stderr 捕获统一入 runtime_logs，
+  // 此处只保留原始 stderr 输出，避免显式 recordRuntimeLog 造成重复采集。
   console.error(`[API] ${fallbackMessage}`, errorDetails(error));
   return jsonError(fallbackMessage, 500);
 }

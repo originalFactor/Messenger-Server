@@ -26,11 +26,14 @@ import { withAvatarLock } from "@/lib/avatar-locks";
 import { requireUserSession } from "@/lib/auth";
 import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
+import { createLogger } from "@/lib/runtime-logs";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { getAgentById, updateAgentAvatar } from "@/lib/storage";
 import { entityIdSchema, getAvatarUpload } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+const avatarLog = createLogger("avatar");
 
 type RouteContext = { params: Promise<{ agentId: string }> };
 
@@ -126,6 +129,7 @@ export async function PUT(request: Request, context: RouteContext) {
         );
         const avatarVersion = Date.now();
         const version = await updateAgentAvatar(session.sub, agentId, replacement.url, lock, avatarVersion);
+        avatarLog.info("Agent avatar updated.", { userId: session.sub, agentId, version, avatarVersion, contentType: avatar.contentType });
         return jsonOk({
           url: appUrl(`/api/avatars/agents/${agentId}`),
           version,
@@ -138,6 +142,7 @@ export async function PUT(request: Request, context: RouteContext) {
         if (metadataCleared && restored && canRestorePriorAvatar && agent.avatarUrl) {
           await updateAgentAvatar(session.sub, agentId, agent.avatarUrl, lock, agent.avatarVersion);
         }
+        avatarLog.warn("Agent avatar replacement failed.", { userId: session.sub, agentId, restored, reason: error instanceof Error ? error.message : String(error) });
         throw error;
       }
     });
@@ -165,6 +170,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
       }
       const version = await updateAgentAvatar(session.sub, agentId, null, lock);
       await deleteAgentAvatar(agentId, verify);
+      avatarLog.info("Agent avatar deleted.", { userId: session.sub, agentId, version });
       return jsonOk({ url: null, version, avatarVersion: null });
     });
   } catch (error) {

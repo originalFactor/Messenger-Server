@@ -18,10 +18,13 @@ import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getModelDefaults } from "@/lib/model-metadata";
 import { currentStoredRates } from "@/lib/model-rates";
+import { createLogger } from "@/lib/runtime-logs";
 import { getModelRateSettings, listUpstreams, setBaseModel } from "@/lib/storage";
 import { baseModelInputSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+const adminLog = createLogger("admin");
 
 /**
  * 1x 基准模型设置：GET 返回当前基准与可候选模型（启用上游可服务模型的并集，
@@ -71,5 +74,6 @@ export async function PUT(request: Request) {
   }
 
   const settings = await setBaseModel({ baseModelId: parsed.data.baseModelId });
+  adminLog.info("Base model set.", { adminId: admin.claims.sub, entity: "model-base", operation: "set-base", baseModelId: settings.baseModelId });
   return jsonOk({ baseModelId: settings.baseModelId });
 }
