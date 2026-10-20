@@ -16,6 +16,7 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
+import { BlockedUrlError, assertOutboundUrl } from "@/lib/outbound-url";
 import { createLogger } from "@/lib/runtime-logs";
 import { storageErrorResponse } from "@/lib/route-errors";
 import { deleteUpstream, updateUpstream } from "@/lib/storage";
@@ -37,6 +38,14 @@ export async function PUT(request: Request, context: RouteContext) {
   const parsed = upstreamInputSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return jsonError("Invalid upstream payload.", 400);
+  }
+  try {
+    await assertOutboundUrl(parsed.data.baseUrl);
+  } catch (error) {
+    if (error instanceof BlockedUrlError) {
+      return jsonError(error.message, 400);
+    }
+    throw error;
   }
 
   try {

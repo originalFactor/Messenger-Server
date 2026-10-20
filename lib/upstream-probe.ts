@@ -17,6 +17,7 @@
 /** 上游 /models 探测的共享实现，供已存上游与表单直探两条路由使用。 */
 
 import { type ApiFormat, MODELS_PATH, normalizeApiFormat, upstreamHeaders } from "@/lib/ai-formats";
+import { BlockedUrlError, assertOutboundUrl } from "@/lib/outbound-url";
 import { createLogger } from "@/lib/runtime-logs";
 
 const relayLog = createLogger("relay");
@@ -36,6 +37,9 @@ const PROBE_TIMEOUT_MS = 15_000;
  * 拉取上游模型 ID。OpenAI/Anthropic 返回 `{ data: [{ id }] }`，Gemini 返回
  * `{ models: [{ name: "models/…" }] }` —— 两种形状都接受，Gemini 的名称去掉
  * `models/` 前缀后即为请求所用的模型 ID。
+ *
+ * 地址先过 SSRF 校验：表单直探允许管理员填任意 URL，不校验就等于把服务端
+ * 变成一个能访问内网的代理。
  */
 export async function fetchUpstreamModelIds(
   baseUrl: string,
@@ -43,6 +47,14 @@ export async function fetchUpstreamModelIds(
   apiFormat?: ApiFormat,
 ): Promise<string[]> {
   const format = normalizeApiFormat(apiFormat, "chat");
+  try {
+    await assertOutboundUrl(baseUrl);
+  } catch (error) {
+    if (error instanceof BlockedUrlError) {
+      throw new UpstreamProbeError(error.message, 400);
+    }
+    throw error;
+  }
   const url = `${baseUrl.replace(/\/+$/, "")}${MODELS_PATH}`;
   let response: Response;
   try {

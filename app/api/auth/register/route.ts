@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { createUserSessionToken, setUserSessionCookie } from "@/lib/auth";
 import { generateAiApiKey } from "@/lib/apikeys";
 import { jsonError, jsonOk } from "@/lib/http";
+import { clientIp, enforceRateLimits } from "@/lib/rate-limit";
 import { createLogger } from "@/lib/runtime-logs";
 import { hashPassword } from "@/lib/security";
 import { getUserByEmail, isDuplicateKeyError, saveUser } from "@/lib/storage";
@@ -27,10 +28,19 @@ export const runtime = "nodejs";
 
 const authLog = createLogger("auth");
 
+/** 同一 IP 每小时最多 10 次注册尝试（每次都会跑 scrypt）。 */
+const REGISTER_RULE = { bucket: "register-ip", limit: 10, windowMs: 60 * 60 * 1000 };
+
 export async function POST(request: Request) {
   const parsed = credentialsSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return jsonError("Invalid registration payload.", 400);
+  }
+
+  const limited = await enforceRateLimits([{ rule: REGISTER_RULE, identity: clientIp(request) }]);
+  if (limited) {
+    authLog.warn("Registration rate limited.", { reason: "rate-limited" });
+    return limited;
   }
 
   const { email, password } = parsed.data;

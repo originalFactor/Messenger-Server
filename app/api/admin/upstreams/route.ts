@@ -16,6 +16,7 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
+import { BlockedUrlError, assertOutboundUrl } from "@/lib/outbound-url";
 import { createLogger } from "@/lib/runtime-logs";
 import { createUpstream, listUpstreams } from "@/lib/storage";
 import { upstreamInputSchema } from "@/lib/validation";
@@ -43,6 +44,15 @@ export async function POST(request: Request) {
   const parsed = upstreamInputSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return jsonError("Invalid upstream payload.", 400);
+  }
+  // 保存前校验出站地址：中继会带着密钥请求它，不能指向内网/元数据服务。
+  try {
+    await assertOutboundUrl(parsed.data.baseUrl);
+  } catch (error) {
+    if (error instanceof BlockedUrlError) {
+      return jsonError(error.message, 400);
+    }
+    throw error;
   }
 
   const upstream = await createUpstream(parsed.data);

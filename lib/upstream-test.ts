@@ -26,6 +26,7 @@ import {
   upstreamHeaders,
 } from "@/lib/ai-formats";
 import { createLogger } from "@/lib/runtime-logs";
+import { BlockedUrlError, assertOutboundUrl } from "@/lib/outbound-url";
 
 const relayLog = createLogger("relay");
 
@@ -57,6 +58,15 @@ export async function testUpstreamModel(
   apiFormat?: ApiFormat,
 ): Promise<UpstreamTestResult> {
   const format = normalizeApiFormat(apiFormat, "chat");
+  // 表单直测同样能填任意地址：先过 SSRF 校验再发请求。
+  try {
+    await assertOutboundUrl(baseUrl);
+  } catch (error) {
+    if (error instanceof BlockedUrlError) {
+      throw new UpstreamTestError(error.message, 400);
+    }
+    throw error;
+  }
   const url = `${baseUrl.replace(/\/+$/, "")}${formatPath(format)}`;
   const ir: IrRequest = {
     model,

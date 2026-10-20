@@ -16,10 +16,17 @@
 
 import { requireUserSession } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
+import { enforceRateLimits } from "@/lib/rate-limit";
 import { ConflictError, NotFoundError, previewCard } from "@/lib/storage";
 import { redeemSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
+
+/**
+ * 预览不消费卡密，但会确认「该码存在且未使用」——不限速就等于提供一个
+ * 可批量验证卡密的预言机。与兑换共用同一计数桶，避免预览绕过兑换限速。
+ */
+const PREVIEW_RULE = { bucket: "redeem-user", limit: 20, windowMs: 60 * 60 * 1000 };
 
 /** 兑换前查询卡密信息（套餐快照），不消费卡密。 */
 export async function POST(request: Request) {
@@ -31,6 +38,11 @@ export async function POST(request: Request) {
   const parsed = redeemSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return jsonError("请输入有效的卡密。", 400);
+  }
+
+  const limited = await enforceRateLimits([{ rule: PREVIEW_RULE, identity: session.sub }]);
+  if (limited) {
+    return limited;
   }
 
   try {

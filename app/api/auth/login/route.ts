@@ -17,6 +17,7 @@
 import { createUserSessionToken, setUserSessionCookie } from "@/lib/auth";
 import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
+import { clientIp, enforceRateLimits } from "@/lib/rate-limit";
 import { createLogger } from "@/lib/runtime-logs";
 import { verifyPassword } from "@/lib/security";
 import { getUserByEmail, updateUserLastLogin } from "@/lib/storage";
@@ -26,6 +27,10 @@ export const runtime = "nodejs";
 
 const authLog = createLogger("auth");
 
+/** 同一 IP 每小时最多 20 次登录尝试；同一邮箱每小时最多 10 次（防定向爆破）。 */
+const LOGIN_IP_RULE = { bucket: "login-ip", limit: 20, windowMs: 60 * 60 * 1000 };
+const LOGIN_EMAIL_RULE = { bucket: "login-email", limit: 10, windowMs: 60 * 60 * 1000 };
+
 export async function POST(request: Request) {
   const parsed = credentialsSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -33,6 +38,15 @@ export async function POST(request: Request) {
   }
 
   const { email, password } = parsed.data;
+  const limited = await enforceRateLimits([
+    { rule: LOGIN_IP_RULE, identity: clientIp(request) },
+    { rule: LOGIN_EMAIL_RULE, identity: email },
+  ]);
+  if (limited) {
+    authLog.warn("Login rate limited.", { email, reason: "rate-limited" });
+    return limited;
+  }
+
   const user = await getUserByEmail(email);
   if (!user || !(await verifyPassword(password, user.passwordHash))) {
     authLog.warn("Login failed.", { email, reason: "invalid-credentials" });
