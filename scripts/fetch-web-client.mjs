@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 ECSDevs
+ * Copyright 2026 originalFactor
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,16 +21,17 @@
  *
  * The client is built from the Messenger repository — which is the PARENT of
  * this one, so its Kotlin/Wasm toolchain is not available here. It is therefore
- * consumed as an artifact: the parent's release workflow attaches
- * `messenger-web-<tag>.zip` to each GitHub Release, and this script downloads
- * the newest one.
+ * consumed as a CI artifact: the parent's `.github/workflows/ci.yml` uploads
+ * the `web-distribution` artifact on every successful run, and this script
+ * downloads the newest one through nightly.link, which redirects to GitHub's
+ * time-limited artifact download URL without requiring a login.
  *
  * Configuration (all optional):
- *   WEB_CLIENT_REPO      owner/name to download from  (default ECSDevs/Messenger)
- *   WEB_CLIENT_TAG       a specific release tag       (default: newest release)
- *   WEB_CLIENT_URL       explicit archive URL         (skips release lookup)
+ *   WEB_CLIENT_REPO      owner/name to download from  (default originalFactor/Messenger)
+ *   WEB_CLIENT_BRANCH    branch on nightly.link       (default main)
+ *   WEB_CLIENT_URL       explicit archive URL         (skips nightly.link lookup)
  *   WEB_CLIENT_REQUIRED  "1" makes a failure fatal    (default: warn and continue)
- *   WEB_CLIENT_VERSION   labels the unpacked build    (default: release tag)
+ *   WEB_CLIENT_VERSION   labels the unpacked build    (default: the branch name)
  *   WEB_CLIENT_BASE_PATH mount path of the client     (default /app/)
  *
  * Run manually with `pnpm web:client` (add `--force` to re-download).
@@ -48,9 +49,15 @@ const SERVER_ROOT = resolve(HERE, "..");
 const TARGET_DIR = join(SERVER_ROOT, "public", "app");
 const MARKER = join(TARGET_DIR, ".web-client-build.json");
 
-const REPO = process.env.WEB_CLIENT_REPO ?? "ECSDevs/Messenger";
-/** Release tag the parent repo's CI republishes on every push to main. */
-const ROLLING_TAG = "web-client";
+const REPO = process.env.WEB_CLIENT_REPO ?? "originalFactor/Messenger";
+/**
+ * nightly.link path segments that locate the parent repo's latest successful
+ * CI build. The `.zip` suffix forces a 302 to GitHub's time-limited artifact
+ * download URL instead of the HTML picker page.
+ */
+const WORKFLOW = process.env.WEB_CLIENT_WORKFLOW ?? "ci";
+const BRANCH = process.env.WEB_CLIENT_BRANCH ?? "main";
+const ARTIFACT = process.env.WEB_CLIENT_ARTIFACT ?? "web-distribution";
 const FORCE = process.argv.includes("--force");
 const REQUIRED = process.env.WEB_CLIENT_REQUIRED === "1";
 
@@ -132,7 +139,7 @@ async function isUpToDate() {
   if (!existsSync(join(TARGET_DIR, "index.html")) || !existsSync(join(TARGET_DIR, "webApp.js"))) {
     return false;
   }
-  const expected = process.env.WEB_CLIENT_TAG ?? process.env.WEB_CLIENT_VERSION;
+  const expected = process.env.WEB_CLIENT_BRANCH ?? process.env.WEB_CLIENT_VERSION;
   return !expected || expected === marker.version;
 }
 
@@ -144,53 +151,18 @@ async function resolveSource() {
     };
   }
 
-  // Prefer the dedicated rolling release tag. `/releases/latest` is NOT safe
-  // here: it follows whichever release was published most recently, so the next
-  // versioned tag release (which carries no web asset) would silently become
-  // the source and break the client. The rolling tag is stable by construction.
-  const attempts = process.env.WEB_CLIENT_TAG
-    ? [process.env.WEB_CLIENT_TAG]
-    : [ROLLING_TAG, null];
-
-  const problems = [];
-  for (const tag of attempts) {
-    const releaseUrl = tag
-      ? `https://api.github.com/repos/${REPO}/releases/tags/${tag}`
-      : `https://api.github.com/repos/${REPO}/releases/latest`;
-
-    let release;
-    try {
-      release = await getJson(releaseUrl);
-    } catch (error) {
-      problems.push(`${releaseUrl}: ${error.message}`);
-      continue;
-    }
-
-    const asset = (release.assets ?? []).find((candidate) =>
-      /^messenger-web-.*\.zip$/.test(candidate.name)
-    );
-    if (asset) return { url: asset.browser_download_url, version: release.tag_name };
-
-    problems.push(
-      `${release.tag_name} has no messenger-web-*.zip ` +
-        `(found: ${(release.assets ?? []).map((a) => a.name).join(", ") || "none"})`
-    );
-  }
-
-  return fail(`no web client artifact found:\n  - ${problems.join("\n  - ")}`);
-}
-
-async function getJson(url) {
-  const response = await fetch(url, {
-    headers: { accept: "application/vnd.github+json", "user-agent": "messenger-server" },
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.json();
+  // nightly.link redirects to GitHub's time-limited artifact download URL for
+  // the latest successful run of the workflow on the branch. The `.zip` suffix
+  // selects the direct 302 over the HTML picker page. A public repository needs
+  // no credentials; a private fork can still pin a branch via WEB_CLIENT_BRANCH.
+  const url = `https://nightly.link/${REPO}/workflows/${WORKFLOW}/${BRANCH}/${ARTIFACT}.zip`;
+  return { url, version: BRANCH };
 }
 
 async function download(url) {
-  // A fresh clone or a public release needs no credentials; a private fork
-  // can supply a token.
+  // A public repo needs no credentials at all — nightly.link resolves the
+  // artifact through its own GitHub App token. A private fork can supply a
+  // token, though nightly.link still has to be installed on the repo first.
   const headers = { "user-agent": "messenger-server" };
   if (process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
 
@@ -253,10 +225,10 @@ async function listContents(dir) {
 // Minimal ZIP reader
 // ---------------------------------------------------------------------------
 //
-// Dependency-free on purpose: the release archive is a plain deflate ZIP and
-// Node already ships the only primitive required (zlib.inflateRawSync). Adding
-// an extraction package to a production dependency list for this would be
-// disproportionate.
+// Dependency-free on purpose: the artifact is a plain deflate ZIP (GitHub's
+// upload-artifact always zips its contents), and Node already ships the only
+// primitive required (zlib.inflateRawSync). Adding an extraction package to a
+// production dependency list for this would be disproportionate.
 
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_SIGNATURE = 0x02014b50;

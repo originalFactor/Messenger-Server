@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 ECSDevs
+ * Copyright 2026 originalFactor
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -96,7 +96,7 @@ export default async function HomePage() {
             <Link className="hidden text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:block" href="/models">
               模型广场
             </Link>
-            <Link className="hidden text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:block" href="https://github.com/ECSDevs/Messenger">
+            <Link className="hidden text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:block" href="https://github.com/originalFactor/Messenger">
               GitHub
             </Link>
             {session ? (
@@ -154,7 +154,7 @@ export default async function HomePage() {
                 </Button>
               ) : null}
               <Button asChild variant="outline">
-                <Link href="https://github.com/ECSDevs/Messenger">下载 Messenger</Link>
+                <Link href="https://github.com/originalFactor/Messenger">下载 Messenger</Link>
               </Button>
             </div>
           </div>
@@ -219,7 +219,7 @@ export default async function HomePage() {
 
       <footer className="border-t">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-6 py-8 text-sm text-muted-foreground">
-          <span>© {new Date().getFullYear()} ECSDevs · Messenger Cloud</span>
+          <span>© {new Date().getFullYear()} originalFactor · Messenger Cloud</span>
           <span className="font-mono text-xs">{process.env.APP_BASE_URL ?? ""}</span>
         </div>
       </footer>

@@ -215,14 +215,14 @@ curl -sf http://127.0.0.1:3000/api/plans    # readiness probe (hits MongoDB)
 
 ### Web client (Compose Multiplatform) at /app
 
-The Messenger web client is a Kotlin/Wasm Compose application. Its output is **not** committed: `pnpm build` downloads the compiled bundle and unpacks it into `public/app/` before `next build` runs, so every deployment ships whatever the parent repository last published on `main`.
+The Messenger web client is a Kotlin/Wasm Compose application. Its output is **not** committed: `pnpm build` downloads the compiled bundle and unpacks it into `public/app/` before `next build` runs, so every deployment ships whatever the parent repository last built on `main`.
 
 It is consumed as a build artifact because this repository is the `server/` submodule of the Messenger repository — the Kotlin/Wasm toolchain that produces it is not available here.
 
 How the pieces connect:
 
-- **Producing side** — the parent repository's CI republishes a rolling GitHub Release tagged `web-client` with an asset `messenger-web-main.zip` on every push to `main` (`.github/workflows/ci.yml`).
-- **Consuming side** — `scripts/fetch-web-client.mjs` resolves that release, downloads the asset, and unpacks it into `public/app/`. It is wired into `pnpm build`, and can be run on its own with `pnpm web:client` (`--force` to re-download).
+- **Producing side** — the parent repository's CI (`.github/workflows/ci.yml` → `build-all.yml` → `build-web.yml`) uploads the `web-distribution` artifact on every successful run on `main`.
+- **Consuming side** — `scripts/fetch-web-client.mjs` downloads that artifact through [nightly.link](https://nightly.link) (`https://nightly.link/originalFactor/Messenger/workflows/ci/main/web-distribution.zip`, which redirects to GitHub's time-limited artifact download URL with no login required) and unpacks it into `public/app/`. It is wired into `pnpm build`, and can be run on its own with `pnpm web:client` (`--force` to re-download).
 
 `next.config.ts` rewrites `/app` to `/app/index.html` (Next.js does not serve a directory index from `public/`, and `/app/` is normalized back to `/app`), and injects a `<base href="/app/">` at unpack time so the client's relative asset references resolve under the mount path. `Cross-Origin-Opener-Policy`/`Cross-Origin-Embedder-Policy` are sent for `/app/:path*` only — the Compose renderer needs cross-origin isolation, but applying COEP site-wide would break third-party embeds.
 
@@ -230,9 +230,9 @@ Configuration (all optional):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `WEB_CLIENT_REPO` | `ECSDevs/Messenger` | Repository to download the release asset from |
-| `WEB_CLIENT_TAG` | `web-client` | Release tag to use instead of the rolling one |
-| `WEB_CLIENT_URL` | — | Explicit archive URL; skips the release lookup |
+| `WEB_CLIENT_REPO` | `originalFactor/Messenger` | Repository the nightly.link artifact lives in |
+| `WEB_CLIENT_BRANCH` | `main` | Branch the nightly.link URL resolves against |
+| `WEB_CLIENT_URL` | — | Explicit archive URL; skips the nightly.link lookup |
 | `WEB_CLIENT_BASE_PATH` | `/app/` | Mount path written into the `<base>` tag |
 | `WEB_CLIENT_REQUIRED` | unset | `1` makes a download failure fail the build |
 | `GITHUB_TOKEN` | — | Only needed when the source repository is private |
