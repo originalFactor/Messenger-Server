@@ -208,6 +208,7 @@ interface SessionClaims {
 - 错误：
   - `400 Invalid registration payload.`
   - `409 An account with this email already exists.`（先查后写，捕获唯一键冲突兜底）
+  - `429 Too many attempts. Try again later.`（限流：同 IP 10 次/小时；响应带 `Retry-After`）
 
 ### POST /api/auth/login
 
@@ -234,6 +235,7 @@ interface SessionClaims {
 - 错误：
   - `400 Invalid login payload.`
   - `401 Invalid email or password.`（用户不存在或密码错误均返回同一文案以防探测）
+  - `429 Too many attempts. Try again later.`（限流：同 IP 20 次/小时、同邮箱 10 次/小时；响应带 `Retry-After`）
 
 ### POST /api/auth/logout
 
@@ -302,7 +304,7 @@ interface SessionClaims {
 
 ### DELETE /api/auth/account
 
-永久注销账户。在同一存储事务内删除该用户的所有 `agents`、`conversations`、`providers`、`market_agents`、`redemptions`、`usage_logs` 文档，再异步清理三类头像 Blob，最后清除会话 Cookie。
+永久注销账户。在同一存储事务内删除该用户的所有 `agents`、`conversations`、`providers`、`projects`、`market_agents`、`redemptions`、`usage_logs`、`user_quotas` 文档与头像锁，再异步清理三类头像 Blob，最后清除会话 Cookie。
 
 - 鉴权：用户会话
 - 请求体：`passwordDeleteSchema`
@@ -315,6 +317,7 @@ interface SessionClaims {
 - 错误：
   - `400 Current password is required.`
   - `401 Unauthorized.` / `401 The current password is incorrect.`
+  - `409 The last administrator account cannot be deleted. Promote another administrator first.`（删除后实例将没有任何管理员，且 `ensureAdminBootstrap` 不会重新晋升）
   - 若用户已不存在但仍提供了正确密码：直接清 Cookie 返回 `200`。
   - 头像 Blob 删除失败仅记录服务端日志，不影响响应（账户数据已被删除）。
 
@@ -368,7 +371,7 @@ interface SessionClaims {
 }
 ```
 
-- 错误：`400 请输入有效的卡密。`、`404 卡密不存在，请检查输入是否正确。`、`409 该卡密已被使用。` / `该卡密已被停用。`
+- 错误：`400 请输入有效的卡密。`、`404 卡密不存在，请检查输入是否正确。`、`409 该卡密已被使用。` / `该卡密已被停用。`、`429`（与兑换共用同一限流桶：同一用户 20 次/小时，避免预览被当作卡密校验预言机）
 
 ### POST /api/console/redeem
 
@@ -396,7 +399,7 @@ interface SessionClaims {
 }
 ```
 
-- 错误：`400 请输入有效的卡密。`、`404 卡密不存在，请检查输入是否正确。`、`409 该卡密已被使用。` / `该卡密已被停用。`
+- 错误：`400 请输入有效的卡密。`、`404 卡密不存在，请检查输入是否正确。`、`409 该卡密已被使用。` / `该卡密已被停用。`、`429`（同一用户 20 次/小时，与预览共用同一限流桶）
 
 ### GET /api/console/redemptions
 
@@ -549,6 +552,8 @@ interface SessionClaims {
 
 四条对话路由共用一条管线（[`lib/ai-relay.ts`](./lib/ai-relay.ts)）：客户端请求先由 [`lib/ai-formats.ts`](./lib/ai-formats.ts) 解码为内部中间表示（IR），再按**上游配置的协议**编码；上游响应/SSE 先解码回 IR，最后按客户端使用的协议编码返回。因此客户端用哪种协议调用，与上游实际使用哪种协议完全解耦 —— 例如用 Anthropic Messages 调用一个只提供 OpenAI Chat Completions 的上游，或反之。
 
+上游协议为 `auto`（跟随客户端）时**不做 IR 往返**：客户端请求体与上游响应/SSE 字节原样转发（`response_format`、`stop`、`seed`、`tool_choice`、`stream_options` 等 IR 不承载的字段因此全部保留），服务端只在旁路解析 `data:` 载荷以嗅探 `usage` 用于计费；上游未返回 `usage` 时按完成文本字符数估算，与转换路径一致。因为请求体原样转发，需要上游 `usage` 的流式客户端应自带 `stream_options: {"include_usage": true}`。
+
 上游的协议在管理后台「上游管理 → 上游协议」配置（`apiFormat`）：
 
 | `apiFormat` | 上游请求路径 | 认证头 |
@@ -560,6 +565,8 @@ interface SessionClaims {
 | `auto` | 跟随客户端请求的协议 | 同上 |
 
 `baseUrl` 需含版本段（OpenAI 兼容为 `/v1`，Gemini 为 `/v1beta`）。模型列表探测 `GET <baseUrl>/models` 同时接受 `{data:[{id}]}` 与 `{models:[{name:"models/…"}]}` 两种形状。
+
+**出站地址校验（SSRF 防护）**：`baseUrl` 在保存（`POST`/`PUT /api/admin/upstreams`）、表单直探与直测之前都会经过 `lib/outbound-url.ts` 的 `assertOutboundUrl`：协议必须是 http(s)，主机名不能是 `localhost`/云元数据服务，且 DNS 解析出的所有地址都不得落在环回、私网（10/8、172.16/12、192.168/16）、链路本地（169.254/16、fe80::/10）、CGNAT（100.64/10）、ULA（fc00::/7）、组播或保留段（含 `::ffff:` 形式的 IPv4-mapped 地址）。被拒绝时返回 `400`。
 
 转换覆盖：文本、图片（`data:` URI 与 URL）、函数调用/结果、推理文本、`usage`、`finish_reason`。按设计丢弃：音频/视频块、引用标注、加密思维链签名、平台专有工具（web search / maps / file search）。
 
@@ -654,9 +661,11 @@ Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tool
 ```
 
 - 响应 `200`：`{ "id": "agent-uuid", "version": 43 }`
+- 默认角色转移：`isDefault: true` 的写入会在同一事务内把当前持有者降级（并给它打上本次 `version`，保证降级能进入增量同步）。客户端把「切换默认 Agent」表达为两次 PUT（先降级旧持有者、再晋升新持有者）也能成功：对当前默认 Agent 的降级请求是幂等的保序写入，服务端保持其 `isDefault: true` 并照常推进 `version`，下一次拉取会自动纠正客户端状态。
 - 错误：
   - `400 Invalid agent ID.` / `400 Invalid agent payload.` / `400 The agent ID must match the request path.`
   - `401 Unauthorized.`
+  - `409 An account must have a default agent before adding other agents.`（新增普通 Agent 时账户没有默认 Agent）
   - `409`（并发/唯一约束冲突，例如部分唯一索引保护「每用户一个默认 Agent」）
   - `500 Unable to save the agent.`
 
@@ -775,7 +784,7 @@ Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tool
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `since` | 非负整数 | 是 | 上次同步保存的 `latestVersion`，缺省按 `0` 处理 |
-| `collection` | `agents` \| `conversations` \| `providers` | 否 | 指定后进入分页模式 |
+| `collection` | `agents` \| `conversations` \| `providers` \| `projects` | 否 | 指定后进入分页模式 |
 | `cursor` | string | 否 | 分页游标（base64url 编码的 `{ version, id }`）；不能为空串 |
 | `limit` | 正整数 | 否 | 每页大小，默认 100，上限 500 |
 
@@ -786,11 +795,15 @@ Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tool
   "agents": [ /* AgentDoc[]，avatarUrl 已重写为 /api/avatars/agents/{id} */ ],
   "conversations": [ /* ConversationDoc[] */ ],
   "providers": [ /* ProviderDoc[] */ ],
-  "latestVersion": 48
+  "projects": [ /* ProjectDoc[] */ ],
+  "latestVersion": 48,
+  "truncated": false
 }
 ```
 
 响应头：`Cache-Control: no-store`
+
+合并模式按集合上限 500 条截断，避免一次拉取全部历史（含单文档最多 10k 条消息的会话）。命中上限时 `truncated: true`，且 `latestVersion` 是「已交付的最后一条 `version`」而不是用户当前水位线 —— 客户端保存它即可在下一次同步继续拉取剩余增量；建议改用 `collection=` 分页模式。
 
 #### 分页模式响应（带 `collection`）
 
@@ -1247,10 +1260,15 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 - `agents`: `{ userId: 1, version: 1 }`
 - `conversations`: `{ userId: 1, version: 1 }`、`{ userId: 1, agentId: 1 }`
 - `providers`: `{ userId: 1, version: 1 }`
+- `projects`: `{ userId: 1, version: 1 }`
 - `market_agents`: `{ deleted: 1, updatedAt: -1, _id: 1 }`、`{ ownerUserId: 1, deleted: 1 }`
 - `card_keys`: 唯一 `{ code: 1 }`、`{ status: 1, createdAt: -1, _id: 1 }`、`{ planId: 1, status: 1 }`
 - `redemptions`: `{ userId: 1, createdAt: -1, _id: 1 }`
 - `usage_logs`: `{ userId: 1, createdAt: -1, _id: 1 }`、`{ createdAt: -1, _id: 1 }`
+- `user_quotas`: `{ userId: 1, expiresAt: 1 }`
+- `runtime_logs`: `{ createdAt: -1, _id: 1 }`、`{ level: 1, createdAt: -1, _id: 1 }`、`{ source: 1, createdAt: -1, _id: 1 }`，外加 30 天 TTL 索引（`{ createdAt: 1 }` + `expireAfterSeconds`）
+- `rate_limits`: TTL `{ expiresAt: 1 }`（限流计数按窗口自动回收）
+- `model_metadata`: 单文档 `_id = "models_dev"`，models.dev 倍率快照（冷启动兜底）
 - 额外的部分唯一索引保护「每用户一个活跃默认 Agent」不变式
 
 首次连接还会执行记账口径迁移：没有 `inputExcludesCache` 标记的老 `usage_logs` 把 `promptTokens` 改为「上游提示总量 − `cachedTokens`」并补写标记（可重入，不重复扣减）。
@@ -1274,7 +1292,8 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 | 402 | AI API 额度耗尽或套餐过期（OpenAI 格式错误体，`type: "insufficient_quota"`） |
 | 403 | 非管理员访问 `/api/admin/*` |
 | 404 | 实体不存在、头像未设置、市场 Agent 不存在或不属于当前用户、模型不可用 / 无可用上游 |
-| 409 | 唯一约束冲突（重复邮箱、重复默认 Agent）、卡密已被使用、`ConflictError`、`AvatarLockError` |
+| 409 | 唯一约束冲突（重复邮箱、重复默认 Agent）、卡密已被使用、`ConflictError`、`AvatarLockError`、删除/降级最后一个管理员 |
+| 429 | 登录/注册/卡密预览/卡密兑换触发限流（响应带 `Retry-After`） |
 | 500 | 其他未捕获错误；详情写入服务端日志，响应体仅返回通用 `fallbackMessage` |
 | 502 | 上游探测/转发失败、全部上游不可用（OpenAI 格式错误体） |
 

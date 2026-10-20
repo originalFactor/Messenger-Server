@@ -720,7 +720,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
               填写模型服务的接口地址，例如{" "}
               <code className="font-mono text-xs">https://api.example.com/v1</code> 或{" "}
               <code className="font-mono text-xs">https://generativelanguage.googleapis.com/v1beta</code>
-              ；协议决定请求与响应的格式（「跟随客户端」按调用方使用的 API 自动转换）；
+              ；协议决定请求与响应的格式（「跟随客户端」把调用方的请求与上游返回原样透传，不做协议转换）；
               优先级数字越小越优先，同一模型有多个来源时会自动按优先级切换。
             </DialogDescription>
           </DialogHeader>

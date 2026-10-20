@@ -10,10 +10,9 @@
 #     -p 127.0.0.1:3000:3000 -v messenger-blobs:/data/blobs messenger-server
 
 FROM node:24-bookworm-slim AS base
-# Pinned to the `packageManager` version in package.json. Installed via npm
-# rather than corepack: corepack's bundled signing keys expire and its
-# downloads are an extra failure mode in offline/CI builds.
-RUN npm install -g pnpm@11.15.1
+# MUST match `packageManager` in package.json — a mismatched pnpm may refuse
+# the lockfile format or silently install with different resolution rules.
+RUN npm install -g pnpm@12.14.0
 WORKDIR /app
 
 # Dependencies are installed in their own layer so edits to app code reuse it.
