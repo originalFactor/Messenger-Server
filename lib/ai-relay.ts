@@ -64,9 +64,13 @@ import type { UpstreamDoc } from "@/lib/types";
 import { createLogger } from "@/lib/runtime-logs";
 
 /**
- * /v1 路由的执行预算（秒）。路由必须 `export const maxDuration =
- * RELAY_MAX_DURATION_SECONDS`，否则平台会在上游超时之前杀掉函数：客户端
- * 拿到无响应、用量也不会结算。
+ * /v1 路由的执行预算（秒）。路由必须写**字面量**
+ * `export const maxDuration = 120 satisfies typeof RELAY_MAX_DURATION_SECONDS`，
+ * 否则平台会在上游超时之前杀掉函数：客户端拿到无响应、用量也不会结算。
+ *
+ * 不能写成 `= RELAY_MAX_DURATION_SECONDS`：Next 静态解析 segment config，
+ * 标识符会报 Unknown identifier 并让 `next build` 以 1 退出。`satisfies`
+ * 让 typecheck 在常量漂移时失败。
  */
 export const RELAY_MAX_DURATION_SECONDS = 120;
 

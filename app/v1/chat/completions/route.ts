@@ -14,13 +14,17 @@
  * limitations under the License.
  */
 
-import { RELAY_MAX_DURATION_SECONDS, relayCompletion } from "@/lib/ai-relay";
+import { type RELAY_MAX_DURATION_SECONDS, relayCompletion } from "@/lib/ai-relay";
 
 export const runtime = "nodejs";
 // 必须 ≥ 上游超时（UPSTREAM_TIMEOUT_MS），否则平台会在上游返回前杀掉
 // 函数：客户端拿到空响应、用量也不会结算。Vercel 会按套餐静默钳制该值，
 // 部署时需要保证套餐上限不低于此数。
-export const maxDuration = RELAY_MAX_DURATION_SECONDS;
+//
+// 字面量是硬性要求：Next 的 segment config 只做静态解析，写成
+// `= RELAY_MAX_DURATION_SECONDS` 会报 Unknown identifier 并让 build 以 1 退出。
+// `satisfies` 把两处钉在一起，常量改动后 typecheck 会失败。
+export const maxDuration = 120 satisfies typeof RELAY_MAX_DURATION_SECONDS;
 
 /** OpenAI Chat Completions 兼容入口。 */
 export async function POST(request: Request) {

@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
-import { RELAY_MAX_DURATION_SECONDS, relayCompletion } from "@/lib/ai-relay";
+import { type RELAY_MAX_DURATION_SECONDS, relayCompletion } from "@/lib/ai-relay";
 
 export const runtime = "nodejs";
-export const maxDuration = RELAY_MAX_DURATION_SECONDS;
+// 字面量是硬性要求（Next 静态解析 segment config），`satisfies` 保证与
+// RELAY_MAX_DURATION_SECONDS 一致，见 ai-relay.ts。
+export const maxDuration = 120 satisfies typeof RELAY_MAX_DURATION_SECONDS;
 
 /** Anthropic Messages 兼容入口。 */
 export async function POST(request: Request) {
