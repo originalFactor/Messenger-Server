@@ -55,8 +55,12 @@ import { type BaseModelContext, resolveModelRates } from "@/lib/model-rates";
 import { computeCost } from "@/lib/quota";
 import { consumeQuota, getModelRateSettings, getUserQuotaState, listUpstreamsForModel, recordUsage } from "@/lib/storage";
 import type { UpstreamDoc } from "@/lib/types";
+import { createLogger } from "@/lib/runtime-logs";
 
 export const UPSTREAM_TIMEOUT_MS = 120_000;
+
+/** AI 中继业务事件日志器（source="relay"）。 */
+const relayLog = createLogger("relay");
 
 interface ModelDefaults {
   rates: Record<string, { input: number; output: number; cacheRead: number }>;
@@ -131,8 +135,9 @@ async function settleUsage(
       cost,
       durationMs: params.durationMs,
     });
+    relayLog.info("Usage settled.", { userId: params.userId, modelId: params.modelId, upstreamId: params.upstreamId, promptTokens: uncachedTokens, completionTokens, cachedTokens, totalTokens, cost, durationMs: params.durationMs });
   } catch (error) {
-    console.error("Unable to settle usage after completion.", error);
+    relayLog.error("Unable to settle usage after completion.", { userId: params.userId, modelId: params.modelId, upstreamId: params.upstreamId, error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : error });
   }
 }
 
@@ -152,38 +157,77 @@ function resolveUpstreamFormat(upstream: UpstreamDoc, clientFormat: ApiFormat): 
   return configured === "auto" ? clientFormat : normalizeApiFormat(configured, clientFormat);
 }
 
-/** 4xx 错误体转换为客户端格式，保留上游 message 与状态码。 */
-async function passthroughUpstreamError(
-  response: Response,
-  clientFormat: ApiFormat,
-  upstreamFormat: ApiFormat,
-): Promise<Response> {
-  const raw = await response.text().catch(() => "");
-  let message = raw || `Upstream returned ${response.status}.`;
+/** 记入日志的上游错误体截断长度：足够定位，又不至于把整页 HTML 写进日志。 */
+const UPSTREAM_ERROR_EXCERPT_LIMIT = 512;
+
+/**
+ * 一次上游尝试的失败记录。`status === null` = 没拿到响应（连接失败/超时）。
+ *
+ * `retryable` 判定的是「换下一个上游有没有可能成功」，不是「谁的责任」：
+ * 上游用 4xx 表达自身的模型/账号/转码故障（如 `tool calls and tool results
+ * do not match`、`Model … is not supported by any configured account`），
+ * 这类必须故障转移；只有 413/415 是载荷本身不可处理、换上游也没用。
+ */
+interface UpstreamFailure {
+  upstreamId: string;
+  upstreamFormat: ApiFormat;
+  status: number | null;
+  message: string;
+  raw: string;
+  contentType: string | null;
+  retryable: boolean;
+}
+
+/** 与上游无关、换上游也不会成功的 4xx（请求体不可处理）。 */
+const NON_RETRYABLE_STATUS: Record<number, true> = { 413: true, 415: true };
+
+/** 描述「请求体不合法」的 4xx：全部上游一致时回传给调用方，否则归为网关故障。 */
+const PAYLOAD_ERROR_STATUS: Record<number, true> = { 400: true, 422: true };
+
+/** 从 OpenAI / Anthropic / Gemini 三种错误体形状里取可读 message。 */
+function upstreamErrorMessage(raw: string, status: number): string {
   try {
     const parsed = JSON.parse(raw) as {
-      error?: { message?: unknown; type?: unknown } | string;
+      error?: { message?: unknown } | string;
       message?: unknown;
     };
-    if (typeof parsed.error === "string") {
-      message = parsed.error;
-    } else if (parsed.error && typeof parsed.error.message === "string") {
-      message = parsed.error.message;
-    } else if (typeof parsed.message === "string") {
-      message = parsed.message;
-    }
+    if (typeof parsed.error === "string") return parsed.error;
+    if (parsed.error && typeof parsed.error.message === "string") return parsed.error.message;
+    if (typeof parsed.message === "string") return parsed.message;
   } catch {
     // 非 JSON 错误体按原文返回。
   }
-  if (clientFormat === upstreamFormat) {
-    return new Response(raw || JSON.stringify(formatErrorBody(clientFormat, message)), {
-      status: response.status,
-      headers: { "content-type": response.headers.get("content-type") ?? "application/json" },
+  return raw.trim() || `Upstream returned ${status}.`;
+}
+
+/** 把一次失败的上游响应完整读入失败记录（读掉 body，避免连接悬挂）。 */
+async function recordUpstreamFailure(
+  response: Response,
+  upstream: UpstreamDoc,
+  upstreamFormat: ApiFormat,
+): Promise<UpstreamFailure> {
+  const raw = await response.text().catch(() => "");
+  return {
+    upstreamId: upstream._id,
+    upstreamFormat,
+    status: response.status,
+    message: upstreamErrorMessage(raw, response.status),
+    raw,
+    contentType: response.headers.get("content-type"),
+    retryable: response.status >= 500 || NON_RETRYABLE_STATUS[response.status] !== true,
+  };
+}
+
+/** 上游错误体转换为客户端格式，保留上游 message 与状态码。 */
+function upstreamFailureResponse(failure: UpstreamFailure, clientFormat: ApiFormat): Response {
+  const status = failure.status ?? 502;
+  if (clientFormat === failure.upstreamFormat) {
+    return new Response(failure.raw || JSON.stringify(formatErrorBody(clientFormat, failure.message)), {
+      status,
+      headers: { "content-type": failure.contentType ?? "application/json" },
     });
   }
-  return NextResponse.json(formatErrorBody(clientFormat, message, "upstream_error"), {
-    status: response.status,
-  });
+  return NextResponse.json(formatErrorBody(clientFormat, failure.message, "upstream_error"), { status });
 }
 
 function upstreamRequestBody(upstreamFormat: ApiFormat, ir: IrRequest): Record<string, unknown> {
@@ -195,12 +239,64 @@ function upstreamRequestBody(upstreamFormat: ApiFormat, ir: IrRequest): Record<s
   return body;
 }
 
+/**
+ * 所有上游都用尽时的响应。逐条记录每个上游的失败原因（状态码 + 上游原文
+ * 摘要），并让调用方看到真实原因而不是一律 `Upstream model service is
+ * unavailable`：
+ *
+ * - 全部尝试都以同一个 4xx 收场 → 原样返回该状态码与上游 message（典型：
+ *   `tool calls and tool results do not match`、模型不被上游支持）；
+ * - 其余（连接失败、5xx、4xx 混合）→ 502，消息里带上逐条摘要。
+ */
+function exhaustedResponse(
+  clientFormat: ApiFormat,
+  ir: IrRequest,
+  upstreams: UpstreamDoc[],
+  failures: UpstreamFailure[],
+  stream: boolean,
+): Response {
+  const summary = failures.map((failure, index) => {
+    const status = failure.status === null ? "no response" : String(failure.status);
+    return `[${index + 1}] ${failure.upstreamFormat} ${status}: ${failure.message.slice(0, 200)}`;
+  });
+  relayLog.error("All upstreams exhausted.", {
+    modelId: ir.model,
+    stream,
+    attempts: failures.map((failure) => ({
+      upstreamId: failure.upstreamId,
+      upstreamFormat: failure.upstreamFormat,
+      status: failure.status,
+      message: failure.message,
+      body: failure.raw.slice(0, UPSTREAM_ERROR_EXCERPT_LIMIT),
+    })),
+  });
+
+  const statuses = failures.map((failure) => failure.status);
+  // 只回传「上游认为请求体本身不合法」的状态码：401/402/403/429 是上游自己的
+  // 密钥或限流问题，回传给调用方会被误解为「你的 key 无效 / 额度不足」。
+  const agreedStatus =
+    statuses.length > 0 &&
+    statuses.every((status) => status !== null && PAYLOAD_ERROR_STATUS[status] === true && status === statuses[0])
+      ? statuses[0]
+      : null;
+  if (agreedStatus !== null) {
+    return clientError(clientFormat, failures[0].message, agreedStatus, "invalid_request_error");
+  }
+  return clientError(
+    clientFormat,
+    `Upstream model service is unavailable (${upstreams.length} upstream${upstreams.length === 1 ? "" : "s"} tried). ${summary.join("; ")}`,
+    502,
+    "api_error",
+  );
+}
+
 async function nonStreamProxy(
   clientFormat: ApiFormat,
   ir: IrRequest,
   upstreams: UpstreamDoc[],
   settle: SettleParams,
 ): Promise<Response> {
+  const failures: UpstreamFailure[] = [];
   for (const upstream of upstreams) {
     const upstreamFormat = resolveUpstreamFormat(upstream, clientFormat);
     let response: Response;
@@ -213,20 +309,33 @@ async function nonStreamProxy(
         signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       });
     } catch (error) {
-      console.error("Upstream request failed.", { upstreamId: upstream._id, error });
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push({ upstreamId: upstream._id, upstreamFormat, status: null, message, raw: "", contentType: null, retryable: true });
+      relayLog.warn("Upstream request failed.", { userId: settle.userId, modelId: settle.modelId, upstreamId: upstream._id, upstreamFormat, error: error instanceof Error ? { name: error.name, message: error.message } : error });
       continue;
     }
 
-    // 5xx 视为上游故障，切换下一个上游；4xx 一般是调用方参数问题，透传。
-    if (response.status >= 500) {
-      continue;
-    }
     if (!response.ok) {
-      return passthroughUpstreamError(response, clientFormat, upstreamFormat);
+      const failure = await recordUpstreamFailure(response, upstream, upstreamFormat);
+      failures.push(failure);
+      relayLog.warn(failure.retryable ? "Upstream error, failing over." : "Upstream error, not retryable, passing through.", {
+        userId: settle.userId,
+        modelId: settle.modelId,
+        upstreamId: upstream._id,
+        upstreamFormat,
+        status: failure.status,
+        message: failure.message,
+        body: failure.raw.slice(0, UPSTREAM_ERROR_EXCERPT_LIMIT),
+        remainingUpstreams: upstreams.length - failures.length,
+      });
+      if (failure.retryable) continue;
+      return upstreamFailureResponse(failure, clientFormat);
     }
 
     const payload = await response.json().catch(() => null);
     if (!payload) {
+      failures.push({ upstreamId: upstream._id, upstreamFormat, status: response.status, message: "Unreadable JSON response body.", raw: "", contentType: response.headers.get("content-type"), retryable: true });
+      relayLog.warn("Upstream response body is not JSON, failing over.", { userId: settle.userId, modelId: settle.modelId, upstreamId: upstream._id, upstreamFormat, status: response.status });
       continue;
     }
 
@@ -245,7 +354,7 @@ async function nonStreamProxy(
     });
   }
 
-  return clientError(clientFormat, "Upstream model service is unavailable.", 502, "api_error");
+  return exhaustedResponse(clientFormat, ir, upstreams, failures, false);
 }
 
 async function streamProxy(
@@ -254,6 +363,7 @@ async function streamProxy(
   upstreams: UpstreamDoc[],
   settle: SettleParams,
 ): Promise<Response> {
+  const failures: UpstreamFailure[] = [];
   for (const upstream of upstreams) {
     const upstreamFormat = resolveUpstreamFormat(upstream, clientFormat);
     let response: Response;
@@ -265,22 +375,36 @@ async function streamProxy(
         signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       });
     } catch (error) {
-      console.error("Upstream stream request failed.", { upstreamId: upstream._id, error });
-      continue;
-    }
-    if (response.status >= 500) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push({ upstreamId: upstream._id, upstreamFormat, status: null, message, raw: "", contentType: null, retryable: true });
+      relayLog.warn("Upstream stream request failed.", { userId: settle.userId, modelId: settle.modelId, upstreamId: upstream._id, upstreamFormat, error: error instanceof Error ? { name: error.name, message: error.message } : error });
       continue;
     }
     if (!response.ok) {
-      return passthroughUpstreamError(response, clientFormat, upstreamFormat);
+      const failure = await recordUpstreamFailure(response, upstream, upstreamFormat);
+      failures.push(failure);
+      relayLog.warn(failure.retryable ? "Upstream stream error, failing over." : "Upstream stream error, not retryable, passing through.", {
+        userId: settle.userId,
+        modelId: settle.modelId,
+        upstreamId: upstream._id,
+        upstreamFormat,
+        status: failure.status,
+        message: failure.message,
+        body: failure.raw.slice(0, UPSTREAM_ERROR_EXCERPT_LIMIT),
+        remainingUpstreams: upstreams.length - failures.length,
+      });
+      if (failure.retryable) continue;
+      return upstreamFailureResponse(failure, clientFormat);
     }
     if (!response.body) {
+      failures.push({ upstreamId: upstream._id, upstreamFormat, status: response.status, message: "Stream response has no body.", raw: "", contentType: null, retryable: true });
+      relayLog.warn("Upstream stream response has no body, failing over.", { userId: settle.userId, modelId: settle.modelId, upstreamId: upstream._id, upstreamFormat });
       continue;
     }
     return buildStreamingResponse(clientFormat, upstreamFormat, response, upstream, ir.model, settle);
   }
 
-  return clientError(clientFormat, "Upstream model service is unavailable.", 502, "api_error");
+  return exhaustedResponse(clientFormat, ir, upstreams, failures, true);
 }
 
 /** Exported for the stream-conversion smoke test; the routes reach it via [relayCompletion]. */
@@ -401,6 +525,7 @@ export interface RelayOptions {
 export async function relayCompletion({ format, request }: RelayOptions): Promise<Response> {
   const user = await authenticateAiKey(request);
   if (!user) {
+    relayLog.warn("AI key authentication failed.", { format, reason: "invalid-api-key" });
     return clientError(format, "Invalid API key.", 401, "authentication_error");
   }
 
@@ -409,6 +534,7 @@ export async function relayCompletion({ format, request }: RelayOptions): Promis
   try {
     ir = decodeClientRequest(format, body);
   } catch (error) {
+    relayLog.warn("Request decode failed.", { userId: user.id, format, reason: error instanceof Error ? error.message : "decode-error" });
     return clientError(
       format,
       error instanceof Error ? error.message : "Invalid request.",
@@ -419,6 +545,7 @@ export async function relayCompletion({ format, request }: RelayOptions): Promis
 
   const quota = await getUserQuotaState(user.id);
   if (!quota.available) {
+    relayLog.warn("Quota unavailable.", { userId: user.id, modelId: ir.model, stream: ir.stream, reason: quota.reason });
     return clientError(
       format,
       quota.reason === "expired"
@@ -431,8 +558,11 @@ export async function relayCompletion({ format, request }: RelayOptions): Promis
 
   const upstreams = await listUpstreamsForModel(ir.model);
   if (upstreams.length === 0) {
+    relayLog.warn("No upstream available for model.", { userId: user.id, modelId: ir.model, stream: ir.stream });
     return clientError(format, `Model '${ir.model}' has no available upstream.`, 404, "model_not_found");
   }
+
+  relayLog.info("Relay request started.", { userId: user.id, modelId: ir.model, stream: ir.stream, upstreamCount: upstreams.length, promptTokens: estimateIrPromptTokens(ir) });
 
   const defaults = await getModelDefaults();
   const settings = await getModelRateSettings();

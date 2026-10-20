@@ -579,7 +579,7 @@ interface SessionClaims {
 
 ### POST /v1/chat/completions
 
-标准的 OpenAI Chat Completions 请求/响应。流式请求对 `chat` 上游注入 `stream_options: {"include_usage": true}`；其他协议的上游各自在流内报告 usage。同模型配置多个启用上游时按 `priority` 升序故障转移（连接失败或 5xx 切换下一个；4xx 转换为客户端协议的错误体后透传）。
+标准的 OpenAI Chat Completions 请求/响应。流式请求对 `chat` 上游注入 `stream_options: {"include_usage": true}`；其他协议的上游各自在流内报告 usage。同模型配置多个启用上游时按 `priority` 升序故障转移：连接失败/超时、5xx、响应体不可解析，以及绝大多数 4xx 都换下一个上游 —— 上游常用 4xx 表达自身故障（模型未配置、历史转码失败等），并非都是调用方参数问题。只有 413/415（请求体本身不可处理，换上游也无用）直接返回，响应体转换为客户端协议的错误体。
 
 ### POST /v1/responses
 
@@ -596,6 +596,8 @@ Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tool
 ### 错误体
 
 每条路由按自己的协议返回错误体，状态码语义一致（401 无效 Key、402 额度耗尽/套餐过期、404 模型无可用上游、502 全部上游不可用、400 请求体不合法）：
+
+上游全部失败时：所有尝试都是同一个 400/422 则原样返回该状态码与上游 message（请求体确实不合法）；其余情况返回 502，message 里逐条列出每个上游的失败摘要（上游协议 + 状态码 / `no response` + 上游原文），便于区分网络失败、上游 5xx 与协议转码失败。
 
 ```jsonc
 // chat / responses
