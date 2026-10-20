@@ -200,6 +200,70 @@ function textOf(content: unknown): string {
   }
 }
 
+/**
+ * 工具调用配对簿：登记尚未收到结果的调用，并保证两侧解析出同一个键。
+ *
+ * 只有 Chat Completions 把调用与结果分别放在 `tool_calls` 和 `tool_call_id`
+ * 上；Responses / Interactions 是平铺的兄弟条目，Anthropic 则是同一回合里
+ * 的 block。配对键缺失时（旧客户端、其他网关转发的历史）不能退化成空串 ——
+ * 空串必然让上游判定 `tool calls and tool results do not match`。这里按
+ * 到达顺序认领未完成的调用；完全没有结果的调用在收尾时补一条显式的
+ * 「未返回」失败结果，使 call 与 result 的键集合始终相等。
+ */
+class ToolCallLedger {
+  /** 待配对调用：`keys[0]` 是写入历史的键，其余是同一条调用的别名。 */
+  private readonly pending: { keys: string[] }[] = [];
+  private synthetic = 0;
+
+  /** 登记一次调用，返回其配对键（无自带键时按到达顺序自造）。 */
+  open(id: string | undefined, ...aliases: (string | undefined)[]): string {
+    const callId = id ?? `call_synth_${this.synthetic}`;
+    this.synthetic += 1;
+    const keys = [callId, ...aliases.filter((alias): alias is string => alias !== undefined && alias !== callId)];
+    this.pending.push({ keys });
+    return callId;
+  }
+
+  /**
+   * 认领一次结果：键匹配任一别名即命中；键缺失按 FIFO 认领最早的调用。
+   * 返回 undefined = 没有可配对的调用（结果无主，调用方应丢弃它）。
+   */
+  settle(id: string | undefined): string | undefined {
+    const index =
+      id === undefined ? 0 : this.pending.findIndex((entry) => entry.keys.includes(id));
+    if (index === -1) return undefined;
+    return this.pending.splice(index, 1)[0]?.keys[0];
+  }
+
+  /**
+   * 为从未收到结果的调用补一条错误结果，插在该 assistant 回合之后。
+   * 结果文本明确说明工具未返回，不伪造任何工具输出。
+   */
+  reconcile(messages: IrMessage[]): void {
+    if (this.pending.length === 0) return;
+    const unanswered = new Set(this.pending.map((entry) => entry.keys[0]));
+    for (let index = 0; index < messages.length && unanswered.size > 0; index += 1) {
+      const message = messages[index];
+      if (message.role !== "assistant") continue;
+      const results: IrPart[] = [];
+      for (const part of message.parts) {
+        if (part.type !== "tool_call" || !unanswered.delete(part.id)) continue;
+        results.push({
+          type: "tool_result",
+          callId: part.id,
+          output: "The tool call did not return a result.",
+          isError: true,
+        });
+      }
+      if (results.length > 0) {
+        messages.splice(index + 1, 0, { role: "tool", parts: results });
+        index += 1;
+      }
+    }
+    this.pending.length = 0;
+  }
+}
+
 function parseDataUri(uri: string): { mediaType: string; data: string } | null {
   const match = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/.exec(uri);
   if (!match) return null;
@@ -306,6 +370,7 @@ function baseRequest(model: string, record: Json): Omit<IrRequest, "messages"> {
 
 function decodeChatRequest(model: string, record: Json): IrRequest {
   const messages: IrMessage[] = [];
+  const ledger = new ToolCallLedger();
   for (const raw of asArray(record.messages)) {
     const message = asRecord(raw);
     if (!message) continue;
@@ -338,23 +403,19 @@ function decodeChatRequest(model: string, record: Json): IrRequest {
       if (!call || !name) continue;
       parts.push({
         type: "tool_call",
-        id: str(call.id) ?? `call_${parts.length}`,
+        id: ledger.open(str(call.id)),
         name,
         arguments: str(fn?.arguments) ?? "{}",
       });
     }
 
     if (role === "tool") {
-      const output = textOf(content);
+      const callId = ledger.settle(str(message.tool_call_id));
+      // 无主结果无法配对；丢弃它比发出非法历史安全。
+      if (callId === undefined) continue;
       messages.push({
         role: "tool",
-        parts: [
-          {
-            type: "tool_result",
-            callId: str(message.tool_call_id) ?? "",
-            output,
-          },
-        ],
+        parts: [{ type: "tool_result", callId, output: textOf(content) }],
       });
       continue;
     }
@@ -362,6 +423,8 @@ function decodeChatRequest(model: string, record: Json): IrRequest {
     if (role !== "system" && role !== "user" && role !== "assistant") continue;
     messages.push({ role, parts });
   }
+
+  ledger.reconcile(messages);
 
   return {
     ...baseRequest(model, record),
@@ -383,6 +446,7 @@ function decodeOpenAiTools(value: unknown): IrTool[] | undefined {
 
 function decodeResponsesRequest(model: string, record: Json): IrRequest {
   const messages: IrMessage[] = [];
+  const ledger = new ToolCallLedger();
   const instructions = record.instructions;
   if (typeof instructions === "string" && instructions.trim()) {
     messages.push({ role: "system", parts: [{ type: "text", text: instructions }] });
@@ -398,29 +462,35 @@ function decodeResponsesRequest(model: string, record: Json): IrRequest {
       if (type === "function_call") {
         const name = str(item.name);
         if (!name) continue;
-        messages.push({
-          role: "assistant",
-          parts: [
-            {
-              type: "tool_call",
-              id: str(item.call_id) ?? str(item.id) ?? `call_${messages.length}`,
-              name,
-              arguments: typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments ?? {}),
-            },
-          ],
-        });
+        // `call_id` is the pairing key for `function_call_output`; `id` (fc_…)
+        // is a different opaque item id, kept only as an alias for histories
+        // that omit `call_id` on either side.
+        const call: IrPart = {
+          type: "tool_call",
+          id: ledger.open(str(item.call_id) ?? str(item.id), str(item.id)),
+          name,
+          arguments: typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments ?? {}),
+        };
+        // Responses flattens a parallel tool-calling turn into sibling
+        // `function_call` items. They must merge into one assistant message —
+        // one call per message makes the Chat Completions history invalid.
+        // The tail is only `assistant` while the turn is open: a result or a
+        // new user turn closes it.
+        const tail = messages[messages.length - 1];
+        if (tail && tail.role === "assistant") {
+          tail.parts.push(call);
+        } else {
+          messages.push({ role: "assistant", parts: [call] });
+        }
         continue;
       }
       if (type === "function_call_output") {
+        const callId = ledger.settle(str(item.call_id) ?? str(item.id));
+        // 无主结果（对应调用不在历史里）无法配对，丢弃比发出非法历史安全。
+        if (!callId) continue;
         messages.push({
           role: "tool",
-          parts: [
-            {
-              type: "tool_result",
-              callId: str(item.call_id) ?? "",
-              output: textOf(item.output),
-            },
-          ],
+          parts: [{ type: "tool_result", callId, output: textOf(item.output) }],
         });
         continue;
       }
@@ -451,6 +521,8 @@ function decodeResponsesRequest(model: string, record: Json): IrRequest {
     }
   }
 
+  ledger.reconcile(messages);
+
   const tools: IrTool[] = [];
   for (const raw of asArray(record.tools)) {
     const tool = asRecord(raw);
@@ -469,6 +541,7 @@ function decodeResponsesRequest(model: string, record: Json): IrRequest {
 
 function decodeMessagesRequest(model: string, record: Json): IrRequest {
   const messages: IrMessage[] = [];
+  const ledger = new ToolCallLedger();
   const system = record.system;
   if (typeof system === "string" && system.trim()) {
     messages.push({ role: "system", parts: [{ type: "text", text: system }] });
@@ -507,14 +580,17 @@ function decodeMessagesRequest(model: string, record: Json): IrRequest {
           if (!name) continue;
           parts.push({
             type: "tool_call",
-            id: str(block.id) ?? `call_${parts.length}`,
+            id: ledger.open(str(block.id)),
             name,
             arguments: JSON.stringify(block.input ?? {}),
           });
         } else if (type === "tool_result") {
+          const callId = ledger.settle(str(block.tool_use_id));
+          // 无主结果无法配对；丢弃它比发出非法历史安全。
+          if (callId === undefined) continue;
           parts.push({
             type: "tool_result",
-            callId: str(block.tool_use_id) ?? "",
+            callId,
             output: textOf(block.content),
             isError: block.is_error === true,
           });
@@ -523,6 +599,8 @@ function decodeMessagesRequest(model: string, record: Json): IrRequest {
     }
     messages.push({ role, parts });
   }
+
+  ledger.reconcile(messages);
 
   const tools: IrTool[] = [];
   for (const raw of asArray(record.tools)) {
@@ -541,6 +619,7 @@ function decodeMessagesRequest(model: string, record: Json): IrRequest {
 
 function decodeInteractionsRequest(model: string, record: Json): IrRequest {
   const messages: IrMessage[] = [];
+  const ledger = new ToolCallLedger();
   const system = str(record.system_instruction);
   if (system && system.trim()) {
     messages.push({ role: "system", parts: [{ type: "text", text: system }] });
@@ -557,26 +636,31 @@ function decodeInteractionsRequest(model: string, record: Json): IrRequest {
       if (type === "function_call") {
         const name = str(step.name);
         if (!name) continue;
-        messages.push({
-          role: "assistant",
-          parts: [
-            {
-              type: "tool_call",
-              id: str(step.id) ?? `call_${messages.length}`,
-              name,
-              arguments: typeof step.arguments === "string" ? step.arguments : JSON.stringify(step.arguments ?? {}),
-            },
-          ],
-        });
+        const call: IrPart = {
+          type: "tool_call",
+          id: ledger.open(str(step.call_id) ?? str(step.id)),
+          name,
+          arguments: typeof step.arguments === "string" ? step.arguments : JSON.stringify(step.arguments ?? {}),
+        };
+        // 连续的 `function_call` 属于同一回合，合并进仍在打开的 assistant 消息。
+        const tail = messages[messages.length - 1];
+        if (tail && tail.role === "assistant") {
+          tail.parts.push(call);
+        } else {
+          messages.push({ role: "assistant", parts: [call] });
+        }
         continue;
       }
       if (type === "function_result") {
+        const callId = ledger.settle(str(step.call_id) ?? str(step.id));
+        // 无主结果无法配对；丢弃它比发出非法历史安全。
+        if (!callId) continue;
         messages.push({
           role: "tool",
           parts: [
             {
               type: "tool_result",
-              callId: str(step.call_id) ?? "",
+              callId,
               name: str(step.name),
               output: textOf(step.result),
               isError: step.is_error === true,
@@ -610,6 +694,8 @@ function decodeInteractionsRequest(model: string, record: Json): IrRequest {
       messages.push({ role: type === "user_input" ? "user" : "assistant", parts });
     }
   }
+
+  ledger.reconcile(messages);
 
   const tools: IrTool[] = [];
   for (const raw of asArray(record.tools)) {
@@ -656,8 +742,35 @@ function encodeOpenAiTools(ir: IrRequest): unknown[] | undefined {
   }));
 }
 
+/**
+ * 历史里同一轮的并行工具调用可能被存成多条 assistant 消息。Chat Completions
+ * 只接受「一条 assistant 携带多个 tool_calls」，因此把连续、且没有文本内容
+ * 的 tool_calls 消息合并成一条 —— 否则上游判定 tool calls 与结果不匹配。
+ */
+function mergeParallelToolCalls(messages: Json[]): Json[] {
+  const merged: Json[] = [];
+  for (const message of messages) {
+    const previous = merged[merged.length - 1];
+    const content = message.content;
+    const hasContent =
+      typeof content === "string" ? content.length > 0 : Array.isArray(content) && content.length > 0;
+    if (
+      message.role === "assistant" &&
+      previous?.role === "assistant" &&
+      Array.isArray(previous.tool_calls) &&
+      Array.isArray(message.tool_calls) &&
+      !hasContent
+    ) {
+      previous.tool_calls = [...previous.tool_calls, ...message.tool_calls];
+      continue;
+    }
+    merged.push(message);
+  }
+  return merged;
+}
+
 function encodeChatRequest(ir: IrRequest): Json {
-  const messages = ir.messages.flatMap((message) => {
+  const wireMessages = ir.messages.flatMap((message): Json[] => {
     const textParts = message.parts.filter((part) => part.type === "text") as Array<{
       type: "text";
       text: string;
@@ -680,12 +793,26 @@ function encodeChatRequest(ir: IrRequest): Json {
 
     // Anthropic/Interactions carry tool results as blocks inside a user
     // turn; Chat Completions needs one `role:"tool"` message per result.
+    // A user turn may also carry text next to those blocks — it must survive
+    // as a separate message after the tool results, or the turn loses content.
     if (message.role === "tool" || results.length > 0) {
-      return results.map((result) => ({
+      const toolMessages = results.map((result) => ({
         role: "tool",
         content: result.output,
         tool_call_id: result.callId,
       }));
+      if (message.role === "tool") return toolMessages;
+      const remainder: Json = {
+        role: message.role,
+        content:
+          images.length === 0
+            ? textParts.map((part) => part.text).join("\n")
+            : [
+                ...textParts.map((part) => ({ type: "text", text: part.text })),
+                ...images.map((part) => ({ type: "image_url", image_url: { url: part.url } })),
+              ],
+      };
+      return textParts.length === 0 && images.length === 0 ? toolMessages : [...toolMessages, remainder];
     }
     const content =
       images.length === 0
@@ -703,8 +830,9 @@ function encodeChatRequest(ir: IrRequest): Json {
       }));
       if (textParts.length === 0 && images.length === 0) wire.content = null;
     }
-    return wire;
+    return [wire];
   });
+  const messages = mergeParallelToolCalls(wireMessages);
 
   const body: Json = { model: ir.model, messages, stream: ir.stream };
   if (ir.temperature !== undefined) body.temperature = ir.temperature;
@@ -841,7 +969,15 @@ function encodeMessagesRequest(ir: IrRequest): Json {
     flushToolResults(pendingResults);
     pendingResults = [];
 
+    // A user turn carrying tool results may also carry text/images; those
+    // stay in the same Anthropic user turn, after the lifted result blocks.
     const content: unknown[] = [
+      ...results.map((result) => ({
+        type: "tool_result",
+        tool_use_id: result.callId,
+        content: result.output,
+        ...(result.isError ? { is_error: true } : {}),
+      })),
       ...texts.map((part) => ({ type: "text", text: part.text })),
       ...images.map((part) => {
         const parsed = parseDataUri(part.url);
