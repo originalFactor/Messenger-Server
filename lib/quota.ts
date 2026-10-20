@@ -56,6 +56,43 @@ export function computeCost(
   return Math.max(1, Math.ceil(billableInput * ir + cached * cr + completion * or));
 }
 
+/**
+ * 未过期条目的汇总（管理端展示口径）：余额为条目之和，`unlimited` 表示
+ * 至少持有一条不限期条目（此时 `expiresAt` 恒为 null —— 只要有一条不过期，
+ * 展示「不限」就是准确的），否则为有限期条目中最晚的到期时间。
+ *
+ * `listUsers`（聚合）与 `adminUpdateUser`（内存汇总）共用这一口径，
+ * 否则同一个用户在列表页与修改响应里会显示互相矛盾的「不限/到期时间」。
+ */
+export interface QuotaEntitlementSummary {
+  balance: number;
+  /** 至少一条不限期条目时为 null；否则为有限期条目中最晚的到期时间。 */
+  expiresAt: number | null;
+  /** 是否至少持有一条不限期（expiresAt = null）的未过期条目。 */
+  unlimited: boolean;
+  /** 未过期条目数。 */
+  activeCount: number;
+}
+
+export function summarizeQuotaEntitlements(
+  entitlements: QuotaEntitlementView[],
+  now = Date.now(),
+): QuotaEntitlementSummary {
+  const active = entitlements.filter((entry) => entry.expiresAt === null || entry.expiresAt > now);
+  const withExpiry = active.filter(
+    (entry): entry is QuotaEntitlementView & { expiresAt: number } => entry.expiresAt !== null,
+  );
+  const unlimited = withExpiry.length < active.length;
+  return {
+    balance: active.reduce((sum, entry) => sum + Math.max(0, entry.balance), 0),
+    expiresAt: unlimited || withExpiry.length === 0
+      ? null
+      : Math.max(...withExpiry.map((entry) => entry.expiresAt)),
+    unlimited,
+    activeCount: active.length,
+  };
+}
+
 export interface QuotaState {
   balance: number;
   expiresAt: number | null;

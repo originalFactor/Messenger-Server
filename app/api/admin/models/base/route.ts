@@ -28,8 +28,10 @@ const adminLog = createLogger("admin");
 
 /**
  * 1x 基准模型设置：GET 返回当前基准与可候选模型（启用上游可服务模型的并集，
- * 附带各自当前生效的输入/缓存/输出倍率）；PUT 切换基准，全量重算所有上游
- * 已存的 tokenType 倍率（含覆盖条目）后写回。
+ * 附带各自当前生效的输入/缓存/输出倍率）；PUT 只写 `model_rate_settings`。
+ *
+ * 基准是解析期的分母（见 `resolveModelRates`），不是写回上游的数据：
+ * 切换基准不改任何上游存量倍率，因此模型间相对价格恒定、随时可逆。
  */
 export async function GET() {
   const admin = await requireAdminUser();

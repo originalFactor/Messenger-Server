@@ -20,7 +20,7 @@ import { UsageRangePicker } from "@/components/admin/usage-range-picker";
 import { requireAdminUser } from "@/lib/auth";
 import {
   listSiteRecentUsage,
-  listUpstreams,
+  listUpstreamNames,
   resolveUsageRows,
   sumUsageByModelBuckets,
   sumUsageByUpstreamBuckets,
@@ -156,15 +156,15 @@ async function loadSiteUsageData(
 ) {
   // 当前页明细（20 条）+ 总数 + 曲线聚合（整个所选范围）并行拉取；
   // 上游列表用于把曲线/明细里的 upstreamId 解析成可读名称。
-  const [usagePage, upstreams, modelBuckets, upstreamBuckets] = await Promise.all([
+  const [usagePage, upstreamNames, modelBuckets, upstreamBuckets] = await Promise.all([
     listSiteRecentUsage({ sinceTs, untilTs, page }),
-    listUpstreams(),
+    // 只要 _id → name：完整上游文档会带上 apiKey 与全部 modelMeta。
+    listUpstreamNames(),
     sumUsageByModelBuckets(null, sinceTs ?? -Infinity, bucketMs, untilTs),
     sumUsageByUpstreamBuckets(null, sinceTs ?? -Infinity, bucketMs, untilTs),
   ]);
   const rows = await resolveUsageRows(usagePage.logs);
 
-  const upstreamNames = new Map(upstreams.map((upstream) => [upstream._id, upstream.name]));
   const modelTrend = modelBuckets.map((bucket) => ({ ts: bucket.ts, id: bucket.modelId, tokens: bucket.tokens }));
   // 曲线图例 id：上游名称缺失（被删）时统一回退「已删除」，与明细表「上游」列
   // 口径一致，避免图例出现裸 UUID；`upstreamId` 为 null 的老记录仍归到「未知」线。

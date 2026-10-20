@@ -18,7 +18,7 @@ import { clearUserSessionCookie, requireUserSession } from "@/lib/auth";
 import { deleteAgentAvatar, deleteMarketAgentAvatar, deleteUserAvatar } from "@/lib/avatars";
 import { jsonError, jsonOk } from "@/lib/http";
 import { createLogger } from "@/lib/runtime-logs";
-import { getUserById, deleteUserAccount } from "@/lib/storage";
+import { getUserById, countAdminUsers, deleteUserAccount } from "@/lib/storage";
 import { verifyPassword } from "@/lib/security";
 import { passwordDeleteSchema } from "@/lib/validation";
 
@@ -44,6 +44,15 @@ export async function DELETE(request: Request) {
   if (!(await verifyPassword(parsed.data.currentPassword, user.passwordHash))) {
     authLog.warn("Account deletion rejected: wrong current password.", { userId: session.sub });
     return jsonError("The current password is incorrect.", 401);
+  }
+  if (user.role === "admin") {
+    // 最后一个管理员删号后没有任何人能提升管理员（system_bootstrap 标记
+    // 仍在，ensureAdminBootstrap 会直接返回），实例将永久失去管理入口。
+    const adminCount = await countAdminUsers();
+    if (adminCount <= 1) {
+      authLog.warn("Account deletion rejected: last admin.", { userId: session.sub, email: user.email });
+      return jsonError("The last administrator account cannot be deleted. Promote another administrator first.", 409);
+    }
   }
 
   const { agentIds, marketAgentIds } = await deleteUserAccount(session.sub);

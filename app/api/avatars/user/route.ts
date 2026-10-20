@@ -16,6 +16,7 @@
 
 import {
   AvatarReplacementError,
+  type AvatarReplacement,
   deleteUserAvatar,
   fetchAvatarWithConditional,
   revertUserAvatar,
@@ -100,7 +101,7 @@ export async function PUT(request: Request) {
       const backups = await snapshotUserAvatar(session.sub, verify);
       const canRestorePriorAvatar = user.avatarUrl !== null && backups.some((backup) => backup.url === user.avatarUrl);
       let metadataCleared = false;
-      let replacement: Awaited<ReturnType<typeof uploadUserAvatar>> | null = null;
+      let replacement: AvatarReplacement | null = null;
       try {
         if (user.avatarUrl) {
           await updateUserAvatar(session.sub, null, lock);

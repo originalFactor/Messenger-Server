@@ -396,7 +396,14 @@ export interface SyncResponse {
   conversations: ConversationDoc[];
   providers: ProviderDoc[];
   projects: ProjectDoc[];
+  /**
+   * 客户端应保存为下一次 `since` 的水位线。合并路径按集合上限截断时，
+   * 这里是「已交付的最后一条 version」而不是用户当前 syncVersion，
+   * 以保证剩余增量仍会在下次同步中被拉到。
+   */
   latestVersion: number;
+  /** 合并路径命中上限（客户端应改用 `?collection=` 分页拉取）。 */
+  truncated?: boolean;
 }
 
 export interface UpsertResponse {

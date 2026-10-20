@@ -15,10 +15,10 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { type ClientSession, type Db, type Filter, MongoServerError } from "mongodb";
+import { type ClientSession, type Db, type Filter, MongoBulkWriteError, MongoServerError } from "mongodb";
 import { renewAvatarLock, type AvatarLock } from "@/lib/avatar-locks";
 import { generateCardCode, normalizeCardCode } from "@/lib/apikeys";
-import { quotaStateFromEntitlements } from "@/lib/quota";
+import { quotaStateFromEntitlements, summarizeQuotaEntitlements } from "@/lib/quota";
 import { getDb, getMongoClient } from "@/lib/mongo";
 import { createLogger } from "@/lib/runtime-logs";
 import type {
@@ -110,6 +110,12 @@ export async function hasAdminUser(session?: ClientSession): Promise<boolean> {
     { projection: { _id: 1 }, session },
   );
   return admin !== null;
+}
+
+/** 管理员总数（用于「最后一个管理员」保护：降级/删号前必须 > 1）。 */
+export async function countAdminUsers(session?: ClientSession): Promise<number> {
+  const db = await getDb();
+  return db.collection<UserDoc>("users").countDocuments({ role: "admin" }, { session });
 }
 
 export interface SaveUserResult {
@@ -257,8 +263,17 @@ export async function deleteUserAccount(userId: string): Promise<{ agentIds: str
       await db.collection<MarketAgentDoc>("market_agents").deleteMany({ ownerUserId: userId }, { session });
       await db.collection<RedemptionDoc>("redemptions").deleteMany({ userId }, { session });
       await db.collection<UsageLogDoc>("usage_logs").deleteMany({ userId }, { session });
+      // 套餐条目属于用户账单数据；users 文档删除后这些行无法再被任何流程
+      // 访问，留在库里只会无界增长。
+      await db.collection<UserQuotaDoc>("user_quotas").deleteMany({ userId }, { session });
       await db.collection<{ _id: string }>("avatar_locks").deleteMany({
-        _id: { $in: [`user:${userId}`, ...agentIds.map((agentId) => `agent:${agentId}`)] },
+        _id: {
+          $in: [
+            `user:${userId}`,
+            ...agentIds.map((agentId) => `agent:${agentId}`),
+            ...marketAgentIds.map((agentId) => `market:${agentId}`),
+          ],
+        },
       }, { session });
       await db.collection<UserDoc>("users").deleteOne({ _id: userId }, { session });
     });
@@ -353,21 +368,27 @@ async function assertEntityOwnership<T extends { _id: string; userId: string }>(
   return entity as T | null;
 }
 
-async function rejectAdditionalDefaultAgent(
+/**
+ * 把默认角色交给 [agentId]：同一事务内先把当前持有者降级，再写入新持有者。
+ *
+ * 客户端把「切换默认 Agent」表达为「先降级旧持有者、再晋升新持有者」两个
+ * PUT（AgentEditViewModel 的 demotePreviousHolders）。若这里拒绝「账户已有
+ * 默认 Agent」的晋升，两个方向的请求都会 409，角色永远无法转移。降级文档
+ * 同样打上本次事务的 version，否则旧持有者的 isDefault=false 不会进入增量
+ * 同步，服务端与客户端状态会永久分叉。
+ */
+async function transferDefaultAgent(
   userId: string,
   agentId: string,
-  session?: ClientSession,
+  version: number,
+  session: ClientSession,
 ): Promise<void> {
   const db = await getDb();
-  const otherDefault = await db.collection<AgentDoc>("agents").findOne({
-    userId,
-    _id: { $ne: agentId },
-    isDefault: true,
-    deleted: false,
-  }, { session });
-  if (otherDefault) {
-    throw new ConflictError("An account can only have one default agent.");
-  }
+  await db.collection<AgentDoc>("agents").updateMany(
+    { userId, _id: { $ne: agentId }, isDefault: true, deleted: false },
+    { $set: { isDefault: false, updatedAt: Date.now(), version } },
+    { session },
+  );
 }
 
 async function requireDefaultAgent(userId: string, session?: ClientSession): Promise<void> {
@@ -389,12 +410,15 @@ export async function getAgentById(userId: string, agentId: string): Promise<Age
 export async function upsertAgent(userId: string, agent: AgentUpsertInput): Promise<number> {
   return withVersionedWrite(userId, async (version, session) => {
     const existing = await assertEntityOwnership<AgentDoc>("agents", userId, agent.id, session);
-    if (existing?.isDefault && !agent.isDefault) {
-      throw new ConflictError("The default agent cannot be changed to a non-default agent.");
-    }
-    if (agent.isDefault) {
-      await rejectAdditionalDefaultAgent(userId, agent.id, session);
-    } else if (!existing?.isDefault) {
+    // 默认角色是单持有角色：只能由别的 Agent「认领」转移，不能直接把当前
+    // 持有者降级（那样账户会短暂没有默认 Agent）。客户端把切换表达为两次
+    // PUT（先降级旧持有者、再晋升新持有者），因此这里把「降级当前默认」当作
+    // 保序的幂等写入：保持 isDefault=true 并照常推进 version，让客户端在下
+    // 一次拉取时自动纠正本地状态。
+    const nextIsDefault = agent.isDefault || existing?.isDefault === true;
+    if (agent.isDefault && !existing?.isDefault) {
+      await transferDefaultAgent(userId, agent.id, version, session);
+    } else if (!nextIsDefault) {
       await requireDefaultAgent(userId, session);
     }
 
@@ -414,7 +438,7 @@ export async function upsertAgent(userId: string, agent: AgentUpsertInput): Prom
           topP: agent.topP,
           maxTokens: agent.maxTokens ?? null,
           reasoningEffort: agent.reasoningEffort ?? null,
-          isDefault: agent.isDefault,
+          isDefault: nextIsDefault,
           followDefaultSystemPrompt: agent.followDefaultSystemPrompt,
           followDefaultModel: agent.followDefaultModel,
           followDefaultTemperature: agent.followDefaultTemperature,
@@ -630,12 +654,17 @@ export async function updateAgentAvatar(
   });
 }
 
-export async function listAgentsSince(userId: string, since: number, latestVersion: number): Promise<AgentDoc[]> {
+export async function listAgentsSince(
+  userId: string,
+  since: number,
+  latestVersion: number,
+  limit?: number,
+): Promise<AgentDoc[]> {
   const db = await getDb();
-  return db.collection<AgentDoc>("agents")
+  const query = db.collection<AgentDoc>("agents")
     .find({ userId, version: { $gt: since, $lte: latestVersion } })
-    .sort({ version: 1, _id: 1 })
-    .toArray();
+    .sort({ version: 1, _id: 1 });
+  return (limit === undefined ? query : query.limit(limit)).toArray();
 }
 
 export async function upsertConversation(userId: string, conversation: ConversationUpsertInput): Promise<number> {
@@ -711,12 +740,13 @@ export async function listConversationsSince(
   userId: string,
   since: number,
   latestVersion: number,
+  limit?: number,
 ): Promise<ConversationDoc[]> {
   const db = await getDb();
-  return db.collection<ConversationDoc>("conversations")
+  const query = db.collection<ConversationDoc>("conversations")
     .find({ userId, version: { $gt: since, $lte: latestVersion } })
-    .sort({ version: 1, _id: 1 })
-    .toArray();
+    .sort({ version: 1, _id: 1 });
+  return (limit === undefined ? query : query.limit(limit)).toArray();
 }
 
 export async function upsertProvider(userId: string, provider: ProviderUpsertInput): Promise<number> {
@@ -769,12 +799,17 @@ export async function softDeleteProvider(userId: string, providerId: string): Pr
   });
 }
 
-export async function listProvidersSince(userId: string, since: number, latestVersion: number): Promise<ProviderDoc[]> {
+export async function listProvidersSince(
+  userId: string,
+  since: number,
+  latestVersion: number,
+  limit?: number,
+): Promise<ProviderDoc[]> {
   const db = await getDb();
-  return db.collection<ProviderDoc>("providers")
+  const query = db.collection<ProviderDoc>("providers")
     .find({ userId, version: { $gt: since, $lte: latestVersion } })
-    .sort({ version: 1, _id: 1 })
-    .toArray();
+    .sort({ version: 1, _id: 1 });
+  return (limit === undefined ? query : query.limit(limit)).toArray();
 }
 
 export async function upsertProject(userId: string, project: ProjectUpsertInput): Promise<number> {
@@ -822,12 +857,17 @@ export async function softDeleteProject(userId: string, projectId: string): Prom
   });
 }
 
-export async function listProjectsSince(userId: string, since: number, latestVersion: number): Promise<ProjectDoc[]> {
+export async function listProjectsSince(
+  userId: string,
+  since: number,
+  latestVersion: number,
+  limit?: number,
+): Promise<ProjectDoc[]> {
   const db = await getDb();
-  return db.collection<ProjectDoc>("projects")
+  const query = db.collection<ProjectDoc>("projects")
     .find({ userId, version: { $gt: since, $lte: latestVersion } })
-    .sort({ version: 1, _id: 1 })
-    .toArray();
+    .sort({ version: 1, _id: 1 });
+  return (limit === undefined ? query : query.limit(limit)).toArray();
 }
 
 export async function updateUserAvatar(
@@ -856,13 +896,40 @@ export async function updateUserAvatar(
 export async function getDeltaSince(userId: string, since: number): Promise<SyncResponse> {
   // Read the waterline first, then bound every collection query to that snapshot.
   const latestVersion = await getSyncVersion(userId);
+  // 旧合并路径没有分页：一次 `since` 很旧时会把全部历史（含单文档 10k 条
+  // 消息的会话）拉进一个响应。按集合上限截断，并用「实际交付的水位线」
+  // 作为下一次的 since，避免截断后漏掉中间的增量。
   const [agents, conversations, providers, projects] = await Promise.all([
-    listAgentsSince(userId, since, latestVersion),
-    listConversationsSince(userId, since, latestVersion),
-    listProvidersSince(userId, since, latestVersion),
-    listProjectsSince(userId, since, latestVersion),
+    listAgentsSince(userId, since, latestVersion, SYNC_MAX_LIMIT + 1),
+    listConversationsSince(userId, since, latestVersion, SYNC_MAX_LIMIT + 1),
+    listProvidersSince(userId, since, latestVersion, SYNC_MAX_LIMIT + 1),
+    listProjectsSince(userId, since, latestVersion, SYNC_MAX_LIMIT + 1),
   ]);
-  return { agents, conversations, providers, projects, latestVersion };
+  const truncate = <T extends { version: number }>(docs: T[]): { docs: T[]; bound: number; truncated: boolean } => {
+    if (docs.length <= SYNC_MAX_LIMIT) {
+      return { docs, bound: latestVersion, truncated: false };
+    }
+    const page = docs.slice(0, SYNC_MAX_LIMIT);
+    // 截断后该集合仍有 version 更大的文档，游标必须停在最后一条已交付的
+    // version 上，否则这些文档永远不会被再次拉到。
+    return { docs: page, bound: page.at(-1)?.version ?? since, truncated: true };
+  };
+  const agentPage = truncate(agents);
+  const conversationPage = truncate(conversations);
+  const providerPage = truncate(providers);
+  const projectPage = truncate(projects);
+  const truncated = agentPage.truncated || conversationPage.truncated
+    || providerPage.truncated || projectPage.truncated;
+  return {
+    agents: agentPage.docs,
+    conversations: conversationPage.docs,
+    providers: providerPage.docs,
+    projects: projectPage.docs,
+    latestVersion: truncated
+      ? Math.min(agentPage.bound, conversationPage.bound, providerPage.bound, projectPage.bound)
+      : latestVersion,
+    truncated,
+  };
 }
 
 export type SyncCollection = "agents" | "conversations" | "providers" | "projects";
@@ -1055,6 +1122,10 @@ export interface CardIssueInput {
 /**
  * 批量开卡。卡密内嵌创建时刻的套餐快照（名称/额度/有效天数），
  * 因此套餐之后被修改或删除，已发出的卡密仍按开出时的内容兑换。
+ *
+ * 整批一次 `insertMany`（unordered）：500 张卡从 500 次往返降到 1 次。
+ * 唯一码碰撞只会让冲突的那一条失败（`MongoBulkWriteError.writeErrors`
+ * 里 code 11000），据此只补发碰撞的卡，而不是重跑整批。
  */
 export async function issueCards(input: CardIssueInput): Promise<CardKeyDoc[]> {
   const plan = await getPlanById(input.planId);
@@ -1065,40 +1136,46 @@ export async function issueCards(input: CardIssueInput): Promise<CardKeyDoc[]> {
   const db = await getDb();
   const collection = db.collection<CardKeyDoc>("card_keys");
   const now = Date.now();
-  const issued: CardKeyDoc[] = [];
+  const buildCard = (): CardKeyDoc => ({
+    _id: randomUUID(),
+    code: generateCardCode(),
+    planId: plan._id,
+    planName: plan.name,
+    quotaTokens: plan.quotaTokens,
+    validityDays: plan.validityDays,
+    status: "unused",
+    note: input.note ?? null,
+    createdByUserId: input.createdByUserId,
+    createdAt: now,
+    redeemedByUserId: null,
+    redeemedAt: null,
+  });
 
-  for (let i = 0; i < input.count; i++) {
-    let card: CardKeyDoc | null = null;
-    // 卡密编码空间足够大，重复碰撞重试几次即可。
-    for (let attempt = 0; attempt < 5 && !card; attempt++) {
-      card = {
-        _id: randomUUID(),
-        code: generateCardCode(),
-        planId: plan._id,
-        planName: plan.name,
-        quotaTokens: plan.quotaTokens,
-        validityDays: plan.validityDays,
-        status: "unused",
-        note: input.note ?? null,
-        createdByUserId: input.createdByUserId,
-        createdAt: now,
-        redeemedByUserId: null,
-        redeemedAt: null,
-      };
-      try {
-        await collection.insertOne(card);
-      } catch (error) {
-        if (isDuplicateKeyError(error)) {
-          card = null;
-          continue;
-        }
+  const issued: CardKeyDoc[] = [];
+  let pending = Array.from({ length: input.count }, buildCard);
+  // 碰撞概率极低（31^15），几轮足够；每轮只重发真正撞码的那些。
+  for (let attempt = 0; attempt < 5 && pending.length > 0; attempt += 1) {
+    try {
+      await collection.insertMany(pending, { ordered: false });
+      issued.push(...pending);
+      pending = [];
+    } catch (error) {
+      if (!(error instanceof MongoBulkWriteError)) {
         throw error;
       }
+      const writeErrors = Array.isArray(error.writeErrors) ? error.writeErrors : [error.writeErrors];
+      if (!writeErrors.every((entry) => entry.code === 11000)) {
+        throw error;
+      }
+      const collided = new Set(writeErrors.map((entry) => entry.index));
+      // ordered:false 下未报错的文档已经写入，必须计入返回值，否则调用方
+      // 拿到的卡片列表会少于库里实际存在的卡。
+      issued.push(...pending.filter((_, index) => !collided.has(index)));
+      pending = pending.filter((_, index) => collided.has(index)).map(buildCard);
     }
-    if (!card) {
-      throw new Error("Unable to generate a unique card code after multiple attempts.");
-    }
-    issued.push(card);
+  }
+  if (pending.length > 0) {
+    throw new Error("Unable to generate a unique card code after multiple attempts.");
   }
   billingLog.info("Cards issued.", { adminId: input.createdByUserId, planId: plan._id, planName: plan.name, count: issued.length, quotaTokens: plan.quotaTokens, validityDays: plan.validityDays });
   return issued;
@@ -1241,8 +1318,15 @@ export interface GrantQuotaInput {
   planName?: string | null;
 }
 
-/** 授予一条独立的套餐条目（额度与有效期随条目各自计算）。 */
-export async function grantUserQuota(userId: string, input: GrantQuotaInput): Promise<UserQuotaDoc> {
+/**
+ * 授予一条独立的套餐条目（额度与有效期随条目各自计算）。
+ * 传入 [session] 时并入调用方事务（管理员批量修改用户）。
+ */
+export async function grantUserQuota(
+  userId: string,
+  input: GrantQuotaInput,
+  session?: ClientSession,
+): Promise<UserQuotaDoc> {
   if (!(input.amount > 0)) {
     throw new Error("Grant amount must be positive.");
   }
@@ -1259,57 +1343,76 @@ export async function grantUserQuota(userId: string, input: GrantQuotaInput): Pr
     expiresAt: input.validDays && input.validDays > 0 ? now + input.validDays * DAY_MS : null,
     createdAt: now,
   };
-  await db.collection<UserQuotaDoc>("user_quotas").insertOne(entitlement);
+  await db.collection<UserQuotaDoc>("user_quotas").insertOne(entitlement, { session });
   billingLog.info("Quota granted.", { userId, source: input.source, amount: input.amount, validDays: input.validDays ?? null, planId: input.planId ?? null, cardKeyId: input.cardKeyId ?? null, expiresAt: entitlement.expiresAt });
   return entitlement;
 }
 
 /**
- * 按先过期先用扣减额度（事务内逐条原子扣减）：有限期条目按到期时间升序，
- * 不限期条目最后消耗。返回实际扣减量（不足时扣到 0 为止，不产生负数）。
+ * 按先过期先用扣减额度（事务内逐条原子扣减）。返回实际扣减量（不足时
+ * 扣到 0 为止，不产生负数）。
+ *
+ * 传入 [session] 时并入调用方事务（管理员批量修改用户），否则自建事务。
+ * 累加器必须留在单次事务回调内部：`withTransaction` 遇到
+ * TransientTransactionError 会重跑回调，放在事务外会让重试后的返回值
+ * 与短缺口告警重复计数。
  */
-export async function deductUserQuota(userId: string, amount: number): Promise<number> {
+export async function deductUserQuota(
+  userId: string,
+  amount: number,
+  session?: ClientSession,
+): Promise<number> {
   if (amount <= 0) {
     return 0;
   }
   const db = await getDb();
-  const client = await getMongoClient();
-  const session = client.startSession();
-  let deducted = 0;
-  try {
-    await session.withTransaction(async () => {
-      const now = Date.now();
-      const docs = await db.collection<UserQuotaDoc>("user_quotas")
-        .find(
-          { userId, balance: { $gt: 0 }, $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] },
-          { session },
-        )
-        .toArray();
-      docs.sort((a, b) => {
-        const expiryA = a.expiresAt ?? Number.MAX_SAFE_INTEGER;
-        const expiryB = b.expiresAt ?? Number.MAX_SAFE_INTEGER;
-        return expiryA !== expiryB ? expiryA - expiryB : a.createdAt - b.createdAt;
-      });
-      let remaining = amount;
-      for (const doc of docs) {
-        if (remaining <= 0) {
-          break;
-        }
-        const take = Math.min(remaining, doc.balance);
-        if (take <= 0) {
-          continue;
-        }
-        await db.collection<UserQuotaDoc>("user_quotas").updateOne(
-          { _id: doc._id },
-          { $set: { balance: doc.balance - take } },
-          { session },
-        );
-        remaining -= take;
-        deducted += take;
-      }
+  const deductWithin = async (active: ClientSession): Promise<number> => {
+    const now = Date.now();
+    const docs = await db.collection<UserQuotaDoc>("user_quotas")
+      .find(
+        { userId, balance: { $gt: 0 }, $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] },
+        { session: active },
+      )
+      .toArray();
+    docs.sort((a, b) => {
+      const expiryA = a.expiresAt ?? Number.MAX_SAFE_INTEGER;
+      const expiryB = b.expiresAt ?? Number.MAX_SAFE_INTEGER;
+      return expiryA !== expiryB ? expiryA - expiryB : a.createdAt - b.createdAt;
     });
-  } finally {
-    await session.endSession();
+    let remaining = amount;
+    let deducted = 0;
+    for (const doc of docs) {
+      if (remaining <= 0) {
+        break;
+      }
+      const take = Math.min(remaining, doc.balance);
+      if (take <= 0) {
+        continue;
+      }
+      await db.collection<UserQuotaDoc>("user_quotas").updateOne(
+        { _id: doc._id },
+        { $set: { balance: doc.balance - take } },
+        { session: active },
+      );
+      remaining -= take;
+      deducted += take;
+    }
+    return deducted;
+  };
+
+  let deducted = 0;
+  if (session) {
+    deducted = await deductWithin(session);
+  } else {
+    const client = await getMongoClient();
+    const own = client.startSession();
+    try {
+      await own.withTransaction(async () => {
+        deducted = await deductWithin(own);
+      });
+    } finally {
+      await own.endSession();
+    }
   }
   // 扣减不足 = 额度耗尽（请求量大于余额）；记录短缺口用于计费对账与告警。
   if (deducted < amount) {
@@ -1507,51 +1610,82 @@ export async function adminUpdateUser(
   userId: string,
   patch: AdminUserPatch,
 ): Promise<AdminUserView> {
-  const db = await getDb();
-  const user = await db.collection<UserDoc>("users").findOne({ _id: userId });
-  if (!user) {
+  const client = await getMongoClient();
+  const session = client.startSession();
+  const now = Date.now();
+  // 用对象持有事务结果：闭包内赋值不会被 TS 的控制流分析当成「仍为 null」。
+  const outcome: { user: UserDoc | null } = { user: null };
+
+  try {
+    await session.withTransaction(async () => {
+      const db = await getDb();
+      const user = await db.collection<UserDoc>("users").findOne({ _id: userId }, { session });
+      if (!user) {
+        throw new NotFoundError("User not found.");
+      }
+      if (patch.role !== undefined && patch.role !== user.role) {
+        if (userId === operatorId) {
+          throw new ConflictError("不能修改自己的角色。");
+        }
+        if (user.role === "admin" && patch.role !== "admin") {
+          // 最后一个管理员被降级后，ensureAdminBootstrap 不会重新晋升
+          // （system_bootstrap 标记仍在），实例会永久失去管理入口。
+          const otherAdmin = await db.collection<UserDoc>("users").findOne(
+            { role: "admin", _id: { $ne: userId } },
+            { projection: { _id: 1 }, session },
+          );
+          if (!otherAdmin) {
+            throw new ConflictError("不能降级最后一个管理员。");
+          }
+        }
+      }
+
+      // 四步写入并入同一事务：进程中途退出不会留下「额度已加、角色未改」。
+      if (patch.quotaDelta !== undefined && patch.quotaDelta > 0) {
+        await grantUserQuota(userId, {
+          amount: patch.quotaDelta,
+          validDays: patch.quotaValidDays,
+          source: "admin",
+        }, session);
+      } else if (patch.quotaDelta !== undefined && patch.quotaDelta < 0) {
+        await deductUserQuota(userId, -patch.quotaDelta, session);
+      }
+      if (patch.quotaExtendDays !== undefined && patch.quotaExtendDays > 0) {
+        await db.collection<UserQuotaDoc>("user_quotas").updateMany(
+          { userId, expiresAt: { $ne: null, $gt: now } },
+          { $inc: { expiresAt: patch.quotaExtendDays * DAY_MS } },
+          { session },
+        );
+      }
+      if (patch.role !== undefined) {
+        await db.collection<UserDoc>("users").updateOne(
+          { _id: userId },
+          { $set: { role: patch.role, updatedAt: now } },
+          { session },
+        );
+      }
+      outcome.user = { ...user, role: patch.role ?? user.role };
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  const updated = outcome.user;
+  if (!updated) {
     throw new NotFoundError("User not found.");
   }
-  if (patch.role !== undefined && patch.role !== user.role && userId === operatorId) {
-    throw new ConflictError("不能修改自己的角色。");
-  }
-
-  const now = Date.now();
-  if (patch.quotaDelta !== undefined && patch.quotaDelta > 0) {
-    await grantUserQuota(userId, {
-      amount: patch.quotaDelta,
-      validDays: patch.quotaValidDays,
-      source: "admin",
-    });
-  } else if (patch.quotaDelta !== undefined && patch.quotaDelta < 0) {
-    await deductUserQuota(userId, -patch.quotaDelta);
-  }
-  if (patch.quotaExtendDays !== undefined && patch.quotaExtendDays > 0) {
-    await db.collection<UserQuotaDoc>("user_quotas").updateMany(
-      { userId, expiresAt: { $ne: null, $gt: now } },
-      { $inc: { expiresAt: patch.quotaExtendDays * DAY_MS } },
-    );
-  }
-  if (patch.role !== undefined) {
-    await db.collection<UserDoc>("users").updateOne(
-      { _id: userId },
-      { $set: { role: patch.role, updatedAt: now } },
-    );
-  }
-
-  const entitlements = await activeQuotaEntitlements(db, userId);
-  const state = quotaStateFromEntitlements(entitlements);
-  const activeCount = entitlements.filter((entry) => entry.expiresAt === null || entry.expiresAt > Date.now()).length;
+  const db = await getDb();
+  const summary = summarizeQuotaEntitlements(await activeQuotaEntitlements(db, userId), Date.now());
   return {
-    _id: user._id,
-    email: user.email,
-    role: patch.role ?? user.role ?? "user",
-    quotaBalance: state.balance,
-    quotaExpiresAt: state.expiresAt,
-    quotaUnlimited: state.available && state.expiresAt === null,
-    activeQuotaCount: activeCount,
-    createdAt: user.createdAt,
-    lastLoginAt: user.lastLoginAt,
+    _id: updated._id,
+    email: updated.email,
+    role: updated.role ?? "user",
+    quotaBalance: summary.balance,
+    quotaExpiresAt: summary.expiresAt,
+    quotaUnlimited: summary.unlimited,
+    activeQuotaCount: summary.activeCount,
+    createdAt: updated.createdAt,
+    lastLoginAt: updated.lastLoginAt,
   };
 }
 
@@ -1638,6 +1772,15 @@ export async function listUpstreams(): Promise<UpstreamDoc[]> {
     .find({})
     .sort({ priority: 1, createdAt: 1, _id: 1 })
     .toArray();
+}
+
+/** 上游 `_id → name` 映射（展示层专用）：不读 apiKey / modelMeta。 */
+export async function listUpstreamNames(): Promise<Map<string, string>> {
+  const db = await getDb();
+  const rows = await db.collection<UpstreamDoc>("upstreams")
+    .find({}, { projection: { _id: 1, name: 1 } })
+    .toArray();
+  return new Map(rows.map((row) => [row._id, row.name]));
 }
 
 export async function listUpstreamsForModel(modelId: string): Promise<UpstreamDoc[]> {
@@ -1759,15 +1902,6 @@ export async function setBaseModel(input: SetBaseModelInput): Promise<ModelRateS
     { upsert: true },
   );
   return settings;
-}
-
-/** AI API 可对外提供的模型 = 所有启用上游可服务模型的并集。 */
-export async function listEnabledUpstreamModels(): Promise<string[]> {
-  const db = await getDb();
-  const upstreams = await db.collection<UpstreamDoc>("upstreams")
-    .find({ enabled: true }, { projection: { models: 1 } })
-    .toArray();
-  return [...new Set(upstreams.flatMap((upstream) => upstream.models))].sort((a, b) => a.localeCompare(b));
 }
 
 /** 全部启用的上游文档（含 modelMeta），供模型广场做倍率聚合。 */
@@ -1925,11 +2059,18 @@ export async function resolveUsageRows(logs: UsageLogDoc[]): Promise<AdminUsageR
   const upstreamIds = logs
     .map((log) => log.upstreamId)
     .filter((id): id is string => id !== null && id !== undefined);
-  const [emailMap, upstreams] = await Promise.all([
+  const db = await getDb();
+  const [emailMap, upstreamRows] = await Promise.all([
     listUserEmailsByIds(userIds),
-    upstreamIds.length === 0 ? Promise.resolve([]) : listUpstreams(),
+    upstreamIds.length === 0
+      ? Promise.resolve([] as Array<{ _id: string; name: string }>)
+      // 只取 _id/name：listUpstreams() 会把每个上游的 apiKey 与全部
+      // modelMeta 拉进内存，展示层用不到。
+      : db.collection<UpstreamDoc>("upstreams")
+        .find({ _id: { $in: [...new Set(upstreamIds)] } }, { projection: { _id: 1, name: 1 } })
+        .toArray(),
   ]);
-  const nameMap = new Map(upstreams.map((upstream) => [upstream._id, upstream.name]));
+  const nameMap = new Map(upstreamRows.map((upstream) => [upstream._id, upstream.name]));
   return logs.map((log) => ({
     ...log,
     email: emailMap.get(log.userId) ?? null,
@@ -2111,41 +2252,45 @@ export async function getUserSyncSummary(userId: string): Promise<SyncSummary> {
   };
 }
 
-/** 全站 Messenger Sync 概览：活跃实体总量 + 有同步数据的用户数。 */
+/**
+ * 全站 Messenger Sync 概览：活跃实体总量 + 有同步数据的用户数。
+ *
+ * 用户集合用 `distinct` 而不是 `$group: { users: { $addToSet: "$userId" } }`：
+ * `$addToSet` 会把全站 userId 收进单个分组文档，受 100 MB 分组上限约束，
+ * 用户量一大就聚合失败；`distinct` 在服务端去重后只返回结果本身。
+ */
 export async function getSyncOverview(): Promise<SiteSyncOverview> {
   const db = await getDb();
-  const [agents, conversations, providers] = await Promise.all([
-    db.collection<AgentDoc>("agents").aggregate<{ count: number; last: number | null; users: string[] }>([
-      { $match: { deleted: false } },
-      { $group: { _id: null, count: { $sum: 1 }, last: { $max: "$updatedAt" }, users: { $addToSet: "$userId" } } },
+  const activeFilter = { deleted: false } as const;
+  const [agents, conversations, providers, agentUsers, conversationUsers, providerUsers] = await Promise.all([
+    db.collection<AgentDoc>("agents").aggregate<{ count: number; last: number | null }>([
+      { $match: activeFilter },
+      { $group: { _id: null, count: { $sum: 1 }, last: { $max: "$updatedAt" } } },
     ]).next(),
     db.collection<ConversationDoc>("conversations").aggregate<{
       count: number;
       last: number | null;
       messages: number;
-      users: string[];
     }>([
-      { $match: { deleted: false } },
+      { $match: activeFilter },
       {
         $group: {
           _id: null,
           count: { $sum: 1 },
           last: { $max: "$updatedAt" },
           messages: { $sum: { $size: { $ifNull: ["$messages", []] } } },
-          users: { $addToSet: "$userId" },
         },
       },
     ]).next(),
-    db.collection<ProviderDoc>("providers").aggregate<{ count: number; last: number | null; users: string[] }>([
-      { $match: { deleted: false } },
-      { $group: { _id: null, count: { $sum: 1 }, last: { $max: "$updatedAt" }, users: { $addToSet: "$userId" } } },
+    db.collection<ProviderDoc>("providers").aggregate<{ count: number; last: number | null }>([
+      { $match: activeFilter },
+      { $group: { _id: null, count: { $sum: 1 }, last: { $max: "$updatedAt" } } },
     ]).next(),
+    db.collection<AgentDoc>("agents").distinct("userId", activeFilter),
+    db.collection<ConversationDoc>("conversations").distinct("userId", activeFilter),
+    db.collection<ProviderDoc>("providers").distinct("userId", activeFilter),
   ]);
-  const syncUsers = new Set<string>([
-    ...(agents?.users ?? []),
-    ...(conversations?.users ?? []),
-    ...(providers?.users ?? []),
-  ]);
+  const syncUsers = new Set<string>([...agentUsers, ...conversationUsers, ...providerUsers]);
   const lastValues = [agents?.last, conversations?.last, providers?.last]
     .filter((value): value is number => typeof value === "number");
   return {

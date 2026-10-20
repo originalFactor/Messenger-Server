@@ -50,6 +50,9 @@ export function getMongoClient(): Promise<MongoClient> {
   return globalThis.messengerMongoClientPromise;
 }
 
+/** 运行时日志保留期（TTL 索引驱动）：30 天。 */
+const RUNTIME_LOG_RETENTION_SECONDS = 30 * 24 * 60 * 60;
+
 async function ensureIndexesFor(database: Db): Promise<void> {
   if (!globalThis.messengerMongoIndexesPromise) {
     const indexes = Promise.all([
@@ -64,6 +67,9 @@ async function ensureIndexesFor(database: Db): Promise<void> {
       database.collection("conversations").createIndex({ userId: 1, version: 1 }),
       database.collection("conversations").createIndex({ userId: 1, agentId: 1 }),
       database.collection("providers").createIndex({ userId: 1, version: 1 }),
+      // projects 与其它三个同步集合同构：增量同步按 { userId, version }
+      // 过滤 + 排序，缺索引时每次同步都会全集合扫描。
+      database.collection("projects").createIndex({ userId: 1, version: 1 }),
       database.collection("market_agents").createIndex({ deleted: 1, updatedAt: -1, _id: 1 }),
       database.collection("market_agents").createIndex({ ownerUserId: 1, deleted: 1 }),
       database.collection("avatar_locks").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
@@ -77,6 +83,14 @@ async function ensureIndexesFor(database: Db): Promise<void> {
       database.collection("runtime_logs").createIndex({ createdAt: -1, _id: 1 }),
       database.collection("runtime_logs").createIndex({ level: 1, createdAt: -1, _id: 1 }),
       database.collection("runtime_logs").createIndex({ source: 1, createdAt: -1, _id: 1 }),
+      // 日志采集把每个 console.* 都镜像入库，没有 TTL 会无界增长，
+      // 并让管理端 countDocuments + skip 分页随时间线性变慢。
+      database.collection("runtime_logs").createIndex(
+        { createdAt: 1 },
+        { expireAfterSeconds: RUNTIME_LOG_RETENTION_SECONDS },
+      ),
+      // 限流计数按窗口分文档，窗口过期即应回收。
+      database.collection("rate_limits").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
     ]).then(() => undefined);
     const startedAt = Date.now();
     globalThis.messengerMongoIndexesPromise = indexes

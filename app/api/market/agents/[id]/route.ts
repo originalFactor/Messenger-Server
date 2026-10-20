@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { deleteMarketAgentAvatar } from "@/lib/avatars";
+import { withAvatarLock } from "@/lib/avatar-locks";
 import { requireUserSession } from "@/lib/auth";
 import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
@@ -90,9 +92,22 @@ export async function DELETE(_request: Request, context: RouteContext) {
   if (!id) return jsonError("Invalid market agent ID.", 400);
 
   try {
-    await deleteMarketAgent(session.sub, id);
-    marketLog.info("Market agent unpublished.", { ownerUserId: session.sub, agentId: id });
-    return jsonOk({ success: true });
+    return await withAvatarLock(`market:${id}`, async (_lock, verify) => {
+      await deleteMarketAgent(session.sub, id);
+      // 软删除后头像 GET 会因为 deleted 过滤返回 404，blob 再无人可达；
+      // 不在这里清理就会永久占用存储（与 DELETE /api/agents/{id} 对齐）。
+      try {
+        await deleteMarketAgentAvatar(id, verify);
+      } catch (error) {
+        marketLog.warn("Unable to clean up market avatar after unpublish.", {
+          ownerUserId: session.sub,
+          agentId: id,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+      marketLog.info("Market agent unpublished.", { ownerUserId: session.sub, agentId: id });
+      return jsonOk({ success: true });
+    });
   } catch (error) {
     return storageErrorResponse(error, "Unable to remove the market agent.");
   }

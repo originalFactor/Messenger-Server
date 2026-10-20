@@ -22,8 +22,6 @@ import { randomBytes } from "node:crypto";
  */
 const CARD_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
 
-export const CARD_CODE_PATTERN = /^MS-[2-9A-HJ-NP-Z]{5}-[2-9A-HJ-NP-Z]{5}-[2-9A-HJ-NP-Z]{5}$/;
-
 /** 生成形如 MS-XXXXX-XXXXX-XXXXX 的卡密。 */
 export function generateCardCode(): string {
   const bytes = randomBytes(15);

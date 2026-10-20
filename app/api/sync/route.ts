@@ -67,7 +67,11 @@ export async function GET(request: Request) {
   if (!collectionParam) {
     try {
       const delta = await getDeltaSince(session.sub, since);
-      syncLog.info("Sync delta served.", { userId: session.sub, since, mode: "merged", latestVersion: delta.latestVersion, agentCount: delta.agents.length, conversationCount: delta.conversations.length, providerCount: delta.providers.length, projectCount: delta.projects.length });
+      // 成功路径不写 runtime_logs：客户端每次前后台切换都会同步，逐请求
+      // 记 info 会把日志表变成同步心跳表。仅截断（异常状态）记 warn。
+      if (delta.truncated) {
+        syncLog.warn("Sync delta truncated; client should page by collection.", { userId: session.sub, since, latestVersion: delta.latestVersion });
+      }
       return jsonOk({
         ...delta,
         agents: rewriteAgentAvatars(delta.agents),
@@ -105,10 +109,8 @@ export async function GET(request: Request) {
     const documents = page.collection === "agents"
       ? rewriteAgentAvatars(page.documents as { _id: string; avatarUrl?: string | null }[])
       : page.documents;
-    syncLog.info("Sync page served.", { userId: session.sub, since, mode: "paged", collection: page.collection, limit, documentCount: page.documents.length, hasMore: page.hasMore, latestVersion: page.latestVersion });
-    if (page.documents.length >= limit) {
-      syncLog.warn("Sync page reached limit.", { userId: session.sub, collection: page.collection, limit, hasMore: page.hasMore });
-    }
+    // 成功分页不写日志：客户端每次同步都会翻若干页，逐页记 info/warn 只会
+    // 把日志表变成同步心跳表（满页是正常翻页，不是异常）。
     return jsonOk({
       collection: page.collection,
       documents,

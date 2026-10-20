@@ -16,12 +16,14 @@
 
 import {
   AvatarReplacementError,
+  type AvatarReplacement,
   deleteMarketAgentAvatar,
   fetchAvatarWithConditional,
   revertMarketAgentAvatar,
   snapshotMarketAgentAvatar,
   uploadMarketAgentAvatar,
 } from "@/lib/avatars";
+import { withAvatarLock } from "@/lib/avatar-locks";
 import { requireUserSession } from "@/lib/auth";
 import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
@@ -85,37 +87,40 @@ export async function PUT(request: Request, context: RouteContext) {
   if (!avatar) return jsonError("Upload a JPEG, PNG, WebP, or GIF avatar no larger than 5 MiB.", 400);
 
   try {
-    const agent = await getMarketAgent(id);
-    if (!agent || agent.ownerUserId !== session.sub) return jsonError("Market Agent not found.", 404);
-    const backups = await snapshotMarketAgentAvatar(id);
-    const canRestore = agent.avatarUrl !== null && backups.some((backup) => backup.url === agent.avatarUrl);
-    let metadataCleared = false;
-    let replacement: Awaited<ReturnType<typeof uploadMarketAgentAvatar>> | null = null;
-    try {
-      if (agent.avatarUrl) {
-        await updateMarketAgentAvatar(session.sub, id, null);
-        metadataCleared = true;
+    return await withAvatarLock(`market:${id}`, async (lock, verify) => {
+      const agent = await getMarketAgent(id);
+      if (!agent || agent.ownerUserId !== session.sub) return jsonError("Market Agent not found.", 404);
+      const backups = await snapshotMarketAgentAvatar(id, verify);
+      const canRestore = agent.avatarUrl !== null && backups.some((backup) => backup.url === agent.avatarUrl);
+      let metadataCleared = false;
+      let replacement: AvatarReplacement | null = null;
+      try {
+        if (agent.avatarUrl) {
+          await updateMarketAgentAvatar(session.sub, id, null);
+          metadataCleared = true;
+        }
+        replacement = await uploadMarketAgentAvatar(
+          id,
+          backups,
+          Buffer.from(await avatar.file.arrayBuffer()),
+          avatar.extension,
+          avatar.contentType,
+          verify,
+        );
+        const updated = await updateMarketAgentAvatar(session.sub, id, replacement.url);
+        avatarLog.info("Market agent avatar updated.", { ownerUserId: session.sub, agentId: id, version: updated.version, avatarVersion: updated.avatarVersion, contentType: avatar.contentType });
+        return jsonOk({ url: appUrl(`/api/market/agents/${id}/avatar`), version: updated.version, avatarVersion: updated.avatarVersion });
+      } catch (error) {
+        const restored = replacement
+          ? await revertMarketAgentAvatar(replacement, backups, verify)
+          : error instanceof AvatarReplacementError && error.restored;
+        if (metadataCleared && restored && canRestore && agent.avatarUrl) {
+          await updateMarketAgentAvatar(session.sub, id, agent.avatarUrl);
+        }
+        avatarLog.warn("Market agent avatar replacement failed.", { ownerUserId: session.sub, agentId: id, restored, reason: error instanceof Error ? error.message : String(error) });
+        throw error;
       }
-      replacement = await uploadMarketAgentAvatar(
-        id,
-        backups,
-        Buffer.from(await avatar.file.arrayBuffer()),
-        avatar.extension,
-        avatar.contentType,
-      );
-      const updated = await updateMarketAgentAvatar(session.sub, id, replacement.url);
-      avatarLog.info("Market agent avatar updated.", { ownerUserId: session.sub, agentId: id, version: updated.version, avatarVersion: updated.avatarVersion, contentType: avatar.contentType });
-      return jsonOk({ url: appUrl(`/api/market/agents/${id}/avatar`), version: updated.version, avatarVersion: updated.avatarVersion });
-    } catch (error) {
-      const restored = replacement
-        ? await revertMarketAgentAvatar(replacement, backups)
-        : error instanceof AvatarReplacementError && error.restored;
-      if (metadataCleared && restored && canRestore && agent.avatarUrl) {
-        await updateMarketAgentAvatar(session.sub, id, agent.avatarUrl);
-      }
-      avatarLog.warn("Market agent avatar replacement failed.", { ownerUserId: session.sub, agentId: id, restored, reason: error instanceof Error ? error.message : String(error) });
-      throw error;
-    }
+    });
   } catch (error) {
     return storageErrorResponse(error, "Unable to update the market avatar.");
   }
@@ -128,12 +133,14 @@ export async function DELETE(_request: Request, context: RouteContext) {
   if (!id) return jsonError("Invalid market agent ID.", 400);
 
   try {
-    const agent = await getMarketAgent(id);
-    if (!agent || agent.ownerUserId !== session.sub) return jsonError("Market Agent not found.", 404);
-    const updated = await updateMarketAgentAvatar(session.sub, id, null);
-    await deleteMarketAgentAvatar(id);
-    avatarLog.info("Market agent avatar deleted.", { ownerUserId: session.sub, agentId: id, version: updated.version });
-    return jsonOk({ url: null, version: updated.version, avatarVersion: null });
+    return await withAvatarLock(`market:${id}`, async (lock, verify) => {
+      const agent = await getMarketAgent(id);
+      if (!agent || agent.ownerUserId !== session.sub) return jsonError("Market Agent not found.", 404);
+      const updated = await updateMarketAgentAvatar(session.sub, id, null);
+      await deleteMarketAgentAvatar(id, verify);
+      avatarLog.info("Market agent avatar deleted.", { ownerUserId: session.sub, agentId: id, version: updated.version });
+      return jsonOk({ url: null, version: updated.version, avatarVersion: null });
+    });
   } catch (error) {
     return storageErrorResponse(error, "Unable to delete the market avatar.");
   }
