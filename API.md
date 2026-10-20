@@ -197,6 +197,10 @@ interface SessionClaims {
     "id": "uuid",
     "email": "user@example.com",
     "role": "user",              // 全站无管理员时为 "admin"（首个注册用户）
+    "aiApiKey": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "quotaBalance": 0,           // 新账号没有套餐条目
+    "quotaExpiresAt": null,
+    "quotaEntitlements": [],
     "avatarUrl": null,
     "avatarVersion": null,
     "syncVersion": 1,            // 默认 Agent 的写入把水位线从 0 推到 1
@@ -204,6 +208,8 @@ interface SessionClaims {
   }
 }
 ```
+
+注册响应与 `GET /api/auth/me` 结构一致（含 `aiApiKey` 与额度字段），客户端登录后无需再等一次 `/me` 才能播种内置 AI 服务商。
 
 - 错误：
   - `400 Invalid registration payload.`
@@ -224,6 +230,12 @@ interface SessionClaims {
     "id": "uuid",
     "email": "user@example.com",
     "role": "user",
+    "aiApiKey": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "quotaBalance": 98000,
+    "quotaExpiresAt": 1702588800000,
+    "quotaEntitlements": [
+      { "planName": "入门套餐", "source": "card", "balance": 98000, "expiresAt": 1702588800000 }
+    ],
     "avatarUrl": "http://localhost:3000/api/avatars/user",  // 仅在已设头像时
     "avatarVersion": 1700000000000,
     "syncVersion": 42,
@@ -231,6 +243,8 @@ interface SessionClaims {
   }
 }
 ```
+
+登录与 `GET /api/auth/me` 返回同一份用户结构（含额度与 `aiApiKey`），客户端据此直接渲染额度卡片并播种内置 AI 服务商。
 
 - 错误：
   - `400 Invalid login payload.`
@@ -265,6 +279,9 @@ interface SessionClaims {
     "aiApiKey": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "quotaBalance": 98000,
     "quotaExpiresAt": 1702588800000,
+    "quotaEntitlements": [
+      { "planName": "入门套餐", "source": "card", "balance": 98000, "expiresAt": 1702588800000 }
+    ],
     "avatarUrl": "http://localhost:3000/api/avatars/user",
     "avatarVersion": 1700000000000,
     "syncVersion": 42,
@@ -277,6 +294,8 @@ interface SessionClaims {
 
 - `aiApiKey`：用户级 AI API Key，调用 `/v1/*` 时作为 Bearer Token；`POST /api/console/api-key` 可重置。
 - `quotaBalance` / `quotaExpiresAt`：未过期套餐条目的额度之和与其中最晚的到期时间；用户可同时持有多个套餐条目（每次兑换/授予各一条，额度与有效期独立计算，消耗按先过期先用），`quotaExpiresAt` 为 `null` 表示无未过期条目或持有不限期条目。
+- `quotaEntitlements`：未过期条目明细（`planName` 可空，`source` ∈ `card|admin|migrated`，`expiresAt` 为 `null` 表示不限期），App 端「套餐信息」逐条展示。
+- **登录 / 注册响应返回同一份用户结构**（`lib/user-view.ts` 的 `buildSelfUserView`）：客户端把登录响应当作账号快照，额度与 `aiApiKey` 缺失会导致刚登录就显示 0 额度、且不播种内置 AI 服务商。
 
 - 错误：`401 Unauthorized.`、`404 User not found.`（账号已被删但 Cookie 未过期）
 

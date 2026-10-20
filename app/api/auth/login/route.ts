@@ -15,12 +15,12 @@
  */
 
 import { createUserSessionToken, setUserSessionCookie } from "@/lib/auth";
-import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
 import { clientIp, enforceRateLimits } from "@/lib/rate-limit";
 import { createLogger } from "@/lib/runtime-logs";
 import { verifyPassword } from "@/lib/security";
 import { getUserByEmail, updateUserLastLogin } from "@/lib/storage";
+import { buildSelfUserView } from "@/lib/user-view";
 import { credentialsSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -59,15 +59,5 @@ export async function POST(request: Request) {
   await setUserSessionCookie(token);
   authLog.info("Login succeeded.", { userId: user.id, email: user.email, role: user.role });
 
-  return jsonOk({
-    user: {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      avatarUrl: user.avatarUrl ? appUrl("/api/avatars/user") : null,
-      avatarVersion: user.avatarVersion ?? null,
-      syncVersion: user.syncVersion,
-      lastLoginAt: now,
-    },
-  });
+  return jsonOk({ user: await buildSelfUserView(user, now) });
 }

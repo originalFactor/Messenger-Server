@@ -15,9 +15,9 @@
  */
 
 import { requireUserSession } from "@/lib/auth";
-import { appUrl } from "@/lib/env";
 import { jsonError, jsonOk } from "@/lib/http";
-import { getUserById, getUserQuotaState, listUserQuotaEntitlements } from "@/lib/storage";
+import { getUserById } from "@/lib/storage";
+import { buildSelfUserView } from "@/lib/user-view";
 
 export const runtime = "nodejs";
 
@@ -32,33 +32,5 @@ export async function GET(request: Request) {
     return jsonError("User not found.", 404);
   }
 
-  // 多套餐条目模型：额度为未过期条目之和，到期时间取其中最晚者（不限期为 null）。
-  const quota = await getUserQuotaState(user.id);
-  // App 端「套餐信息」展示：未过期条目的名称/来源/余量/到期时间。
-  const quotaEntitlements = (await listUserQuotaEntitlements(user.id, 50))
-    .filter((entitlement) => entitlement.expiresAt == null || entitlement.expiresAt > Date.now())
-    .map((entitlement) => ({
-      planName: entitlement.planName ?? null,
-      source: entitlement.source,
-      balance: entitlement.balance,
-      expiresAt: entitlement.expiresAt,
-    }));
-
-  return jsonOk({
-    user: {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      aiApiKey: user.aiApiKey,
-      quotaBalance: quota.balance,
-      quotaExpiresAt: quota.expiresAt,
-      quotaEntitlements,
-      avatarUrl: user.avatarUrl ? appUrl("/api/avatars/user") : null,
-      avatarVersion: user.avatarVersion ?? null,
-      syncVersion: user.syncVersion,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
-      lastLoginAt: user.lastLoginAt,
-    },
-  });
+  return jsonOk({ user: await buildSelfUserView(user) });
 }

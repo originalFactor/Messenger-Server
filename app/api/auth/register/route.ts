@@ -22,6 +22,7 @@ import { clientIp, enforceRateLimits } from "@/lib/rate-limit";
 import { createLogger } from "@/lib/runtime-logs";
 import { hashPassword } from "@/lib/security";
 import { getUserByEmail, isDuplicateKeyError, saveUser } from "@/lib/storage";
+import { buildSelfUserView } from "@/lib/user-view";
 import { credentialsSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -85,15 +86,5 @@ export async function POST(request: Request) {
   await setUserSessionCookie(token);
   authLog.info("Registration succeeded.", { userId: user.id, email: user.email, role });
 
-  return jsonOk({
-    user: {
-      id: user.id,
-      email: user.email,
-      role,
-      avatarUrl: null,
-      avatarVersion: null,
-      syncVersion,
-      createdAt: user.createdAt,
-    },
-  }, 201);
+  return jsonOk({ user: await buildSelfUserView({ ...user, role, syncVersion }) }, 201);
 }
