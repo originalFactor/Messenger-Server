@@ -19,6 +19,7 @@ import { createUserSessionToken, setUserSessionCookie } from "@/lib/auth";
 import { generateAiApiKey } from "@/lib/apikeys";
 import { jsonError, jsonOk } from "@/lib/http";
 import { clientIp, enforceRateLimits } from "@/lib/rate-limit";
+import { createUserSession } from "@/lib/sessions";
 import { createLogger } from "@/lib/runtime-logs";
 import { hashPassword } from "@/lib/security";
 import { getUserByEmail, isDuplicateKeyError, saveUser } from "@/lib/storage";
@@ -82,9 +83,13 @@ export async function POST(request: Request) {
     }
     throw error;
   }
-  const token = await createUserSessionToken(user.id, user.email, role);
+  const sid = await createUserSession(user.id, {
+    ip: clientIp(request),
+    userAgent: request.headers.get("user-agent"),
+  });
+  const token = await createUserSessionToken(user.id, user.email, role, sid);
   await setUserSessionCookie(token);
-  authLog.info("Registration succeeded.", { userId: user.id, email: user.email, role });
+  authLog.info("Registration succeeded.", { userId: user.id, email: user.email, role, sid });
 
   return jsonOk({ user: await buildSelfUserView({ ...user, role, syncVersion }) }, 201);
 }

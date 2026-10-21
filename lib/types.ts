@@ -569,8 +569,35 @@ export interface SiteOverview {
   recentUsers: AdminRecentUser[];
 }
 
+/** 会话失效原因：注销 / 改密 / 超时（删号直接硬删记录，不留墓碑）。 */
+export type SessionRevokeReason = "logout" | "password" | "expired";
+
+/**
+ * 服务端会话记录（`user_sessions`）。
+ *
+ * Cookie 里的 JWT 只是凭证，会话是否有效以本集合为准；`deleted` 为墓碑
+ * 标记，`expiresAt` 同时被 TTL 索引与有效性判定使用。
+ */
+export interface UserSessionDoc {
+  /** 会话 ID，同时写进 JWT 的 `sid` claim。 */
+  _id: string;
+  userId: string;
+  createdAt: number;
+  /** 最近一次成功校验的时间（写回有 1 小时节流）。 */
+  lastSeenAt: number;
+  /** 活跃期 = 到期时刻；墓碑期 = 墓碑到期时刻（TTL 索引回收）。 */
+  expiresAt: Date;
+  deleted: boolean;
+  deletedAt: number | null;
+  revokedReason: SessionRevokeReason | null;
+  ip: string | null;
+  userAgent: string | null;
+}
+
 export interface SessionClaims extends JWTPayload {
   sub: string;
   email?: string;
   role: "user" | "admin";
+  /** 服务端会话 ID；缺失即改造前签发的旧 token，一律失效。 */
+  sid?: string;
 }

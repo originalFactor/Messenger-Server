@@ -14,10 +14,14 @@
  * limitations under the License.
  */
 
-import { clearUserSessionCookie } from "@/lib/auth";
+import { endCurrentSession } from "@/lib/auth";
 import { jsonOk } from "@/lib/http";
 
+/**
+ * 注销当前会话。服务端记录转成墓碑（旧 Cookie 立即失效），Cookie 同时清除；
+ * 未登录时同样返回成功。
+ */
 export async function POST() {
-  await clearUserSessionCookie();
+  await endCurrentSession();
   return jsonOk({ success: true });
 }

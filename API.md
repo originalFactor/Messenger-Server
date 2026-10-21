@@ -43,11 +43,11 @@ Messenger `server/` 是一个独立的 Next.js (App Router) SaaS 服务，提供
 
 ### 认证与 Cookie / AI API Key
 
-管理员与普通用户共用同一套 JWT 会话（HS256、HttpOnly + SameSite=Lax Cookie）：
+管理员与普通用户共用同一套 JWT 会话（HS256、HttpOnly + SameSite=Lax Cookie），会话状态由服务端 `user_sessions` 集合裁决：
 
 | 凭据 | 载体 | 用途 | 有效期 | 签发者 |
 | --- | --- | --- | --- | --- |
-| 用户会话 | `messenger_session` Cookie | 网页控制台、`/api/auth/*`、`/api/console/*`、实体同步、头像、市场 | 30 天 | `POST /api/auth/register`、`POST /api/auth/login` |
+| 用户会话 | `messenger_session` Cookie | 网页控制台、`/api/auth/*`、`/api/console/*`、实体同步、头像、市场 | 30 天（不滑动续期） | `POST /api/auth/register`、`POST /api/auth/login` |
 | AI API Key | `Authorization: Bearer sk-…` | `/v1/models`、`/v1/chat/completions`（OpenAI 兼容代理） | 长期（可重置） | 注册时生成；`POST /api/console/api-key` 重置 |
 
 JWT Claims 结构（管理员与用户的会话格式相同，`role` 区分权限）：
@@ -57,15 +57,31 @@ interface SessionClaims {
   sub: string;       // 用户 ID
   email?: string;
   role: "user" | "admin";
+  sid: string;       // 服务端会话 ID（user_sessions._id）
 }
 ```
+
+### 服务端会话（session 机制）
+
+Cookie 里的 JWT 只是**凭证**：请求是否被接受以 `user_sessions` 集合中的记录为准，所以注销、改密、超时都能即时失效（纯 JWT 做不到）。
+
+- **多会话并存**：每次登录/注册签发一条独立记录，同一账号可同时在多台设备登录，互不顶替。
+- **有效期 30 天、不滑动续期**：库记录的 `expiresAt`、JWT 的 `exp` 与 Cookie 的 `maxAge` 同时到期；超时后下一次请求即 `401`，App 必须重新登录。
+- **只给旧 session 留墓碑**：注销（`revokedReason: "logout"`）、改密（`"password"`）、超时（`"expired"`）都只把记录置 `deleted: true` 而**不硬删**，让「被注销的旧会话」在日志里能与「未知会话」区分。会话记录永不物理复用于新会话。
+- **墓碑自动清理**（三条触发，任一命中即删）：
+  1. 墓碑被再次出示时当场删除；
+  2. 该账号**最旧的活跃会话**已同步过这次变更（最旧活跃会话的 `lastSeenAt ≥ 墓碑的 deletedAt`）——此时没有客户端还需要这条墓碑；账号已无活跃会话时全部清空。检查挂在 `lastSeenAt` 的 1 小时写回节拍上，不额外产生请求；
+  3. `expiresAt` TTL 索引兜底回收（墓碑保留期 7 天），登录时再顺带扫一遍已到期记录。
+- **改造前的旧 token 一律失效**：没有 `sid` claim 的 JWT 视作过期，旧部署升级后所有客户端都需要重新登录一次。
+- **改密踢其它设备**：`PUT /api/auth/password` 注销该账号除当前会话外的全部会话。
+- **删号清空会话**：`DELETE /api/auth/account` 硬删该账号的全部会话记录（含墓碑）。
 
 鉴权行为：
 
 - **首个注册用户自动晋升为管理员**（由注册事务保证全局唯一；对改造前的存量部署，服务启动迁移会把最早注册用户提升为 admin 并写入 `system_bootstrap` 标记）。
 - 除注册/登录/登出、`GET /api/plans` 与 `/v1/*`（走 API Key）外，所有 `/api/**` 路由都要求有效会话。
 - `/api/admin/*` 在会话之外**再查数据库校验 `role === "admin"`**（`requireAdminUser()`），旧 token 提权无效；未通过返回 `403 Forbidden.`。
-- 缺失/过期的用户会话统一返回 `401 Unauthorized.`；无效的 AI API Key 返回 OpenAI 格式的 `401` 错误体。
+- 缺失/已注销/已过期的用户会话统一返回 `401 Unauthorized.`；客户端收到 `401` 应清掉本地会话并提示重新登录（会话不会自行恢复）。无效的 AI API Key 返回 OpenAI 格式的 `401` 错误体。
 - `secure` 标志仅在 `NODE_ENV=production` 时启用，本地开发走 HTTP。
 
 ### 请求与响应格式
@@ -244,7 +260,7 @@ interface SessionClaims {
 }
 ```
 
-登录与 `GET /api/auth/me` 返回同一份用户结构（含额度与 `aiApiKey`），客户端据此直接渲染额度卡片并播种内置 AI 服务商。
+登录与 `GET /api/auth/me` 返回同一份用户结构（含额度与 `aiApiKey`），客户端据此直接渲染额度卡片并播种内置 AI 服务商。响应同时通过 `Set-Cookie` 下发新的 `messenger_session`（对应一条新的 `user_sessions` 记录，有效期 30 天）；同一账号多次登录会并存多条会话，互不顶替。
 
 - 错误：
   - `400 Invalid login payload.`
@@ -253,7 +269,7 @@ interface SessionClaims {
 
 ### POST /api/auth/logout
 
-清除用户会话 Cookie。无论是否登录都返回成功。
+注销当前会话：服务端记录置为墓碑（旧 Cookie 立即失效，即使被复制到别处也无法再用），同时清除 Cookie。无论是否登录都返回成功。
 
 - 鉴权：无（操作幂等）
 - 请求体：无
@@ -297,7 +313,7 @@ interface SessionClaims {
 - `quotaEntitlements`：未过期条目明细（`planName` 可空，`source` ∈ `card|admin|migrated`，`expiresAt` 为 `null` 表示不限期），App 端「套餐信息」逐条展示。
 - **登录 / 注册响应返回同一份用户结构**（`lib/user-view.ts` 的 `buildSelfUserView`）：客户端把登录响应当作账号快照，额度与 `aiApiKey` 缺失会导致刚登录就显示 0 额度、且不播种内置 AI 服务商。
 
-- 错误：`401 Unauthorized.`、`404 User not found.`（账号已被删但 Cookie 未过期）
+- 错误：`401 Unauthorized.`（会话已注销/已过期/旧格式 token）、`404 User not found.`（账号已被删但会话记录尚未清理）
 
 ### PUT /api/auth/password
 
@@ -314,6 +330,7 @@ interface SessionClaims {
 ```
 
 - 响应 `200`：`{ "success": true }`
+- **副作用**：该账号在其它设备上的会话全部注销（服务端留墓碑），当前会话保留；其它客户端下次请求即 `401`，需用新密码重新登录。
 - 错误：
   - `400 Invalid password change payload.`
   - `400 The new password must be different.`
@@ -323,7 +340,7 @@ interface SessionClaims {
 
 ### DELETE /api/auth/account
 
-永久注销账户。在同一存储事务内删除该用户的所有 `agents`、`conversations`、`providers`、`projects`、`market_agents`、`redemptions`、`usage_logs`、`user_quotas` 文档与头像锁，再异步清理三类头像 Blob，最后清除会话 Cookie。
+永久注销账户。在同一存储事务内删除该用户的所有 `agents`、`conversations`、`providers`、`projects`、`market_agents`、`redemptions`、`usage_logs`、`user_quotas` 文档与头像锁，随后硬删该账号在 `user_sessions` 中的全部会话（含墓碑——用户已不存在，没有保留价值），再异步清理三类头像 Blob，最后清除会话 Cookie。
 
 - 鉴权：用户会话
 - 请求体：`passwordDeleteSchema`
@@ -1125,6 +1142,25 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 | `updatedAt` | number | |
 | `lastLoginAt` | number | 可选 |
 
+### UserSessionDoc（`user_sessions`）
+
+服务端会话记录：Cookie 里的 JWT 只是凭证，请求是否放行以本集合为准。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `_id` | string | 会话 ID（UUID），即 JWT 的 `sid` claim |
+| `userId` | string | 所属用户 |
+| `createdAt` | number | 登录/注册时刻 |
+| `lastSeenAt` | number | 最近一次通过校验的时刻（写回节流 1 小时；墓碑清理挂在这个节拍上） |
+| `expiresAt` | Date | 活跃期 = 到期时刻（登录 + 30 天）；墓碑期 = 墓碑到期时刻（+7 天）；TTL 索引按它回收 |
+| `deleted` | boolean | 墓碑标记：注销 / 改密 / 超时后为 `true` |
+| `deletedAt` | number \| null | 转为墓碑的时刻 |
+| `revokedReason` | `"logout"` \| `"password"` \| `"expired"` \| null | 失效原因（删号直接硬删记录，不留墓碑） |
+| `ip` | string \| null | 登录来源（取自 `x-forwarded-for` / `x-real-ip`） |
+| `userAgent` | string \| null | 登录时的 UA |
+
+墓碑清理规则见上文「服务端会话（session 机制）」：被出示即删、最旧活跃会话追平后批量删、`expiresAt` TTL 兜底。
+
 ### AgentDoc
 
 | 字段 | 类型 | 说明 |
@@ -1285,6 +1321,7 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 - `redemptions`: `{ userId: 1, createdAt: -1, _id: 1 }`
 - `usage_logs`: `{ userId: 1, createdAt: -1, _id: 1 }`、`{ createdAt: -1, _id: 1 }`
 - `user_quotas`: `{ userId: 1, expiresAt: 1 }`
+- `user_sessions`: `{ userId: 1, lastSeenAt: 1 }`（按用户找最旧活跃会话）、TTL `{ expiresAt: 1 }`（会话到期与墓碑到期自动回收）
 - `runtime_logs`: `{ createdAt: -1, _id: 1 }`、`{ level: 1, createdAt: -1, _id: 1 }`、`{ source: 1, createdAt: -1, _id: 1 }`，外加 30 天 TTL 索引（`{ createdAt: 1 }` + `expireAfterSeconds`）
 - `rate_limits`: TTL `{ expiresAt: 1 }`（限流计数按窗口自动回收）
 - `model_metadata`: 单文档 `_id = "models_dev"`，models.dev 倍率快照（冷启动兜底）
@@ -1307,7 +1344,7 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 | HTTP | 触发场景（汇总） |
 | --- | --- |
 | 400 | Zod 校验失败、ID 不合法、`since`/`cursor`/`limit` 参数不合法、头像文件超限或类型不支持、`/v1` 请求体缺 `model`/`messages` |
-| 401 | 缺失/过期的会话；登录密码错误；改密时 `currentPassword` 错误；无效 AI API Key（OpenAI 格式错误体） |
+| 401 | 缺失/已注销/已过期（30 天）的会话、无 `sid` 的旧格式 token；登录密码错误；改密时 `currentPassword` 错误；无效 AI API Key（OpenAI 格式错误体） |
 | 402 | AI API 额度耗尽或套餐过期（OpenAI 格式错误体，`type: "insufficient_quota"`） |
 | 403 | 非管理员访问 `/api/admin/*` |
 | 404 | 实体不存在、头像未设置、市场 Agent 不存在或不属于当前用户、模型不可用 / 无可用上游 |

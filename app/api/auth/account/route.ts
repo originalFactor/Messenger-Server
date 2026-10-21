@@ -18,6 +18,7 @@ import { clearUserSessionCookie, requireUserSession } from "@/lib/auth";
 import { deleteAgentAvatar, deleteMarketAgentAvatar, deleteUserAvatar } from "@/lib/avatars";
 import { jsonError, jsonOk } from "@/lib/http";
 import { createLogger } from "@/lib/runtime-logs";
+import { deleteUserSessions } from "@/lib/sessions";
 import { getUserById, countAdminUsers, deleteUserAccount } from "@/lib/storage";
 import { verifyPassword } from "@/lib/security";
 import { passwordDeleteSchema } from "@/lib/validation";
@@ -56,6 +57,9 @@ export async function DELETE(request: Request) {
   }
 
   const { agentIds, marketAgentIds } = await deleteUserAccount(session.sub);
+  // 用户文档已删：该账号的所有会话（含其它设备的活跃会话与墓碑）都没有
+  // 归属了，硬删而不是留墓碑。
+  await deleteUserSessions(session.sub);
   const avatarCleanup = await Promise.allSettled([
     deleteUserAvatar(session.sub),
     ...agentIds.map((agentId) => deleteAgentAvatar(agentId)),
@@ -66,6 +70,7 @@ export async function DELETE(request: Request) {
       authLog.error("Unable to clean up account avatar blob after account deletion.", { userId: session.sub, reason: result.reason instanceof Error ? result.reason.message : String(result.reason) });
     }
   }
+  // 会话记录已随账号一起硬删，这里只需清掉浏览器 Cookie。
   await clearUserSessionCookie();
   authLog.info("Account deleted.", { userId: session.sub, email: user.email, agentCount: agentIds.length, marketAgentCount: marketAgentIds.length });
   return jsonOk({ success: true });

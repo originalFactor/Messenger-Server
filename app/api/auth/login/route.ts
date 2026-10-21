@@ -17,6 +17,7 @@
 import { createUserSessionToken, setUserSessionCookie } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
 import { clientIp, enforceRateLimits } from "@/lib/rate-limit";
+import { createUserSession, purgeExpiredSessions, purgeObservedTombstones } from "@/lib/sessions";
 import { createLogger } from "@/lib/runtime-logs";
 import { verifyPassword } from "@/lib/security";
 import { getUserByEmail, updateUserLastLogin } from "@/lib/storage";
@@ -55,9 +56,19 @@ export async function POST(request: Request) {
 
   const now = Date.now();
   await updateUserLastLogin(user.id, now);
-  const token = await createUserSessionToken(user.id, user.email, user.role);
+  // 登录是低频事件：顺手清掉已到期的会话与墓碑，避免 TTL 线程滞后时
+  // 表里堆积无用记录。失败不影响登录。
+  const purged = await purgeExpiredSessions().catch(() => 0);
+  const sid = await createUserSession(user.id, {
+    ip: clientIp(request),
+    userAgent: request.headers.get("user-agent"),
+  });
+  const token = await createUserSessionToken(user.id, user.email, user.role, sid);
   await setUserSessionCookie(token);
-  authLog.info("Login succeeded.", { userId: user.id, email: user.email, role: user.role });
+  // 登录也是「这个账号刚有客户端同步过」的时刻：若已无其它活跃会话，或
+  // 最旧的活跃会话早已追平，旧墓碑此刻即可清掉，不必等下一次校验。
+  await purgeObservedTombstones(user.id).catch(() => undefined);
+  authLog.info("Login succeeded.", { userId: user.id, email: user.email, role: user.role, sid, purgedSessions: purged });
 
   return jsonOk({ user: await buildSelfUserView(user, now) });
 }
