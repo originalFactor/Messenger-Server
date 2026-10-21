@@ -7,7 +7,7 @@
 - Official website homepage with public plan/pricing display and web login/registration
 - Shared web console (`/console`) for users and administrators; the first registered user is automatically promoted to admin
 - Web UI built with Tailwind CSS v4 + shadcn/ui (radix base, nova preset) and Geist fonts
-- Email/password accounts with JWT cookie sessions backed by a server-side `user_sessions` collection (30-day expiry, multi-device, tombstoned revocations that clean themselves up)
+- Email/password accounts with JWT cookie sessions backed by a server-side `user_sessions` collection (30-day expiry, multi-device); each session doubles as a sync-progress ledger that lets the server purge entity tombstones no client still needs
 - MongoDB-backed versioned entity synchronization with per-user monotonic watermarks and soft-delete tombstones
 - Card-key (卡密) plan system: admin-defined plans, batch card issuance, user redemption with quota and validity extension
 - Per-model rate billing consumed by the built-in AI API, with per-model and per-provider overall multipliers plus an admin-selectable 1x base model
@@ -39,7 +39,7 @@ The former `ADMIN_PASSWORD` variable is removed: administration is a user role g
 All documents use application-generated string IDs as MongoDB `_id` values. Timestamps are Unix epoch milliseconds.
 
 - `users`: `_id`, `email`, `passwordHash`, `role` (`user` | `admin`), `aiApiKey`, `quotaBalance`, `quotaExpiresAt`, `avatarUrl`, `syncVersion`, `createdAt`, `updatedAt`, and `lastLoginAt`.
-- `user_sessions`: `_id` (the JWT `sid`), `userId`, `createdAt`, `lastSeenAt`, `expiresAt`, `deleted`, `deletedAt`, `revokedReason`, `ip`, `userAgent`. The JWT cookie is only a credential — a request is accepted only while its `sid` maps to a live row here, which is what makes logout, password changes and the 30-day expiry take effect immediately. Signing out / changing the password / expiring marks the row `deleted: true` (a tombstone) instead of removing it; tombstones are deleted as soon as no live session can still need them, and the `expiresAt` TTL index is the backstop. One account can hold several sessions at once (one per device).
+- `user_sessions`: `_id` (the JWT `sid`), `userId`, `createdAt`, `lastSeenAt`, `expiresAt`, `syncCursor`, `ip`, `userAgent`. The JWT cookie is only a credential — a request is accepted only while its `sid` maps to a row here, which is what makes logout, password changes and the 30-day expiry take effect immediately. Sessions carry no tombstones: signing out, changing the password or expiring deletes the row (the `expiresAt` TTL index is the backstop). One account can hold several sessions at once (one per device).
 - `agents`: `_id`, `userId`, agent configuration, `avatarUrl`, `version`, and `deleted`.
 - `conversations`: `_id`, `userId`, `agentId`, conversation overrides, one embedded `messages` array, `version`, and `deleted`.
 - `providers`: `_id`, `userId`, provider settings, one embedded `models` array, `version`, and `deleted`.
@@ -53,7 +53,7 @@ All documents use application-generated string IDs as MongoDB `_id` values. Time
 - `usage_logs`: one document per AI API completion (tokens and quota `cost`, upstream, request duration).
 - `system_bootstrap`: the `admin_bootstrap` marker that makes the first-admin grant race-safe.
 
-Messages are stored inside their owning conversation. Models are stored inside their owning provider. A delete sets `deleted: true`; tombstones remain available to delta sync clients.
+Messages are stored inside their owning conversation. Models are stored inside their owning provider. A delete sets `deleted: true`; tombstones remain available to delta sync clients until every live session has synced past them, at which point `purgeSettledTombstones` (`lib/sessions.ts`) removes them — the account's oldest session's `syncCursor` is the safe lower bound, fed by `GET /api/sync?ack=N`.
 
 Every entity write uses `findOneAndUpdate` with `$inc: { syncVersion: 1 }` inside the same MongoDB transaction that stamps the changed entity's `version`. This prevents a sync response from advancing its watermark past an uncommitted entity write.
 
@@ -72,7 +72,8 @@ The server initializes these indexes when it first connects:
 - `card_keys`: unique `{ code: 1 }`, `{ status: 1, createdAt: -1, _id: 1 }`, `{ planId: 1, status: 1 }`
 - `redemptions`: `{ userId: 1, createdAt: -1, _id: 1 }`
 - `usage_logs`: `{ userId: 1, createdAt: -1, _id: 1 }` and `{ createdAt: -1, _id: 1 }`
-- `user_sessions`: `{ userId: 1, lastSeenAt: 1 }` and a TTL `{ expiresAt: 1 }`
+- `user_sessions`: `{ userId: 1, syncCursor: 1 }` and a TTL `{ expiresAt: 1 }`
+- `agents` / `conversations` / `providers` / `projects`: `{ userId: 1, deleted: 1, version: 1 }` (tombstone purge)
 
 An additional partial unique index protects the one-active-default-agent invariant for each user.
 

@@ -63,18 +63,30 @@ interface SessionClaims {
 
 ### 服务端会话（session 机制）
 
-Cookie 里的 JWT 只是**凭证**：请求是否被接受以 `user_sessions` 集合中的记录为准，所以注销、改密、超时都能即时失效（纯 JWT 做不到）。
+会话既是登录凭证的载体，也是**同步进度账本**：
+
+- **凭证**：Cookie 里的 JWT 只是凭证，请求是否被接受以 `user_sessions` 里的记录为准（存在且未过期）。注销、改密、超时因此能即时失效——纯 JWT 做不到。
+- **账本**：每条会话记录自己已完整应用到哪个 `syncVersion`（`syncCursor`），服务端据此知道「最慢的客户端走到哪里了」。**这是实体墓碑能被安全清理的前提**：在此之前没有任何服务端状态能回答「谁还在等哪些墓碑」，被删的 conversation / agent / provider / project 只能无限堆积。
+
+规则：
 
 - **多会话并存**：每次登录/注册签发一条独立记录，同一账号可同时在多台设备登录，互不顶替。
-- **有效期 30 天、不滑动续期**：库记录的 `expiresAt`、JWT 的 `exp` 与 Cookie 的 `maxAge` 同时到期；超时后下一次请求即 `401`，App 必须重新登录。
-- **只给旧 session 留墓碑**：注销（`revokedReason: "logout"`）、改密（`"password"`）、超时（`"expired"`）都只把记录置 `deleted: true` 而**不硬删**，让「被注销的旧会话」在日志里能与「未知会话」区分。会话记录永不物理复用于新会话。
-- **墓碑自动清理**（三条触发，任一命中即删）：
-  1. 墓碑被再次出示时当场删除；
-  2. 该账号**最旧的活跃会话**已同步过这次变更（最旧活跃会话的 `lastSeenAt ≥ 墓碑的 deletedAt`）——此时没有客户端还需要这条墓碑；账号已无活跃会话时全部清空。检查挂在 `lastSeenAt` 的 1 小时写回节拍上，不额外产生请求；
-  3. `expiresAt` TTL 索引兜底回收（墓碑保留期 7 天），登录时再顺带扫一遍已到期记录。
+- **有效期 30 天、不滑动续期**：库记录的 `expiresAt`、JWT 的 `exp` 与 Cookie 的 `maxAge` 共用同一个常量，同时到期；超时后下一次请求即 `401`，App 必须重新登录。
+- **会话本身不留墓碑**：注销、改密、超时都直接删除记录（`expiresAt` TTL 索引兜底）。行不存在就是无效会话，无需额外状态。
+- **游标记账**：`GET /api/sync` 的 `ack` 参数上报「客户端已持久化的游标」，服务端取 `max(syncCursor, ack)`。
 - **改造前的旧 token 一律失效**：没有 `sid` claim 的 JWT 视作过期，旧部署升级后所有客户端都需要重新登录一次。
-- **改密踢其它设备**：`PUT /api/auth/password` 注销该账号除当前会话外的全部会话。
-- **删号清空会话**：`DELETE /api/auth/account` 硬删该账号的全部会话记录（含墓碑）。
+- **改密踢其它设备**：`PUT /api/auth/password` 删除该账号除当前会话外的全部会话。
+- **删号清空会话**：`DELETE /api/auth/account` 删除该账号的全部会话记录。
+
+### 实体墓碑的自动清理
+
+增量同步靠墓碑（`deleted: true` 的文档）告诉客户端「这条数据没了」，但墓碑不能立刻删：还停在更早版本的客户端尚未拉到它。会话账本给出了安全下界：
+
+- **判据**：取该账号**最旧的活跃会话**的 `syncCursor` C，删除所有 `version <= C` 的墓碑。最慢的客户端都已完整应用过该版本，而增量拉取永远只要 `version > since`，因此没有任何活着的客户端还会请求它们。
+- **触发时机**：某条会话的 `syncCursor` 前进时（即一个完整同步周期结束），以及登录时（让「阻塞清理的那条会话已过期」立刻生效）。
+- **两条保守规则**：账号没有任何活跃会话时**不清理**（换设备/重登的客户端带着自己的本地游标回来，仍需要这些墓碑）；有会话但 `syncCursor == 0`（尚未完成过一次同步，本地状态未知）时也不清理。
+- **老客户端**：不带 `ack` 的请求不参与记账，其会话游标停在 0，清理会保守地停在这条会话上。
+- **清理地平线 = 会话有效期**：会话 30 天到期后其游标消失，墓碑最早也只会在那时被回收。离线超过 30 天的客户端届时已必须重新登录，而登录后的 `completeLogin`/`downloadAndRestore` 都是整库重建（不是从陈旧游标做增量），因此不会因为墓碑被删而漏删本地数据。
 
 鉴权行为：
 
@@ -269,7 +281,7 @@ Cookie 里的 JWT 只是**凭证**：请求是否被接受以 `user_sessions` �
 
 ### POST /api/auth/logout
 
-注销当前会话：服务端记录置为墓碑（旧 Cookie 立即失效，即使被复制到别处也无法再用），同时清除 Cookie。无论是否登录都返回成功。
+注销当前会话：服务端记录被删除（旧 Cookie 立即失效，即使被复制到别处也无法再用），同时清除 Cookie。无论是否登录都返回成功。
 
 - 鉴权：无（操作幂等）
 - 请求体：无
@@ -330,7 +342,7 @@ Cookie 里的 JWT 只是**凭证**：请求是否被接受以 `user_sessions` �
 ```
 
 - 响应 `200`：`{ "success": true }`
-- **副作用**：该账号在其它设备上的会话全部注销（服务端留墓碑），当前会话保留；其它客户端下次请求即 `401`，需用新密码重新登录。
+- **副作用**：该账号在其它设备上的会话记录全部删除，当前会话保留；其它客户端下次请求即 `401`，需用新密码重新登录。
 - 错误：
   - `400 Invalid password change payload.`
   - `400 The new password must be different.`
@@ -340,7 +352,7 @@ Cookie 里的 JWT 只是**凭证**：请求是否被接受以 `user_sessions` �
 
 ### DELETE /api/auth/account
 
-永久注销账户。在同一存储事务内删除该用户的所有 `agents`、`conversations`、`providers`、`projects`、`market_agents`、`redemptions`、`usage_logs`、`user_quotas` 文档与头像锁，随后硬删该账号在 `user_sessions` 中的全部会话（含墓碑——用户已不存在，没有保留价值），再异步清理三类头像 Blob，最后清除会话 Cookie。
+永久注销账户。在同一存储事务内删除该用户的所有 `agents`、`conversations`、`providers`、`projects`、`market_agents`、`redemptions`、`usage_logs`、`user_quotas` 文档与头像锁，随后删除该账号在 `user_sessions` 中的全部会话记录，再异步清理三类头像 Blob，最后清除会话 Cookie。
 
 - 鉴权：用户会话
 - 请求体：`passwordDeleteSchema`
@@ -658,7 +670,7 @@ Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tool
 实体类端点（`agents`、`conversations`、`providers`）遵循统一模式：
 
 - **PUT 用于 upsert**：路径中的 `{id}` 必须与请求体 `id` 一致，否则 `400`。
-- **DELETE 用于软删除**：仅置 `deleted: true`，墓碑保留以供增量同步。
+- **DELETE 用于软删除**：仅置 `deleted: true`，墓碑保留到所有活跃会话都同步过它为止（见「实体墓碑的自动清理」）。
 - **请求体不含服务端管理字段**：客户端不要传 `version`、`deleted`、`userId`。
 - **成功响应**：`{ "id": "...", "version": <新的实体版本号> }`。
 - **版本号语义**：每次写入在同一个 MongoDB 事务内 `$inc` 用户 `syncVersion` 并把该值盖到实体 `version` 上，保证 `version` 单调递增且与水位线一致。
@@ -757,7 +769,7 @@ Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tool
 
 ### DELETE /api/conversations/{id}
 
-软删除会话。删除后会话仅保留墓碑字段供同步。
+软删除会话。删除后仅保留墓碑字段（`_id`/`version`/`deleted`，内嵌 `messages` 被清空），供尚未同步到该版本的客户端拉取。
 
 - 鉴权：用户会话
 - 响应 `200`：`{ "id": "conv-uuid", "version": 46 }`
@@ -814,6 +826,7 @@ Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tool
 
 1. **合并模式（向后兼容）**：不传 `collection`，一次性返回三个集合。
 2. **分页模式（推荐）**：传 `collection` 按集合分页拉取，避免初始同步把全部历史（含已删除会话的内嵌 `messages`）塞进单个响应。
+3. **`ack`（可选）**：客户端**已持久化**的同步游标（本地 `since`）。服务端据此记录会话的同步进度，并在游标前进时清理已无人需要的实体墓碑（见「实体墓碑的自动清理」）。必须是 `>= 0` 的整数，否则 `400`。推完本地改动后的拉取要用 `since = 刚推送的版本`，此时 `ack` 仍应上报**旧**游标——客户端还没应用新版本。
 
 #### 查询参数
 
@@ -823,6 +836,7 @@ Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tool
 | `collection` | `agents` \| `conversations` \| `providers` \| `projects` | 否 | 指定后进入分页模式 |
 | `cursor` | string | 否 | 分页游标（base64url 编码的 `{ version, id }`）；不能为空串 |
 | `limit` | 正整数 | 否 | 每页大小，默认 100，上限 500 |
+| `ack` | 非负整数 | 否 | 客户端已**持久化**的同步游标；用于记录会话进度并清理已无人需要的实体墓碑。老客户端可不传（不参与记账，清理会保守地停在它那条会话上） |
 
 #### 合并模式响应（无 `collection`）
 
@@ -1144,22 +1158,20 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 
 ### UserSessionDoc（`user_sessions`）
 
-服务端会话记录：Cookie 里的 JWT 只是凭证，请求是否放行以本集合为准。
+服务端会话记录：既是登录凭证（Cookie 里的 JWT 只是凭证，是否放行以本集合为准），也是同步进度账本。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `_id` | string | 会话 ID（UUID），即 JWT 的 `sid` claim |
 | `userId` | string | 所属用户 |
 | `createdAt` | number | 登录/注册时刻 |
-| `lastSeenAt` | number | 最近一次通过校验的时刻（写回节流 1 小时；墓碑清理挂在这个节拍上） |
-| `expiresAt` | Date | 活跃期 = 到期时刻（登录 + 30 天）；墓碑期 = 墓碑到期时刻（+7 天）；TTL 索引按它回收 |
-| `deleted` | boolean | 墓碑标记：注销 / 改密 / 超时后为 `true` |
-| `deletedAt` | number \| null | 转为墓碑的时刻 |
-| `revokedReason` | `"logout"` \| `"password"` \| `"expired"` \| null | 失效原因（删号直接硬删记录，不留墓碑） |
+| `lastSeenAt` | number | 最近一次通过校验的时刻（写回节流 1 小时） |
+| `expiresAt` | Date | 到期时刻（登录 + 30 天）；TTL 索引按它自动回收记录 |
+| `syncCursor` | number | 该会话已完整应用的 `syncVersion`（增量拉取的 `since` 下界）；`0` = 尚未完成过一次同步，会阻塞实体墓碑清理 |
 | `ip` | string \| null | 登录来源（取自 `x-forwarded-for` / `x-real-ip`） |
 | `userAgent` | string \| null | 登录时的 UA |
 
-墓碑清理规则见上文「服务端会话（session 机制）」：被出示即删、最旧活跃会话追平后批量删、`expiresAt` TTL 兜底。
+会话本身不留墓碑（删除即失效）。`syncCursor` 的用途见上文「实体墓碑的自动清理」。
 
 ### AgentDoc
 
@@ -1312,7 +1324,7 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 服务首次连接时由 [`lib/mongo.ts`](./lib/mongo.ts) 初始化：
 
 - `users`: 唯一 `{ email: 1 }`、`{ updatedAt: -1, _id: 1 }`、`{ aiApiKey: 1 }`
-- `agents`: `{ userId: 1, version: 1 }`
+- `agents`: `{ userId: 1, version: 1 }`、`{ userId: 1, deleted: 1, version: 1 }`（墓碑清理）
 - `conversations`: `{ userId: 1, version: 1 }`、`{ userId: 1, agentId: 1 }`
 - `providers`: `{ userId: 1, version: 1 }`
 - `projects`: `{ userId: 1, version: 1 }`
@@ -1321,7 +1333,7 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 - `redemptions`: `{ userId: 1, createdAt: -1, _id: 1 }`
 - `usage_logs`: `{ userId: 1, createdAt: -1, _id: 1 }`、`{ createdAt: -1, _id: 1 }`
 - `user_quotas`: `{ userId: 1, expiresAt: 1 }`
-- `user_sessions`: `{ userId: 1, lastSeenAt: 1 }`（按用户找最旧活跃会话）、TTL `{ expiresAt: 1 }`（会话到期与墓碑到期自动回收）
+- `user_sessions`: `{ userId: 1, syncCursor: 1 }`（按用户取最旧会话的游标）、TTL `{ expiresAt: 1 }`（会话 30 天到期自动回收）
 - `runtime_logs`: `{ createdAt: -1, _id: 1 }`、`{ level: 1, createdAt: -1, _id: 1 }`、`{ source: 1, createdAt: -1, _id: 1 }`，外加 30 天 TTL 索引（`{ createdAt: 1 }` + `expireAfterSeconds`）
 - `rate_limits`: TTL `{ expiresAt: 1 }`（限流计数按窗口自动回收）
 - `model_metadata`: 单文档 `_id = "models_dev"`，models.dev 倍率快照（冷启动兜底）

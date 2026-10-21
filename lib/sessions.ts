@@ -17,40 +17,36 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/mongo";
 import { createLogger } from "@/lib/runtime-logs";
-import type { SessionRevokeReason, UserSessionDoc } from "@/lib/types";
+import type { UserSessionDoc } from "@/lib/types";
 
 /**
- * 服务端会话（`user_sessions` 集合）。
+ * 服务端会话（`user_sessions`）。
  *
- * Cookie 里的 JWT 只是凭证：会话是否有效以本集合为准，所以注销、改密、
- * 超时都能即时失效（纯 JWT 做不到）。一个账号可同时有多条会话（每台设备
- * 一条，互不顶替）。
+ * 会话不是「登录凭证的黑名单」，而是**同步进度账本**：每条会话记录自己已经
+ * 拉取到哪个 `syncVersion`。有了这份账本，服务端才知道「最慢的客户端走到
+ * 哪里了」，从而可以安全地删掉已经无人需要的实体墓碑。
+ *
+ * 为什么需要它：增量同步靠墓碑（`deleted: true` 的 conversation / agent /
+ * provider / project）告诉客户端「这条数据没了」。墓碑不能立刻删——某个
+ * 客户端可能还停在更早的版本，还没拉到这条墓碑。此前没有任何服务端状态能
+ * 回答「谁还在等哪些墓碑」，于是墓碑只能无限堆积。会话补上了这个信息。
  *
  * 生命周期：
- * - 登录/注册签发一条 `deleted: false` 的记录，`expiresAt = now + 30 天`；
- * - 注销 / 改密 / 超时 → 只置 `deleted: true` 留墓碑，不硬删：墓碑让
- *   「被注销的旧 session」与「未知会话」在日志里可区分，也便于审计；
- * - 墓碑会被自动清理，三种触发：
- *   1. 被出示时当场删除（它已经证明自己没用了）；
- *   2. 该账号**最旧的活跃会话**也已同步过这次变更（它的 `lastSeenAt`
- *      晚于墓碑的 `deletedAt`）——此时没有任何客户端还需要这条墓碑，
- *      立即删除；账号没有活跃会话时同样立即清空；
- *   3. TTL 索引按 `expiresAt` 兜底回收（实例长时间无请求时的保险）。
- *
- * 有效期 30 天且不滑动续期：Cookie、JWT、库里的 `expiresAt` 同时到期，
- * 超时后下一次请求即 401，App 必须重新登录。
+ * - 登录/注册签发一条记录，`expiresAt = now + 30 天`，`syncCursor = 0`
+ *   （0 = 该会话还没有完成过一次同步，未知其本地状态，保守地阻塞清理）；
+ * - 每次 `GET /api/sync?since=N` 把 `syncCursor` 抬到 `max(syncCursor, N)`：
+ *   `since` 就是客户端「已经完整应用到哪里」，它只会随完整同步周期前进；
+ * - 会话到期（30 天，不滑动续期）或被注销即**硬删除**记录——会话本身不需要
+ *   墓碑，行不存在就是无效会话；
+ * - 一条会话都没有时不做清理：换设备重新登录的客户端仍带着自己的本地游标，
+ *   它需要那些墓碑。
  */
 
 const sessionLog = createLogger("auth");
 
-/** 会话有效期：30 天。 */
+/** 会话有效期：30 天（Cookie、JWT、库记录三者共用）。 */
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-/**
- * 墓碑兜底保留期：即使没有会话再来「确认同步」，注销后 7 天也清掉，
- * 避免墓碑在无人访问的账号下长期占用空间。
- */
-export const SESSION_TOMBSTONE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-/** `lastSeenAt` 写回节流：1 小时内不重复写库（墓碑清理挂在这个节拍上）。 */
+/** `lastSeenAt` 写回节流：1 小时内不重复写库。 */
 const TOUCH_INTERVAL_MS = 60 * 60 * 1000;
 
 export interface UserSessionMeta {
@@ -66,64 +62,22 @@ export async function createUserSession(
   const db = await getDb();
   const now = Date.now();
   const sid = randomUUID();
-  const doc: UserSessionDoc = {
+  await db.collection<UserSessionDoc>("user_sessions").insertOne({
     _id: sid,
     userId,
     createdAt: now,
     lastSeenAt: now,
     expiresAt: new Date(now + SESSION_TTL_MS),
-    deleted: false,
-    deletedAt: null,
-    revokedReason: null,
+    syncCursor: 0,
     ip: meta.ip ?? null,
     userAgent: meta.userAgent ?? null,
-  };
-  await db.collection<UserSessionDoc>("user_sessions").insertOne(doc);
+  });
   return sid;
 }
 
 /**
- * 清掉该账号已经「无人需要」的墓碑。
- *
- * 墓碑的唯一作用是把「被注销的旧 session」和「不存在的会话」区分开；一旦
- * 最旧的活跃会话都发过请求（`lastSeenAt >= deletedAt`），说明这次变更已经
- * 传播到所有还在用的客户端，墓碑没有读者了，直接删除。账号已无活跃会话时
- * 全部清空。
- */
-export async function purgeObservedTombstones(userId: string): Promise<void> {
-  const db = await getDb();
-  const sessions = db.collection<UserSessionDoc>("user_sessions");
-  const oldest = await sessions
-    .find({ userId, deleted: false, expiresAt: { $gt: new Date() } })
-    .sort({ lastSeenAt: 1 })
-    .limit(1)
-    .next();
-  if (!oldest) {
-    const result = await sessions.deleteMany({ userId, deleted: true });
-    if (result.deletedCount > 0) {
-      sessionLog.info("Session tombstones purged (no live sessions).", { userId, purged: result.deletedCount });
-    }
-    return;
-  }
-  const result = await sessions.deleteMany({
-    userId,
-    deleted: true,
-    deletedAt: { $lte: oldest.lastSeenAt },
-  });
-  if (result.deletedCount > 0) {
-    sessionLog.info("Session tombstones purged (oldest session caught up).", {
-      userId,
-      purged: result.deletedCount,
-      oldestSessionSid: oldest._id,
-    });
-  }
-}
-
-/**
- * 取一条仍然可用的会话；不可用时返回 `null`。
- *
- * 三条失效判据：不存在（已清理）、`deleted`（注销/改密）、`expiresAt`
- * 已过（超时）。超时记录转成墓碑后交给自动清理。
+ * 取一条仍然可用的会话；不存在或已过期返回 `null`（过期记录当场删除，
+ * TTL 索引只是兜底）。
  */
 export async function getActiveSession(sid: string, userId: string): Promise<UserSessionDoc | null> {
   const db = await getDb();
@@ -133,88 +87,56 @@ export async function getActiveSession(sid: string, userId: string): Promise<Use
     return null;
   }
   const now = Date.now();
-  if (session.deleted) {
-    // 墓碑被出示：确认死亡，直接删除（它已经完成最后一次告知）。
-    await sessions.deleteOne({ _id: sid });
-    sessionLog.warn("Revoked session presented.", { userId, sid, reason: session.revokedReason ?? "revoked" });
-    return null;
-  }
   if (session.expiresAt.getTime() <= now) {
-    // 超时：转墓碑（保留期结束后由 TTL 回收），并在日志里与「主动注销」区分。
-    await sessions.updateOne(
-      { _id: sid, deleted: false },
-      {
-        $set: {
-          deleted: true,
-          deletedAt: now,
-          revokedReason: "expired" satisfies SessionRevokeReason,
-          expiresAt: new Date(now + SESSION_TOMBSTONE_TTL_MS),
-        },
-      },
-    );
+    await sessions.deleteOne({ _id: sid });
     sessionLog.info("Session expired.", { userId, sid });
     return null;
   }
   if (now - session.lastSeenAt >= TOUCH_INTERVAL_MS) {
     await sessions.updateOne({ _id: sid }, { $set: { lastSeenAt: now } });
-    // 刚写回的 lastSeenAt 就是「本次请求已同步」的证据：若这条会话是最旧的
-    // 活跃会话，此刻之前产生的墓碑都已被所有客户端看到，可以回收。
-    // 早回收只影响日志能否说出「被注销」，不影响有效性判定（行不存在
-    // 与墓碑一样返回 401）。
-    await purgeObservedTombstones(userId).catch(() => undefined);
   }
   return session;
 }
 
-/** 注销一条会话：留墓碑（随后由自动清理回收）。返回是否命中一条活跃会话。 */
-export async function revokeSession(sid: string, reason: SessionRevokeReason): Promise<boolean> {
-  const db = await getDb();
-  const now = Date.now();
-  const result = await db.collection<UserSessionDoc>("user_sessions").updateOne(
-    { _id: sid, deleted: false },
-    {
-      $set: {
-        deleted: true,
-        deletedAt: now,
-        revokedReason: reason,
-        expiresAt: new Date(now + SESSION_TOMBSTONE_TTL_MS),
-      },
-    },
-  );
-  return result.matchedCount === 1;
-}
-
 /**
- * 注销一个账号名下的会话（改密、删号）。`exceptSid` 保留当前会话
- * （改密时当前设备不掉线），返回被注销的条数。
- */
-export async function revokeUserSessions(
-  userId: string,
-  reason: SessionRevokeReason,
-  exceptSid?: string | null,
-): Promise<number> {
-  const db = await getDb();
-  const now = Date.now();
-  const filter = exceptSid
-    ? { userId, deleted: false, _id: { $ne: exceptSid } }
-    : { userId, deleted: false };
-  const result = await db.collection<UserSessionDoc>("user_sessions").updateMany(filter, {
-    $set: {
-      deleted: true,
-      deletedAt: now,
-      revokedReason: reason,
-      expiresAt: new Date(now + SESSION_TOMBSTONE_TTL_MS),
-    },
-  });
-  return result.modifiedCount;
-}
-
-/**
- * 兜底清理：删掉所有已到期的记录（超时会话与墓碑都算）。
+ * 记录「这条会话已经完整同步到 `cursor`」，返回是否有推进。
  *
- * TTL 索引负责常态回收，但它由后台线程按分钟级周期扫描，实例刚启动或
- * 长时间无写入时可能滞后；登录是低频事件，顺手扫一遍成本可忽略。
+ * `cursor` 来自请求的 `ack` 参数——客户端自己上报的、**已持久化**的本地
+ * 游标，不是本次请求的 `since`（推完本地改动后的拉取会用 `since = 刚推送
+ * 的版本`，而客户端还没应用过它）。只增不减：分页中途崩溃时客户端不会
+ * 推进本地游标，服务端也就不会误以为它吃下了后半段。
  */
+export async function advanceSessionCursor(sid: string, cursor: number): Promise<boolean> {
+  if (cursor <= 0) {
+    return false;
+  }
+  const db = await getDb();
+  const result = await db.collection<UserSessionDoc>("user_sessions").updateOne(
+    { _id: sid, syncCursor: { $lt: cursor } },
+    { $set: { syncCursor: cursor } },
+  );
+  return result.modifiedCount === 1;
+}
+
+/** 注销一条会话（硬删除）。返回是否命中。 */
+export async function deleteSession(sid: string): Promise<boolean> {
+  const db = await getDb();
+  const result = await db.collection<UserSessionDoc>("user_sessions").deleteOne({ _id: sid });
+  return result.deletedCount === 1;
+}
+
+/**
+ * 注销一个账号名下的会话（改密时用 `exceptSid` 保留当前设备）。
+ * 返回被删除的条数。
+ */
+export async function deleteUserSessions(userId: string, exceptSid?: string | null): Promise<number> {
+  const db = await getDb();
+  const filter = exceptSid ? { userId, _id: { $ne: exceptSid } } : { userId };
+  const result = await db.collection<UserSessionDoc>("user_sessions").deleteMany(filter);
+  return result.deletedCount;
+}
+
+/** 兜底清理已过期会话（TTL 索引之外，登录时顺带扫一遍）。 */
 export async function purgeExpiredSessions(): Promise<number> {
   const db = await getDb();
   const result = await db.collection<UserSessionDoc>("user_sessions").deleteMany({
@@ -223,8 +145,54 @@ export async function purgeExpiredSessions(): Promise<number> {
   return result.deletedCount;
 }
 
-/** 账号注销时彻底移除该用户的全部会话（含墓碑，用户已不存在）。 */
-export async function deleteUserSessions(userId: string): Promise<void> {
+/**
+ * 删除已经无人需要的实体墓碑，返回删除条数。
+ *
+ * 只删「实体墓碑」——被软删除的 agent / conversation / provider / project。
+ * 会话本身从不留墓碑，所以这里与 `user_sessions` 无关。
+ *
+ * 判据：取该账号**最旧的活跃会话**（`syncCursor` 最小者）的游标 C，凡是
+ * `version <= C` 的墓碑都可以删——最慢的客户端都已经同步过那个版本，任何
+ * 还活着的客户端都不会再请求它（增量拉取永远只要 `version > since`）。
+ *
+ * 两条保守规则：
+ * - 没有活跃会话时**不清理**：换设备/重登的客户端带着自己的本地游标回来，
+ *   仍需要这些墓碑；
+ * - 有会话但 `syncCursor == 0`（还没完成过一次同步，本地状态未知）时也
+ *   不清理。
+ */
+export async function purgeSettledTombstones(userId: string): Promise<number> {
   const db = await getDb();
-  await db.collection<UserSessionDoc>("user_sessions").deleteMany({ userId });
+  const oldest = await db
+    .collection<UserSessionDoc>("user_sessions")
+    .find({ userId, expiresAt: { $gt: new Date() } })
+    .sort({ syncCursor: 1 })
+    .limit(1)
+    .next();
+  if (!oldest || oldest.syncCursor <= 0) {
+    return 0;
+  }
+  const cursor = oldest.syncCursor;
+  const tombstones = { userId, deleted: true, version: { $lte: cursor } };
+  const [agents, conversations, providers, projects] = await Promise.all([
+    // 默认 Agent 不能被删除，`isDefault` 兜底只是防御性写法。
+    db.collection("agents").deleteMany({ ...tombstones, isDefault: { $ne: true } }),
+    db.collection("conversations").deleteMany(tombstones),
+    db.collection("providers").deleteMany(tombstones),
+    db.collection("projects").deleteMany(tombstones),
+  ]);
+  const purged =
+    agents.deletedCount + conversations.deletedCount + providers.deletedCount + projects.deletedCount;
+  if (purged > 0) {
+    sessionLog.info("Settled tombstones purged.", {
+      userId,
+      cursor,
+      oldestSessionSid: oldest._id,
+      agents: agents.deletedCount,
+      conversations: conversations.deletedCount,
+      providers: providers.deletedCount,
+      projects: projects.deletedCount,
+    });
+  }
+  return purged;
 }

@@ -91,10 +91,15 @@ async function ensureIndexesFor(database: Db): Promise<void> {
       ),
       // 限流计数按窗口分文档，窗口过期即应回收。
       database.collection("rate_limits").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
-      // 服务端会话：{ userId, lastSeenAt } 供「最旧活跃会话追平后清墓碑」
-      // 查询；TTL 索引在会话到期或墓碑到期后自动回收——这是自动清理的兜底。
-      database.collection("user_sessions").createIndex({ userId: 1, lastSeenAt: 1 }),
+      // 服务端会话是同步进度账本：{ userId, syncCursor } 供「取最旧会话游标」
+      // 决定哪些实体墓碑已无人需要；TTL 索引在会话 30 天到期后自动回收。
+      database.collection("user_sessions").createIndex({ userId: 1, syncCursor: 1 }),
       database.collection("user_sessions").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+      // 墓碑清理按 { userId, deleted, version } 过滤并删除，四个同步集合都要。
+      database.collection("agents").createIndex({ userId: 1, deleted: 1, version: 1 }),
+      database.collection("conversations").createIndex({ userId: 1, deleted: 1, version: 1 }),
+      database.collection("providers").createIndex({ userId: 1, deleted: 1, version: 1 }),
+      database.collection("projects").createIndex({ userId: 1, deleted: 1, version: 1 }),
     ]).then(() => undefined);
     const startedAt = Date.now();
     globalThis.messengerMongoIndexesPromise = indexes

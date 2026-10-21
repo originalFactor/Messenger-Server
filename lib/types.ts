@@ -569,14 +569,12 @@ export interface SiteOverview {
   recentUsers: AdminRecentUser[];
 }
 
-/** 会话失效原因：注销 / 改密 / 超时（删号直接硬删记录，不留墓碑）。 */
-export type SessionRevokeReason = "logout" | "password" | "expired";
-
 /**
  * 服务端会话记录（`user_sessions`）。
  *
- * Cookie 里的 JWT 只是凭证，会话是否有效以本集合为准；`deleted` 为墓碑
- * 标记，`expiresAt` 同时被 TTL 索引与有效性判定使用。
+ * 会话是**同步进度账本**，不是凭证黑名单：`syncCursor` 记录该会话已完整
+ * 拉取到的 `syncVersion`，服务端据此判断哪些实体墓碑已无人需要。会话本身
+ * 不留墓碑——注销或过期即硬删除，行不存在就是无效会话。
  */
 export interface UserSessionDoc {
   /** 会话 ID，同时写进 JWT 的 `sid` claim。 */
@@ -585,11 +583,13 @@ export interface UserSessionDoc {
   createdAt: number;
   /** 最近一次成功校验的时间（写回有 1 小时节流）。 */
   lastSeenAt: number;
-  /** 活跃期 = 到期时刻；墓碑期 = 墓碑到期时刻（TTL 索引回收）。 */
+  /** 到期时刻，Cookie / JWT / 本字段三者共用同一个 30 天常量。 */
   expiresAt: Date;
-  deleted: boolean;
-  deletedAt: number | null;
-  revokedReason: SessionRevokeReason | null;
+  /**
+   * 该会话已完整应用的 `syncVersion`（增量拉取的 `since` 下界）。
+   * 0 = 尚未完成过一次同步，本地状态未知，会阻塞墓碑清理。
+   */
+  syncCursor: number;
   ip: string | null;
   userAgent: string | null;
 }

@@ -57,8 +57,7 @@ export async function DELETE(request: Request) {
   }
 
   const { agentIds, marketAgentIds } = await deleteUserAccount(session.sub);
-  // 用户文档已删：该账号的所有会话（含其它设备的活跃会话与墓碑）都没有
-  // 归属了，硬删而不是留墓碑。
+  // 用户文档已删：该账号在所有设备上的会话都没有归属了。
   await deleteUserSessions(session.sub);
   const avatarCleanup = await Promise.allSettled([
     deleteUserAvatar(session.sub),

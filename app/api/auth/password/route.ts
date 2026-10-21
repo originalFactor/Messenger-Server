@@ -17,7 +17,7 @@
 import { requireUserSession } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
 import { createLogger } from "@/lib/runtime-logs";
-import { revokeUserSessions } from "@/lib/sessions";
+import { deleteUserSessions } from "@/lib/sessions";
 import { hashPassword, verifyPassword } from "@/lib/security";
 import { getUserById, updateUserPassword } from "@/lib/storage";
 import { passwordChangeSchema } from "@/lib/validation";
@@ -53,7 +53,7 @@ export async function PUT(request: Request) {
   await updateUserPassword(session.sub, await hashPassword(parsed.data.newPassword));
   // 改密必须让其它设备上的会话失效（否则旧密码泄露后仍能继续用），
   // 当前设备保留：它刚证明了自己知道新密码。
-  const revoked = await revokeUserSessions(session.sub, "password", session.sid);
+  const revoked = await deleteUserSessions(session.sub, session.sid);
   authLog.info("Password changed.", { userId: session.sub, revokedSessions: revoked });
   return jsonOk({ success: true });
 }

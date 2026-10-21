@@ -18,7 +18,7 @@ import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 import { env } from "@/lib/env";
 import { createLogger } from "@/lib/runtime-logs";
-import { getActiveSession, revokeSession, SESSION_TTL_MS } from "@/lib/sessions";
+import { deleteSession, getActiveSession, SESSION_TTL_MS } from "@/lib/sessions";
 import { getUserById } from "@/lib/storage";
 import type { SessionClaims, UserRole } from "@/lib/types";
 
@@ -77,8 +77,8 @@ export async function clearUserSessionCookie() {
 }
 
 /**
- * 注销当前会话：按 token 里的 `sid` 留墓碑（不硬删，交给自动清理），再清
- * Cookie。服务端记录必须先失效，否则复制走的旧 Cookie 还能继续用。
+ * 注销当前会话：按 token 里的 `sid` 删除会话记录，再清 Cookie。会话不留
+ * 墓碑，行不存在即无效；删除必须先于清 Cookie，否则复制走的旧 Cookie 还能用。
  */
 export async function endCurrentSession(): Promise<void> {
   const token = (await cookies()).get(USER_COOKIE)?.value;
@@ -86,7 +86,7 @@ export async function endCurrentSession(): Promise<void> {
     try {
       const claims = await verifySessionToken(token);
       if (claims.sid) {
-        await revokeSession(claims.sid, "logout");
+        await deleteSession(claims.sid);
       }
     } catch (error) {
       // token 无效（没有可注销的记录），或库暂时不可用：注销接口必须幂等
@@ -105,9 +105,8 @@ export async function endCurrentSession(): Promise<void> {
  * 再走 requireAdminUser()，它以数据库中的 role 为准，避免旧 token 提权。
  *
  * 签名有效只是第一步：claims 必须带 `sid`，且 `user_sessions` 里对应的
- * 记录仍然活跃（未注销、未超时）。因此注销、改密、30 天超时都能即时
- * 生效——纯 JWT 做不到即时失效。改造前签发的无 `sid` token 一律视为
- * 无效（旧 session 只保留墓碑语义，不再放行）。
+ * 记录仍然存在且未过期。因此注销、改密、30 天超时都能即时生效——纯 JWT
+ * 做不到即时失效。改造前签发的无 `sid` token 一律视为过期。
  */
 export async function requireUserSession(): Promise<SessionClaims | null> {
   const token = (await cookies()).get(USER_COOKIE)?.value;

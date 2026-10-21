@@ -18,8 +18,8 @@ import { endCurrentSession } from "@/lib/auth";
 import { jsonOk } from "@/lib/http";
 
 /**
- * 注销当前会话。服务端记录转成墓碑（旧 Cookie 立即失效），Cookie 同时清除；
- * 未登录时同样返回成功。
+ * 注销当前会话：服务端记录被删除（旧 Cookie 立即失效），Cookie 同时清除。
+ * 会话本身不留墓碑；未登录时同样返回成功。
  */
 export async function POST() {
   await endCurrentSession();
