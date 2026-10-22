@@ -16,42 +16,40 @@
 
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { LogDetailTable } from "@/components/admin/log-detail-table";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { formatDateTime } from "@/lib/format";
 import type { RuntimeLogDoc, RuntimeLogLevel, RuntimeLogSource } from "@/lib/types";
 
-const LEVEL_LABEL: Record<RuntimeLogLevel, string> = {
-  error: "错误",
-  warn: "警告",
-  info: "信息",
-};
-const LEVEL_VARIANT: Record<RuntimeLogLevel, "destructive" | "default" | "secondary"> = {
-  error: "destructive",
-  warn: "default",
-  info: "secondary",
-};
-const SOURCE_LABEL: Record<RuntimeLogSource, string> = {
-  api: "API",
-  relay: "中继",
-  auth: "认证",
-  billing: "计费",
-  admin: "管理",
-  sync: "同步",
-  market: "市场",
-  avatar: "头像",
-  storage: "存储",
-  migration: "迁移",
-};
+/**
+ * `details` 是自由结构（错误对象、上下文、任意值），这里统一折成缩进 JSON。
+ * 空值渲染成 `—`，非 JSON 可序列化的兜底为 `String(value)`。字符串值先去掉
+ * 控制台捕获留下的 SGR 转义，否则模态窗里只剩一串 `\u001b[36m` 噪声。
+ */
+function formatLogDetails(details: unknown): string {
+  if (details === null || details === undefined) {
+    return "—";
+  }
+  try {
+    return JSON.stringify(
+      details,
+      (_key, value) => (typeof value === "string" ? stripAnsi(value) : value),
+      2,
+    );
+  } catch {
+    return String(details);
+  }
+}
+
+/**
+ * 控制台捕获保留了终端的 SGR 颜色转义（`ESC[32m` 等），在浏览器里只会显示成
+ * 一串 `[36m[39m` 噪声：摘要与 `details` 文本都先去掉。`runtime_logs` 里的
+ * 原始字符串不动，日志页只是渲染层做清洗。
+ */
+function stripAnsi(text: string): string {
+  return text.replace(/\u001B\[[0-9;]*m/g, "");
+}
 
 export interface LogsTableProps {
   rows: RuntimeLogDoc[];
@@ -131,51 +129,29 @@ export function LogsTable({
       <CardHeader>
         <CardTitle className="text-base">系统运行日志</CardTitle>
         <CardDescription>
-          每页 {pageSize} 条，按时间倒序；共 {total} 条 / {totalPages} 页。级别取日志严重度，来源取触发模块。
+          每页 {pageSize} 条，按时间倒序；共 {total} 条 / {totalPages} 页。级别取日志严重度，来源取触发模块；
+          点击任意一行查看方法、路径、状态码与原始上下文。
         </CardDescription>
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">所选筛选条件下暂无日志记录。</p>
         ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>时间</TableHead>
-                  <TableHead>级别</TableHead>
-                  <TableHead>来源</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>方法</TableHead>
-                  <TableHead>路径</TableHead>
-                  <TableHead>摘要</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((log) => (
-                  <TableRow key={log._id}>
-                    <TableCell className="whitespace-nowrap">{formatDateTime(log.createdAt)}</TableCell>
-                    <TableCell>
-                      <Badge variant={LEVEL_VARIANT[log.level]}>
-                        {LEVEL_LABEL[log.level]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">{SOURCE_LABEL[log.source]}</TableCell>
-                    <TableCell className="tabular-nums text-muted-foreground">
-                      {log.status ?? "—"}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {log.method ?? "—"}
-                    </TableCell>
-                    <TableCell className="max-w-48 truncate font-mono text-xs text-muted-foreground">
-                      {log.path ?? "—"}
-                    </TableCell>
-                    <TableCell className="max-w-72 truncate">{log.message}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          // 表格与详情模态窗在客户端组件里（行点击要状态）；这里只做服务端
+          // 的格式化：时间按服务器时区渲染，`details` 折成文本后再过边界。
+          <LogDetailTable
+            rows={rows.map((log) => ({
+              id: log._id,
+              timeLabel: formatDateTime(log.createdAt),
+              level: log.level,
+              source: log.source,
+              message: stripAnsi(log.message),
+              method: log.method,
+              path: log.path,
+              status: log.status,
+              detailsText: formatLogDetails(log.details),
+            }))}
+          />
         )}
 
         {totalPages > 1 ? (
