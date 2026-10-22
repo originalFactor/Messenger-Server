@@ -19,8 +19,12 @@ import {
   blobPathFromUrl,
   getBlobStore,
 } from "@/lib/blob-store";
+import { createLogger } from "@/lib/runtime-logs";
 
 const blobStore = getBlobStore();
+
+/** 头像域日志器：Blob 与数据库不一致（文件缺失）时留痕。 */
+const avatarLog = createLogger("avatar");
 
 type LockVerifier = () => Promise<void>;
 
@@ -255,32 +259,57 @@ function avatarLogicalPathFromUrl(url: string): string {
   return logicalPath;
 }
 
-export interface AvatarFetchResult {
-  // HTTP 状态码：200 表示命中内容流，304 表示客户端缓存仍然有效。
-  statusCode: 200 | 304;
-  etag: string;
-  contentType?: string | null;
-  stream?: ReadableStream<Uint8Array> | null;
+/**
+ * 200 一定带内容流、304 一定没有——用判别联合表达，路由端就不需要再写
+ * 一个「200 但没有流」的死分支。
+ */
+export type AvatarFetchResult =
+  | { statusCode: 304; etag: string }
+  | { statusCode: 200; etag: string; contentType: string | null; stream: ReadableStream<Uint8Array> };
+
+/**
+ * 已经报告过「文件缺失」的路径。头像 GET 在每个页面渲染时都会触发，同一条
+ * 漂移若逐次写 `runtime_logs` 会变成日志噪声，所以每条路径只记一次。
+ */
+const reportedMissingBlobs = new Set<string>();
+
+function reportMissingBlob(pathname: string, message: string): void {
+  if (reportedMissingBlobs.has(pathname)) {
+    return;
+  }
+  // 有界：头像路径数量与用户/Agent 数量同阶，但这里仍设上限防止长进程无界增长。
+  if (reportedMissingBlobs.size >= 1_000) {
+    reportedMissingBlobs.clear();
+  }
+  reportedMissingBlobs.add(pathname);
+  avatarLog.warn(message, { pathname });
 }
 
 /**
  * Avatar GET 的共享逻辑：条件 GET（ifNoneMatch 命中时后端只回 304 +
  * 元数据、不回内容流）；未命中才把完整内容流回传。
+ *
+ * 返回 `null` = 数据库里记着头像、但 Blob 已经不在（存储目录被清空、换了
+ * BLOB_BACKEND、或迁移时漏拷文件）。这是**客户端可恢复的状态**，不是服务端
+ * 故障：路由据此回 `404 Avatar not found.`，让客户端回落到默认头像。此前
+ * 这里直接 throw，于是每一次页面渲染都变成 500 + 整段堆栈。
  */
 export async function fetchAvatarWithConditional(
   avatarUrl: string,
   ifNoneMatch: string | null,
-): Promise<AvatarFetchResult> {
+): Promise<AvatarFetchResult | null> {
   const logicalPath = avatarLogicalPathFromUrl(avatarUrl);
   const avatar = await blobStore.get(logicalPath, ifNoneMatch ? { ifNoneMatch } : undefined);
   if (!avatar) {
-    throw new Error("Avatar blob is unavailable.");
+    reportMissingBlob(logicalPath, "Avatar blob is missing for a recorded avatarUrl.");
+    return null;
   }
   if (avatar.statusCode === 304) {
     return { statusCode: 304, etag: avatar.blob.etag };
   }
   if (!avatar.stream) {
-    throw new Error("Avatar blob is unavailable.");
+    reportMissingBlob(logicalPath, "Avatar blob returned no content stream.");
+    return null;
   }
   return {
     statusCode: 200,

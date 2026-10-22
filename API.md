@@ -1099,6 +1099,8 @@ Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tool
 
 所有头像 GET 走认证代理：服务端经 `BlobStore` 接口（`lib/blob-store.ts`，Vercel Blob / 文件系统双后端）以条件 GET（`If-None-Match` → 304）流式返回内容。
 
+**DB 与 Blob 漂移按 404 处理**：`avatarUrl` 仍记在文档里、但 Blob 已不在（`BLOB_STORAGE_DIR` 被清空、切换了 `BLOB_BACKEND`、迁移漏拷文件）时，`fetchAvatarWithConditional` 返回 `null`，三个头像 GET 路由回 `404 Avatar not found.`，客户端回落到默认头像/图标。这是可恢复状态而非服务端故障，因此不再抛错转成 `500`（旧行为会让每次页面渲染都打出一整段堆栈）；每条路径只写一条 `avatar` 域警告日志，避免轮询刷屏。重新上传头像即可恢复。
+
 ### GET /api/avatars/user
 
 读取当前用户头像。

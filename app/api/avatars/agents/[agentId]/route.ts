@@ -62,6 +62,10 @@ export async function GET(request: Request, context: RouteContext) {
 
     const ifNoneMatch = request.headers.get("if-none-match");
     const avatar = await fetchAvatarWithConditional(agent.avatarUrl, ifNoneMatch);
+    // null = DB 记着头像但 Blob 不在了：回 404，客户端回落到默认图标。
+    if (!avatar) {
+      return jsonError("Avatar not found.", 404);
+    }
     if (avatar.statusCode === 304) {
       return new Response(null, {
         status: 304,
@@ -70,9 +74,6 @@ export async function GET(request: Request, context: RouteContext) {
           "Cache-Control": "private, no-cache",
         },
       });
-    }
-    if (!avatar.stream) {
-      return jsonError("Avatar not found.", 404);
     }
 
     return new Response(avatar.stream, {

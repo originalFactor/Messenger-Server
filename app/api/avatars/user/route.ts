@@ -54,6 +54,10 @@ export async function GET(request: Request) {
 
     const ifNoneMatch = request.headers.get("if-none-match");
     const avatar = await fetchAvatarWithConditional(user.avatarUrl, ifNoneMatch);
+    // null = DB 记着头像但 Blob 不在了：回 404 让客户端回落到默认头像。
+    if (!avatar) {
+      return jsonError("Avatar not found.", 404);
+    }
     if (avatar.statusCode === 304) {
       return new Response(null, {
         status: 304,
@@ -62,9 +66,6 @@ export async function GET(request: Request) {
           "Cache-Control": "private, no-cache",
         },
       });
-    }
-    if (!avatar.stream) {
-      return jsonError("Avatar not found.", 404);
     }
 
     return new Response(avatar.stream, {
