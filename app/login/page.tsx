@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AuthForm } from "@/components/auth-form";
+import { AuthShell } from "@/components/auth-shell";
 import { requireUserSession } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -26,15 +26,8 @@ export default async function LoginPage() {
     redirect("/console");
   }
   return (
-    <main className="grid min-h-screen place-items-center p-6">
-      <div className="flex w-full max-w-sm flex-col items-center gap-6">
-        <Link className="flex items-center gap-2.5 text-sm font-semibold tracking-tight" href="/">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.svg" alt="" className="size-5 rounded-md" />
-          Messenger Cloud
-        </Link>
-        <AuthForm mode="login" />
-      </div>
-    </main>
+    <AuthShell>
+      <AuthForm mode="login" />
+    </AuthShell>
   );
 }

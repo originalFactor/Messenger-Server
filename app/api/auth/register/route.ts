@@ -15,6 +15,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { after } from "next/server";
+import { prepareVerificationEmail } from "@/lib/auth-mail";
 import { createUserSessionToken, setUserSessionCookie } from "@/lib/auth";
 import { generateAiApiKey } from "@/lib/apikeys";
 import { jsonError, jsonOk } from "@/lib/http";
@@ -62,6 +64,9 @@ export async function POST(request: Request) {
     aiApiKey: generateAiApiKey(),
     quotaBalance: 0,
     quotaExpiresAt: null,
+    // 注册不直接算已验证：发给邮箱的链接点开后才置位（SMTP 未配置时
+    // 该账号会一直保持未验证，控制台会提示管理员配置 SMTP）。
+    emailVerifiedAt: null,
     avatarUrl: null,
     avatarVersion: null,
     syncVersion: 0,
@@ -90,6 +95,22 @@ export async function POST(request: Request) {
   const token = await createUserSessionToken(user.id, user.email, role, sid);
   await setUserSessionCookie(token);
   authLog.info("Registration succeeded.", { userId: user.id, email: user.email, role, sid });
+
+  // 注册响应不等 SMTP：令牌先落库，投递放到响应之后（`after`）。邮件发不
+  // 出去也不影响注册结果——客户端可以调 `POST /api/auth/verify-email/resend`
+  // 重发，账号已经可用。
+  const deliver = await prepareVerificationEmail(user).catch((error: unknown) => {
+    authLog.error("Unable to issue the verification token.", {
+      userId: user.id,
+      error: error instanceof Error ? { name: error.name, message: error.message } : error,
+    });
+    return null;
+  });
+  if (deliver) {
+    after(async () => {
+      await deliver().catch(() => false);
+    });
+  }
 
   return jsonOk({ user: await buildSelfUserView({ ...user, role, syncVersion }) }, 201);
 }

@@ -1,0 +1,33 @@
+/*
+ * Copyright 2026 originalFactor
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import Link from "next/link";
+
+/** 登录 / 注册 / 找回密码 / 验证邮箱共用的居中版式：logo + 单个 Card。 */
+export function AuthShell({ children }: { children: React.ReactNode }) {
+  return (
+    <main className="grid min-h-screen place-items-center p-6">
+      <div className="flex w-full max-w-sm flex-col items-center gap-6">
+        <Link className="flex items-center gap-2.5 text-sm font-semibold tracking-tight" href="/">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.svg" alt="" className="size-5 rounded-md" />
+          Messenger Cloud
+        </Link>
+        {children}
+      </div>
+    </main>
+  );
+}

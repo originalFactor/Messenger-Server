@@ -71,6 +71,8 @@ function toStoredUser(doc: UserDoc): StoredUser {
     id: doc._id,
     email: doc.email,
     passwordHash: doc.passwordHash,
+    // 邮箱验证是后加的能力：旧文档没有该字段，一律视为未验证。
+    emailVerifiedAt: doc.emailVerifiedAt ?? null,
     // SaaS 改造前注册的用户没有 role 字段，一律视为普通用户。
     role: doc.role ?? "user",
     aiApiKey: doc.aiApiKey ?? "",
@@ -164,6 +166,7 @@ async function saveUserTransaction(user: StoredUser): Promise<SaveUserResult> {
         _id: user.id,
         email: user.email,
         passwordHash: user.passwordHash,
+        emailVerifiedAt: user.emailVerifiedAt,
         role,
         aiApiKey: user.aiApiKey,
         quotaBalance: 0,
@@ -235,6 +238,28 @@ export async function updateUserPassword(userId: string, passwordHash: string): 
   }
 }
 
+/**
+ * 标记邮箱已验证。幂等：已验过的账号保留首次验证时间，重置密码不会把
+ * 老账号打回「未验证」。返回是否真的写入（`false` = 账号不存在）。
+ */
+export async function markEmailVerified(userId: string, verifiedAt: number): Promise<boolean> {
+  const db = await getDb();
+  const result = await db.collection<UserDoc>("users").updateOne(
+    { _id: userId, emailVerifiedAt: null },
+    { $set: { emailVerifiedAt: verifiedAt, updatedAt: verifiedAt } },
+  );
+  if (result.matchedCount === 1) {
+    return true;
+  }
+  // `{ emailVerifiedAt: null }` 同时匹配缺失字段与显式 null，所以没写进去
+  // 只有两种可能：账号不存在，或已经验证过。后者（重复点击链接）算成功。
+  const existing = await db.collection<UserDoc>("users").findOne(
+    { _id: userId, emailVerifiedAt: { $ne: null } },
+    { projection: { _id: 1 } },
+  );
+  return existing !== null;
+}
+
 export async function deleteUserAccount(userId: string): Promise<{ agentIds: string[]; marketAgentIds: string[] }> {
   const client = await getMongoClient();
   const session = client.startSession();
@@ -266,6 +291,8 @@ export async function deleteUserAccount(userId: string): Promise<{ agentIds: str
       // 套餐条目属于用户账单数据；users 文档删除后这些行无法再被任何流程
       // 访问，留在库里只会无界增长。
       await db.collection<UserQuotaDoc>("user_quotas").deleteMany({ userId }, { session });
+      // 未消费的邮箱令牌属于账号私有数据，随账号一起消失。
+      await db.collection<{ _id: string }>("auth_tokens").deleteMany({ userId }, { session });
       await db.collection<{ _id: string }>("avatar_locks").deleteMany({
         _id: {
           $in: [
@@ -1548,7 +1575,7 @@ export async function listUsers(limit = 200): Promise<AdminUserView[]> {
   const now = Date.now();
   const [users, quotaRows] = await Promise.all([
     db.collection<UserDoc>("users")
-      .find({}, { projection: { email: 1, role: 1, createdAt: 1, lastLoginAt: 1 } })
+      .find({}, { projection: { email: 1, role: 1, emailVerifiedAt: 1, createdAt: 1, lastLoginAt: 1 } })
       .sort({ createdAt: -1, _id: -1 })
       .limit(Math.min(Math.max(limit, 1), 1_000))
       .toArray(),
@@ -1578,6 +1605,7 @@ export async function listUsers(limit = 200): Promise<AdminUserView[]> {
     return {
       _id: user._id,
       email: user.email,
+      emailVerifiedAt: user.emailVerifiedAt ?? null,
       role: user.role ?? "user",
       quotaBalance: quota?.balance ?? 0,
       quotaExpiresAt: unlimited ? null : quota?.maxExpiry ?? null,
@@ -1679,6 +1707,7 @@ export async function adminUpdateUser(
   return {
     _id: updated._id,
     email: updated.email,
+    emailVerifiedAt: updated.emailVerifiedAt ?? null,
     role: updated.role ?? "user",
     quotaBalance: summary.balance,
     quotaExpiresAt: summary.expiresAt,

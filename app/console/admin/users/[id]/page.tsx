@@ -88,6 +88,9 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
         <Badge variant={user.role === "admin" ? "default" : "secondary"}>
           {user.role === "admin" ? "管理员" : "用户"}
         </Badge>
+        <Badge variant="outline">
+          {user.emailVerifiedAt ? `邮箱已验证 · ${formatDateTime(user.emailVerifiedAt)}` : "邮箱未验证"}
+        </Badge>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-4">

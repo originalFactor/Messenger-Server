@@ -20,6 +20,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // nodemailer 依赖 Node 内置模块与动态 require，交给 `next start` 原生加载
+  // 比打进服务端 bundle 更稳（它也因此在 runner 阶段必须是 dependencies）。
+  serverExternalPackages: ["nodemailer"],
   // `/app` is only meaningful when the compiled web client was fetched into
   // public/app/ during the build (`pnpm web:client`). The homepage links to it
   // only when it exists, so the check runs where the bundle actually lives:

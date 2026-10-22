@@ -95,6 +95,10 @@ async function ensureIndexesFor(database: Db): Promise<void> {
       // 决定哪些实体墓碑已无人需要；TTL 索引在会话 30 天到期后自动回收。
       database.collection("user_sessions").createIndex({ userId: 1, syncCursor: 1 }),
       database.collection("user_sessions").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+      // 一次性邮箱令牌：_id 是令牌哈希（唯一性由主键提供），按用户+用途
+      // 删除旧令牌需要复合索引；expiresAt 让过期令牌自动回收。
+      database.collection("auth_tokens").createIndex({ userId: 1, purpose: 1 }),
+      database.collection("auth_tokens").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
       // 墓碑清理按 { userId, deleted, version } 过滤并删除，四个同步集合都要。
       database.collection("agents").createIndex({ userId: 1, deleted: 1, version: 1 }),
       database.collection("conversations").createIndex({ userId: 1, deleted: 1, version: 1 }),

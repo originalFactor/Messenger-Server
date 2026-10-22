@@ -8,6 +8,7 @@
 - Shared web console (`/console`) for users and administrators; the first registered user is automatically promoted to admin
 - Web UI built with Tailwind CSS v4 + shadcn/ui (radix base, nova preset) and Geist fonts
 - Email/password accounts with JWT cookie sessions backed by a server-side `user_sessions` collection (30-day expiry, multi-device); each session doubles as a sync-progress ledger that lets the server purge entity tombstones no client still needs
+- SMTP e-mail flows: registration verification links and self-service password reset (single-use, hashed-at-rest tokens in `auth_tokens`); both degrade gracefully when SMTP is not configured
 - MongoDB-backed versioned entity synchronization with per-user monotonic watermarks and soft-delete tombstones
 - Card-key (卡密) plan system: admin-defined plans, batch card issuance, user redemption with quota and validity extension
 - Per-model rate billing consumed by the built-in AI API, with per-model and per-provider overall multipliers plus an admin-selectable 1x base model
@@ -24,6 +25,18 @@ Copy `.env.example` to `.env.local` for local development.
 - `APP_BASE_URL`: absolute base URL used to rewrite avatar URLs and shown on the website footer.
 - `MONGODB_URI`: MongoDB connection string. Use MongoDB Atlas or a replica set because versioned entity writes and redemptions use transactions.
 - `MONGODB_DB_NAME`: database name; defaults to `messenger`.
+
+### SMTP (e-mail verification and password reset)
+
+Outgoing mail is entirely optional. Without `SMTP_HOST` the server sends nothing: registration still succeeds, accounts stay `emailVerifiedAt: null`, the console shows a resend reminder, and `POST /api/auth/forgot-password` answers `503 Email delivery is not configured on this server.` instead of pretending a message was sent.
+
+- `SMTP_HOST`: SMTP relay hostname. Set it to enable verification and reset mail.
+- `SMTP_PORT`: relay port; defaults to `587`.
+- `SMTP_SECURE`: `1`/`true` for implicit TLS, `0`/`false` for plain or STARTTLS. Defaults to `true` only for port `465`.
+- `SMTP_USER` / `SMTP_PASSWORD`: optional credentials for authenticated relays.
+- `SMTP_FROM`: envelope sender; defaults to `Messenger Cloud <no-reply@APP_BASE_URL hostname>`.
+
+Verification links (`/verify-email?token=…`) are valid for 24 hours; reset links (`/reset-password?token=…`) for 30 minutes and only once. Only SHA-256 digests of the tokens are stored, so a database dump cannot be replayed. Deliverability depends on the relay accepting your `SMTP_FROM` domain — an unauthenticated sender that does not match the relay's allowed domain will be rejected or spam-filtered.
 
 ### Blob storage (avatars)
 

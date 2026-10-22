@@ -139,12 +139,16 @@ interface SessionClaims {
 
 | 方法 | 路径 | 鉴权 | 用途 |
 | --- | --- | --- | --- |
-| POST | `/api/auth/register` | 无 | 注册账号（首个用户晋升管理员）并签发会话 |
+| POST | `/api/auth/register` | 无 | 注册账号（首个用户晋升管理员）并签发会话，后台发送验证邮件 |
 | POST | `/api/auth/login` | 无 | 登录并签发会话 |
 | POST | `/api/auth/logout` | 无 | 注销当前用户会话 |
-| GET | `/api/auth/me` | 用户 | 获取当前用户信息（含角色/额度/API Key） |
+| GET | `/api/auth/me` | 用户 | 获取当前用户信息（含角色/额度/API Key/邮箱验证状态） |
 | PUT | `/api/auth/password` | 用户 | 修改密码 |
 | DELETE | `/api/auth/account` | 用户 | 永久注销账户 |
+| POST | `/api/auth/verify-email` | 无 | 消费验证令牌，标记邮箱已验证 |
+| POST | `/api/auth/verify-email/resend` | 用户 | 重新发送验证邮件 |
+| POST | `/api/auth/forgot-password` | 无 | 发送找回密码邮件（不回显账号是否存在） |
+| POST | `/api/auth/reset-password` | 无 | 用一次性令牌重置密码并注销全部会话 |
 | GET | `/api/console/overview` | 用户 | 控制台概览（额度 + 用量） |
 | POST | `/api/console/cards/preview` | 用户 | 兑换前查询卡密信息 |
 | POST | `/api/console/redeem` | 用户 | 兑换卡密 |
@@ -197,7 +201,7 @@ interface SessionClaims {
 | PUT | `/api/market/agents/{id}/avatar` | 用户（仅所有者） | 上传/替换市场头像 |
 | DELETE | `/api/market/agents/{id}/avatar` | 用户（仅所有者） | 删除市场头像 |
 
-> 网页端：`/` 为官网首页，`/login`、`/register` 为登录注册页，`/console` 为用户与管理员共用的控制台（管理员侧边栏多出「管理功能区」）。
+> 网页端：`/` 为官网首页，`/login`、`/register` 为登录注册页，`/forgot-password`、`/reset-password`、`/verify-email` 为邮件流程落地页，`/console` 为用户与管理员共用的控制台（管理员侧边栏多出「管理功能区」）。
 
 ---
 
@@ -224,6 +228,7 @@ interface SessionClaims {
   "user": {
     "id": "uuid",
     "email": "user@example.com",
+    "emailVerifiedAt": null,     // 点开验证邮件后才变成验证时刻
     "role": "user",              // 全站无管理员时为 "admin"（首个注册用户）
     "aiApiKey": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "quotaBalance": 0,           // 新账号没有套餐条目
@@ -257,6 +262,7 @@ interface SessionClaims {
   "user": {
     "id": "uuid",
     "email": "user@example.com",
+    "emailVerifiedAt": 1700000000000,
     "role": "user",
     "aiApiKey": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "quotaBalance": 98000,
@@ -303,6 +309,7 @@ interface SessionClaims {
   "user": {
     "id": "uuid",
     "email": "user@example.com",
+    "emailVerifiedAt": 1700000000000,
     "role": "user",
     "aiApiKey": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "quotaBalance": 98000,
@@ -321,6 +328,7 @@ interface SessionClaims {
 ```
 
 - `aiApiKey`：用户级 AI API Key，调用 `/v1/*` 时作为 Bearer Token；`POST /api/console/api-key` 可重置。
+- `emailVerifiedAt`：邮箱验证时刻，`null` = 未验证；验证不阻断任何功能，只影响找回密码与控制台提醒。
 - `quotaBalance` / `quotaExpiresAt`：未过期套餐条目的额度之和与其中最晚的到期时间；用户可同时持有多个套餐条目（每次兑换/授予各一条，额度与有效期独立计算，消耗按先过期先用），`quotaExpiresAt` 为 `null` 表示无未过期条目或持有不限期条目。
 - `quotaEntitlements`：未过期条目明细（`planName` 可空，`source` ∈ `card|admin|migrated`，`expiresAt` 为 `null` 表示不限期），App 端「套餐信息」逐条展示。
 - **登录 / 注册响应返回同一份用户结构**（`lib/user-view.ts` 的 `buildSelfUserView`）：客户端把登录响应当作账号快照，额度与 `aiApiKey` 缺失会导致刚登录就显示 0 额度、且不播种内置 AI 服务商。
@@ -342,7 +350,7 @@ interface SessionClaims {
 ```
 
 - 响应 `200`：`{ "success": true }`
-- **副作用**：该账号在其它设备上的会话记录全部删除，当前会话保留；其它客户端下次请求即 `401`，需用新密码重新登录。
+- **副作用**：该账号在其它设备上的会话记录全部删除，当前会话保留；其它客户端下次请求即 `401`，需用新密码重新登录。同时作废该账号所有未使用的**重置密码**令牌（旧的重置链接立即失效）；未使用的验证令牌保留，免得未验证账号还要再申请一封验证邮件。
 - 错误：
   - `400 Invalid password change payload.`
   - `400 The new password must be different.`
@@ -369,7 +377,101 @@ interface SessionClaims {
   - 若用户已不存在但仍提供了正确密码：直接清 Cookie 返回 `200`。
   - 头像 Blob 删除失败仅记录服务端日志，不影响响应（账户数据已被删除）。
 
-> 注意：此操作不可恢复。被删账户关联的 Agent 市场 entry 也会一并下架。
+> 注意：此操作不可恢复。被删账户关联的 Agent 市场 entry 也会一并下架。该账号未消费的 `auth_tokens`（验证 / 重置令牌）在同一事务内删除。
+
+---
+
+## 邮箱验证 API
+
+注册后账号的 `emailVerifiedAt` 为 `null`；用户点开验证邮件里的链接（`APP_BASE_URL/verify-email?token=…`）才置为验证时刻。验证不阻断任何功能（登录、同步、兑换、AI 调用都照常可用），它决定的是找回密码邮件能否送达、以及控制台是否显示提醒。
+
+令牌规则（`lib/auth-tokens.ts`）：
+
+- 明文只出现在邮件链接里，库里存 SHA-256 摘要（`auth_tokens._id`），因此数据库泄漏无法重放。
+- 一次性：取用即 `findOneAndDelete`，并发重放只有第一个请求成功。
+- 同用户同用途只保留最新一条（重发即作废旧链接）；`expiresAt` 上有 TTL 索引兜底回收。
+- 验证令牌 24 小时有效，重置令牌 30 分钟有效。
+
+### POST /api/auth/verify-email
+
+消费验证令牌。
+
+- 鉴权：无（链接在邮件里，用户可能未登录）
+- 请求体：`emailVerificationSchema`（strict）
+
+```json
+{ "token": "链接里的令牌" }
+```
+
+- 响应 `200`：`{ "success": true, "emailVerifiedAt": 1700000000000 }`
+- 重复点击同一链接返回 `400`（令牌已消费），账号本身已处于已验证状态，无需处理。
+- 错误：
+  - `400 Invalid email verification payload.`
+  - `400 This verification link is invalid or has expired. Request a new one.`
+  - `429 Too many attempts. Try again later.`（限流：同 IP 30 次/小时）
+
+### POST /api/auth/verify-email/resend
+
+重新签发并发送验证邮件。
+
+- 鉴权：用户会话
+- 请求体：无
+- 响应 `200`：
+  - 已发送：`{ "success": true, "alreadyVerified": false, "sent": true }`
+  - 已验证过（不再发信）：`{ "success": true, "alreadyVerified": true, "emailVerifiedAt": 1700000000000, "sent": false }`
+- 错误：
+  - `401 Unauthorized.`
+  - `404 User not found.`
+  - `429 Too many attempts. Try again later.`（限流：同 IP 10 次/小时、同账号 5 次/小时）
+  - `503 Unable to send the verification email. Please try again later.`（未配置 SMTP 或投递失败）
+
+## 找回密码 API
+
+SMTP 未配置时整站不出信：注册照常成功（账号保持未验证），找回密码接口返回 `503` 而不是假装已发送。
+
+### POST /api/auth/forgot-password
+
+发送重置邮件。**不区分账号是否存在**：不存在的邮箱同样返回 `200 { "success": true }`，否则该端点就是账号枚举器；不存在的邮箱也照样消耗限流计数。
+
+- 鉴权：无
+- 请求体：`forgotPasswordSchema`（strict）
+
+```json
+{ "email": "user@example.com" }
+```
+
+- 响应 `200`：`{ "success": true }`
+- 邮件里的链接指向 `APP_BASE_URL/reset-password?token=…`，30 分钟内有效且只能使用一次。
+- 错误：
+  - `400 Invalid password reset request payload.`
+  - `429 Too many attempts. Try again later.`（限流：同 IP 5 次/小时、同邮箱 3 次/小时）
+  - `503 Email delivery is not configured on this server. Contact the administrator.`（未配置 SMTP）
+  - `503 Unable to send the reset email. Please try again later.`（SMTP 投递失败）
+
+### POST /api/auth/reset-password
+
+用一次性令牌设置新密码。
+
+- 鉴权：无（令牌本身是凭证）
+- 请求体：`passwordResetSchema`（strict）
+
+```json
+{
+  "token": "邮件链接里的令牌",
+  "password": "新密码（8–200 位）"
+}
+```
+
+- 响应 `200`：`{ "success": true, "emailVerifiedAt": 1700000000000 }`
+- **副作用**：
+  - 该账号在**所有**设备上的会话记录全部删除（含发起重置的设备），必须用新密码重新登录；旧密码泄露时这是唯一的止损手段。
+  - 该账号剩余的验证 / 重置令牌全部作废。
+  - 邮箱同时被标记为已验证——点开邮件链接本身就证明了对该邮箱的控制权。
+- 令牌在计算密码哈希（scrypt）之前消费，无效令牌不会消耗 CPU。
+- 错误：
+  - `400 Invalid password reset payload.`
+  - `400 This reset link is invalid or has expired. Request a new one.`
+  - `429 Too many attempts. Try again later.`（限流：同 IP 20 次/小时）
 
 ---
 

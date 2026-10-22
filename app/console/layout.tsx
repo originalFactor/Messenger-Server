@@ -16,6 +16,7 @@
 
 import { redirect } from "next/navigation";
 import { ConsoleShell } from "@/components/console/console-shell";
+import { EmailVerificationBanner } from "@/components/console/email-verification-banner";
 import { requireUserSession } from "@/lib/auth";
 import { getUserById } from "@/lib/storage";
 
@@ -34,6 +35,7 @@ export default async function ConsoleLayout({ children }: Readonly<{ children: R
 
   return (
     <ConsoleShell email={user.email} role={user.role}>
+      {user.emailVerifiedAt === null ? <EmailVerificationBanner email={user.email} /> : null}
       {children}
     </ConsoleShell>
   );

@@ -78,6 +78,7 @@ export function UsersManager({ users }: { users: AdminUserView[] }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>邮箱</TableHead>
+                  <TableHead className="w-16">验证</TableHead>
                   <TableHead className="w-20">角色</TableHead>
                   <TableHead className="w-28">额度</TableHead>
                   <TableHead className="w-16">条目</TableHead>
@@ -91,6 +92,13 @@ export function UsersManager({ users }: { users: AdminUserView[] }) {
                 {filtered.map((user) => (
                   <TableRow key={user._id}>
                     <TableCell className="max-w-56 break-all">{user.email}</TableCell>
+                    <TableCell>
+                      {user.emailVerifiedAt ? (
+                        <Badge variant="outline">已验证</Badge>
+                      ) : (
+                        <Badge variant="secondary">未验证</Badge>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={user.role === "admin" ? "default" : "secondary"}>
                         {user.role === "admin" ? "管理员" : "用户"}

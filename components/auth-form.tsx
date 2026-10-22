@@ -102,6 +102,14 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
+            {isRegister ? null : (
+              <Link
+                className="justify-self-end text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                href="/forgot-password"
+              >
+                忘记密码？
+              </Link>
+            )}
           </div>
           {isRegister ? (
             <div className="grid gap-2">

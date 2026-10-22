@@ -31,6 +31,8 @@ export interface SelfQuotaEntitlementView {
 export interface SelfUserView {
   id: string;
   email: string;
+  /** 邮箱验证时刻；null = 未验证（SMTP 未配置时新版客户端应隐藏提醒）。 */
+  emailVerifiedAt: number | null;
   role: string;
   aiApiKey: string;
   quotaBalance: number;
@@ -63,6 +65,7 @@ export async function buildSelfUserView(
   return {
     id: user.id,
     email: user.email,
+    emailVerifiedAt: user.emailVerifiedAt,
     role: user.role,
     aiApiKey: user.aiApiKey,
     quotaBalance: quota.balance,

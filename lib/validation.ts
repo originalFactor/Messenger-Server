@@ -35,6 +35,23 @@ export const passwordDeleteSchema = z.object({
   currentPassword: z.string().min(1).max(200),
 }).strict();
 
+/** 邮箱验证 / 找回密码链接里的令牌（32 字节随机数的 base64url）。 */
+const authTokenSchema = z.string().trim().min(16).max(200);
+
+export const emailVerificationSchema = z.object({
+  token: authTokenSchema,
+}).strict();
+
+/** 找回密码只收邮箱：账号是否存在由服务端判定，响应不区分。 */
+export const forgotPasswordSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+}).strict();
+
+export const passwordResetSchema = z.object({
+  token: authTokenSchema,
+  password: z.string().min(8).max(200),
+}).strict();
+
 export const agentSchema = z.object({
   id: entityIdSchema,
   name: z.string().trim().min(1).max(200),

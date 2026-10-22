@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { revokeAuthTokens } from "@/lib/auth-tokens";
 import { requireUserSession } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
 import { createLogger } from "@/lib/runtime-logs";
@@ -54,6 +55,9 @@ export async function PUT(request: Request) {
   // 改密必须让其它设备上的会话失效（否则旧密码泄露后仍能继续用），
   // 当前设备保留：它刚证明了自己知道新密码。
   const revoked = await deleteUserSessions(session.sub, session.sid);
+  // 旧的重置链接必须立刻作废（否则改密不能真正止损）；验证链接无害，
+  // 留着它，未验证账号改密后不需要再申请一封验证邮件。
+  await revokeAuthTokens(session.sub, "reset_password");
   authLog.info("Password changed.", { userId: session.sub, revokedSessions: revoked });
   return jsonOk({ success: true });
 }

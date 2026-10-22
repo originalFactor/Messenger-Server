@@ -26,6 +26,8 @@ export type CardKeyStatus = "unused" | "redeemed" | "disabled";
 export interface AdminUserView {
   _id: string;
   email: string;
+  /** 邮箱验证时刻；null = 未验证。 */
+  emailVerifiedAt: number | null;
   role: UserRole;
   /** 未过期套餐条目的额度之和。 */
   quotaBalance: number;
@@ -60,6 +62,8 @@ export interface StoredUser {
   id: string;
   email: string;
   passwordHash: string;
+  /** 邮箱验证通过的时刻；null = 从未验证（SMTP 未配置时注册即为 null）。 */
+  emailVerifiedAt: number | null;
   role: UserRole;
   aiApiKey: string;
   quotaBalance: number;
@@ -76,6 +80,8 @@ export interface UserDoc {
   _id: string;
   email: string;
   passwordHash: string;
+  /** 邮箱验证通过的时刻；缺失（旧文档）视为未验证。 */
+  emailVerifiedAt?: number | null;
   role: UserRole;
   aiApiKey: string;
   quotaBalance: number;
