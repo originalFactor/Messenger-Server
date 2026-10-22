@@ -70,6 +70,8 @@ function toStoredUser(doc: UserDoc): StoredUser {
   return {
     id: doc._id,
     email: doc.email,
+    // 昵称是后加的能力：旧文档没有该字段，一律视为未设置。
+    displayName: doc.displayName ?? null,
     passwordHash: doc.passwordHash,
     // 邮箱验证是后加的能力：旧文档没有该字段，一律视为未验证。
     emailVerifiedAt: doc.emailVerifiedAt ?? null,
@@ -165,6 +167,7 @@ async function saveUserTransaction(user: StoredUser): Promise<SaveUserResult> {
       await db.collection<UserDoc>("users").insertOne({
         _id: user.id,
         email: user.email,
+        displayName: user.displayName,
         passwordHash: user.passwordHash,
         emailVerifiedAt: user.emailVerifiedAt,
         role,
@@ -236,6 +239,45 @@ export async function updateUserPassword(userId: string, passwordHash: string): 
   if (result.matchedCount !== 1) {
     throw new NotFoundError("User not found.");
   }
+}
+
+/** 设置/清除昵称。`null` = 清除（展示端回落到邮箱）。 */
+export async function updateUserDisplayName(userId: string, displayName: string | null): Promise<void> {
+  const db = await getDb();
+  const result = await db.collection<UserDoc>("users").updateOne(
+    { _id: userId },
+    { $set: { displayName, updatedAt: Date.now() } },
+  );
+  if (result.matchedCount !== 1) {
+    throw new NotFoundError("User not found.");
+  }
+}
+
+/**
+ * 改绑登录邮箱，并把新地址标记为已验证（验证码已证明对该邮箱的控制权）。
+ *
+ * 邮箱唯一索引是并发下唯一的裁决者：先查后写会有 TOCTOU 窗口，所以这里
+ * 直接写，捕获 11000 转成 `ConflictError` 让路由回 409。改绑不注销会话：
+ * 会话记录按 `_id` 关联用户，与邮箱无关，用户不必在每台设备上重新登录。
+ */
+export async function updateUserEmail(userId: string, email: string): Promise<number> {
+  const db = await getDb();
+  const now = Date.now();
+  try {
+    const result = await db.collection<UserDoc>("users").updateOne(
+      { _id: userId },
+      { $set: { email, emailVerifiedAt: now, updatedAt: now } },
+    );
+    if (result.matchedCount !== 1) {
+      throw new NotFoundError("User not found.");
+    }
+  } catch (error) {
+    if (isDuplicateKeyError(error)) {
+      throw new ConflictError("An account with this email already exists.");
+    }
+    throw error;
+  }
+  return now;
 }
 
 /**

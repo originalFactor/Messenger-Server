@@ -52,6 +52,26 @@ export const passwordResetSchema = z.object({
   password: z.string().min(8).max(200),
 }).strict();
 
+/**
+ * 用户中心资料：昵称 1–32 字符，`null` = 清除（客户端回落到邮箱）。
+ * `trim()` 先于长度校验，所以纯空白会被 `min(1)` 拒绝而不是存成空串。
+ */
+export const profileUpdateSchema = z.object({
+  displayName: z.string().trim().min(1).max(32).nullable(),
+}).strict();
+
+/** 改绑邮箱第一步：新地址 + 当前密码（改的是登录身份，必须重新证明持有凭据）。 */
+export const emailChangeRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+  currentPassword: z.string().min(1).max(200),
+}).strict();
+
+/** 改绑邮箱第二步：新地址 + 邮件里的 6 位验证码。 */
+export const emailChangeConfirmSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+  code: z.string().trim().regex(/^\d{6}$/, "The verification code is 6 digits."),
+}).strict();
+
 export const agentSchema = z.object({
   id: entityIdSchema,
   name: z.string().trim().min(1).max(200),

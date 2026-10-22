@@ -14,14 +14,25 @@
  * limitations under the License.
  */
 
-import { issueAuthToken, RESET_TOKEN_TTL_MS, VERIFICATION_TOKEN_TTL_MS } from "@/lib/auth-tokens";
-import { mailEnabled, sendPasswordResetEmail, sendVerificationEmail } from "@/lib/mail";
+import {
+  EMAIL_CHANGE_TOKEN_TTL_MS,
+  issueAuthToken,
+  issueEmailChangeCode,
+  RESET_TOKEN_TTL_MS,
+  VERIFICATION_TOKEN_TTL_MS,
+} from "@/lib/auth-tokens";
+import {
+  mailEnabled,
+  sendEmailChangeCode,
+  sendPasswordResetEmail,
+  sendVerificationEmail,
+} from "@/lib/mail";
 import { createLogger } from "@/lib/runtime-logs";
 import type { StoredUser } from "@/lib/types";
 
 /**
  * 「签发令牌 + 投递邮件」的两段式组合，注册（后台投递）、重发验证、
- * 找回密码（前台等待结果）三处共用。
+ * 找回密码、改绑邮箱（前台等待结果）四处共用。
  *
  * 签发是同步的（一次 Mongo 写），投递是返回的函数：调用方决定是 `await`
  * 它把投递结果告诉用户，还是交给 `after()` 在响应之后再做。SMTP 未配置时
@@ -56,6 +67,28 @@ export async function preparePasswordResetEmail(user: StoredUser): Promise<(() =
   return async () => {
     const sent = await sendPasswordResetEmail(user.email, token, expiresInMinutes);
     authLog.info("Password reset email issued.", { userId: user.id, sent });
+    return sent;
+  };
+}
+
+/**
+ * 改绑邮箱的验证码投递。目标地址是用户**尚未拥有**的邮箱，所以这里
+ * 显式传入 `email` 而不是读 `user.email`；令牌也记在这个目标地址上，
+ * 消费时按 (userId, email, code) 三元组校验。
+ */
+export async function prepareEmailChangeCode(
+  user: StoredUser,
+  email: string,
+): Promise<(() => Promise<boolean>) | null> {
+  if (!mailEnabled()) {
+    authLog.warn("Email change code skipped: SMTP is not configured.", { userId: user.id, reason: "smtp-missing" });
+    return null;
+  }
+  const { code } = await issueEmailChangeCode(user.id, email);
+  const expiresInMinutes = Math.round(EMAIL_CHANGE_TOKEN_TTL_MS / (60 * 1000));
+  return async () => {
+    const sent = await sendEmailChangeCode(email, code, expiresInMinutes);
+    authLog.info("Email change code issued.", { userId: user.id, sent });
     return sent;
   };
 }

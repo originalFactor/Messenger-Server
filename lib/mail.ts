@@ -99,15 +99,26 @@ async function sendMail(content: MailContent): Promise<boolean> {
 }
 
 /** 邮件正文外壳：纯内联样式，邮件客户端不加载外部资源。 */
-function layout(options: { heading: string; paragraphs: string[]; action: { label: string; href: string }; note: string }): string {
+function layout(options: {
+  heading: string;
+  paragraphs: string[];
+  action: { label: string; href: string };
+  note: string;
+  /** 需要用户手动输入的一次性验证码（渲染成大号等宽字体）。 */
+  code?: string;
+}): string {
   const paragraphs = options.paragraphs
     .map((paragraph) => `<p style="margin:0 0 12px;line-height:1.6">${paragraph}</p>`)
     .join("");
+  const codeBlock = options.code
+    ? `<p style="margin:0 0 20px;font-size:28px;font-weight:600;letter-spacing:0.3em;font-family:ui-monospace,SFMono-Regular,Consolas,monospace">${options.code}</p>`
+    : "";
   return `<!doctype html>
 <html lang="zh-CN">
   <body style="margin:0;padding:24px;background:#f6f6f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#18181b">
     <div style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #e4e4e7;border-radius:12px;padding:28px">
       <h1 style="margin:0 0 16px;font-size:18px">${options.heading}</h1>
+      ${codeBlock}
       ${paragraphs}
       <p style="margin:24px 0">
         <a href="${options.action.href}" style="display:inline-block;background:#18181b;color:#ffffff;text-decoration:none;padding:10px 18px;border-radius:8px">${options.action.label}</a>
@@ -170,6 +181,37 @@ export function passwordResetEmail(email: string, token: string, expiresInMinute
       note: "如果这不是你本人的操作，忽略本邮件即可，当前密码仍然有效。",
     }),
   };
+}
+
+/** 改绑邮箱的验证码邮件（用户中心 → 账号资料 → 更换邮箱）。 */
+export function emailChangeCodeEmail(email: string, code: string, expiresInMinutes: number): MailContent {
+  return {
+    to: email,
+    subject: "确认你的 Messenger Cloud 新邮箱",
+    text: [
+      "我们收到了把该邮箱绑定到 Messenger Cloud 账号的请求。",
+      "",
+      `验证码：${code}`,
+      "",
+      `验证码 ${expiresInMinutes} 分钟内有效，且只能使用一次。`,
+      "如果这不是你本人的操作，忽略本邮件即可，账号的登录邮箱不会改变。",
+    ].join("\n"),
+    html: layout({
+      heading: "确认新邮箱",
+      paragraphs: [
+        "我们收到了把该邮箱绑定到 Messenger Cloud 账号的请求。请在网页控制台输入上面的验证码完成改绑。",
+        `验证码 ${expiresInMinutes} 分钟内有效，且只能使用一次。`,
+      ],
+      code,
+      action: { label: "前往控制台", href: appUrl("/console/account") },
+      note: "如果这不是你本人的操作，忽略本邮件即可，账号的登录邮箱不会改变。",
+    }),
+  };
+}
+
+/** 发送改绑邮箱验证码；未配置 SMTP 或投递失败时返回 `false`。 */
+export async function sendEmailChangeCode(email: string, code: string, expiresInMinutes: number): Promise<boolean> {
+  return sendMail(emailChangeCodeEmail(email, code, expiresInMinutes));
 }
 
 /** 发送邮箱验证邮件；未配置 SMTP 或投递失败时返回 `false`。 */

@@ -61,6 +61,8 @@ export interface UserQuotaDoc {
 export interface StoredUser {
   id: string;
   email: string;
+  /** 用户中心设置的昵称；null = 未设置（展示端回落到邮箱）。 */
+  displayName: string | null;
   passwordHash: string;
   /** 邮箱验证通过的时刻；null = 从未验证（SMTP 未配置时注册即为 null）。 */
   emailVerifiedAt: number | null;
@@ -79,6 +81,8 @@ export interface StoredUser {
 export interface UserDoc {
   _id: string;
   email: string;
+  /** 昵称；缺失（旧文档）视为未设置。 */
+  displayName?: string | null;
   passwordHash: string;
   /** 邮箱验证通过的时刻；缺失（旧文档）视为未验证。 */
   emailVerifiedAt?: number | null;

@@ -31,6 +31,8 @@ export interface SelfQuotaEntitlementView {
 export interface SelfUserView {
   id: string;
   email: string;
+  /** 用户中心设置的昵称；null = 未设置，客户端回落到邮箱。 */
+  displayName: string | null;
   /** 邮箱验证时刻；null = 未验证（SMTP 未配置时新版客户端应隐藏提醒）。 */
   emailVerifiedAt: number | null;
   role: string;
@@ -65,6 +67,7 @@ export async function buildSelfUserView(
   return {
     id: user.id,
     email: user.email,
+    displayName: user.displayName,
     emailVerifiedAt: user.emailVerifiedAt,
     role: user.role,
     aiApiKey: user.aiApiKey,

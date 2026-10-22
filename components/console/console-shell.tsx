@@ -29,11 +29,13 @@ import {
   LogOut,
   ScrollText,
   Server,
+  UserRound,
   Users,
   Wallet,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { UserAvatar } from "@/components/console/user-avatar";
 import { Separator } from "@/components/ui/separator";
 import {
   Sidebar,
@@ -53,11 +55,15 @@ import {
 
 export interface ConsoleShellProps {
   email: string;
+  /** 用户中心设置的昵称；null = 未设置，回落到邮箱。 */
+  displayName: string | null;
+  /** 已设头像时的可认证访问地址；null = 未设置。 */
+  avatarUrl: string | null;
   role: "user" | "admin";
   children: React.ReactNode;
 }
 
-export function ConsoleShell({ email, role, children }: ConsoleShellProps) {
+export function ConsoleShell({ email, displayName, avatarUrl, role, children }: ConsoleShellProps) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -95,6 +101,14 @@ export function ConsoleShell({ email, role, children }: ConsoleShellProps) {
                   <Link href="/console">
                     <LayoutDashboard />
                     <span>概览</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={isActive("/console/account")}>
+                  <Link href="/console/account">
+                    <UserRound />
+                    <span>用户中心</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -183,14 +197,20 @@ export function ConsoleShell({ email, role, children }: ConsoleShellProps) {
         </SidebarContent>
         <SidebarFooter>
           <div className="grid gap-2.5 rounded-lg border bg-sidebar-accent/40 p-3 text-xs text-muted-foreground">
-            <div className="flex items-center justify-between gap-2">
-              <span className="break-all">{email}</span>
+            <Link href="/console/account" className="flex items-center gap-2.5 rounded-md outline-none hover:text-foreground">
+              <UserAvatar src={avatarUrl} name={displayName ?? email} />
+              <span className="grid min-w-0 flex-1 gap-0.5">
+                {displayName ? (
+                  <span className="truncate font-medium text-foreground">{displayName}</span>
+                ) : null}
+                <span className="break-all">{email}</span>
+              </span>
               {role === "admin" ? (
                 <Badge variant="outline" className="shrink-0">
                   管理员
                 </Badge>
               ) : null}
-            </div>
+            </Link>
             <Button variant="outline" size="sm" onClick={handleLogout}>
               <LogOut />
               退出登录

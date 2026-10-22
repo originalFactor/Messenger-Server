@@ -58,6 +58,8 @@ export async function POST(request: Request) {
   const user = {
     id: randomUUID(),
     email,
+    // 昵称由用户中心设置；未设置时展示端回落到邮箱。
+    displayName: null,
     passwordHash: await hashPassword(password),
     // role 由 saveUser 事务决定（首个注册用户晋升 admin），此处仅占位。
     role: "user" as const,

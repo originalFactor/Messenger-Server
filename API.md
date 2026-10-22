@@ -7,7 +7,7 @@ Messenger `server/` 是一个独立的 Next.js (App Router) SaaS 服务，提供
 - **包管理**: pnpm
 - **基类**: TypeScript + Zod 校验
 
-本文档对应 `app/api/**` 与 `app/v1/**` 下全部 36 个路由处理器。如需了解部署、环境变量与本地开发，参见 [`README.md`](./README.md) 与 [`AGENTS.md`](./AGENTS.md)。
+本文档对应 `app/api/**` 与 `app/v1/**` 下全部 49 个路由处理器。如需了解部署、环境变量与本地开发，参见 [`README.md`](./README.md) 与 [`AGENTS.md`](./AGENTS.md)。
 
 ---
 
@@ -22,6 +22,9 @@ Messenger `server/` 是一个独立的 Next.js (App Router) SaaS 服务，提供
 - [端点速查表](#端点速查表)
 - [认证 API](#认证-api)
 - [账户 API](#账户-api)
+- [邮箱验证 API](#邮箱验证-api)
+- [找回密码 API](#找回密码-api)
+- [改绑邮箱 API](#改绑邮箱-api)
 - [控制台 API（用户）](#控制台-api用户)
 - [管理 API（管理员）](#管理-api管理员)
 - [公开 API](#公开-api)
@@ -143,7 +146,10 @@ interface SessionClaims {
 | POST | `/api/auth/login` | 无 | 登录并签发会话 |
 | POST | `/api/auth/logout` | 无 | 注销当前用户会话 |
 | GET | `/api/auth/me` | 用户 | 获取当前用户信息（含角色/额度/API Key/邮箱验证状态） |
+| PUT | `/api/auth/profile` | 用户 | 更新昵称（头像走 `/api/avatars/user`） |
 | PUT | `/api/auth/password` | 用户 | 修改密码 |
+| POST | `/api/auth/change-email` | 用户 | 校验当前密码后向新邮箱发送 6 位验证码 |
+| POST | `/api/auth/change-email/confirm` | 用户 | 用验证码完成改绑邮箱 |
 | DELETE | `/api/auth/account` | 用户 | 永久注销账户 |
 | POST | `/api/auth/verify-email` | 无 | 消费验证令牌，标记邮箱已验证 |
 | POST | `/api/auth/verify-email/resend` | 用户 | 重新发送验证邮件 |
@@ -201,7 +207,7 @@ interface SessionClaims {
 | PUT | `/api/market/agents/{id}/avatar` | 用户（仅所有者） | 上传/替换市场头像 |
 | DELETE | `/api/market/agents/{id}/avatar` | 用户（仅所有者） | 删除市场头像 |
 
-> 网页端：`/` 为官网首页，`/login`、`/register` 为登录注册页，`/forgot-password`、`/reset-password`、`/verify-email` 为邮件流程落地页，`/console` 为用户与管理员共用的控制台（管理员侧边栏多出「管理功能区」）。
+> 网页端：`/` 为官网首页，`/login`、`/register` 为登录注册页，`/forgot-password`、`/reset-password`、`/verify-email` 为邮件流程落地页，`/console` 为用户与管理员共用的控制台（管理员侧边栏多出「管理功能区」）。`/console/account` 是用户中心：头像（走 `/api/avatars/user`，与 Messenger App 共用同一份 Blob）、昵称（`PUT /api/auth/profile`）与登录邮箱改绑（`/api/auth/change-email` 两步流程）。
 
 ---
 
@@ -228,6 +234,7 @@ interface SessionClaims {
   "user": {
     "id": "uuid",
     "email": "user@example.com",
+    "displayName": null,          // 昵称未设置，展示端回落到邮箱
     "emailVerifiedAt": null,     // 点开验证邮件后才变成验证时刻
     "role": "user",              // 全站无管理员时为 "admin"（首个注册用户）
     "aiApiKey": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -262,6 +269,7 @@ interface SessionClaims {
   "user": {
     "id": "uuid",
     "email": "user@example.com",
+    "displayName": "小明",
     "emailVerifiedAt": 1700000000000,
     "role": "user",
     "aiApiKey": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -309,6 +317,7 @@ interface SessionClaims {
   "user": {
     "id": "uuid",
     "email": "user@example.com",
+    "displayName": "小明",
     "emailVerifiedAt": 1700000000000,
     "role": "user",
     "aiApiKey": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -334,6 +343,24 @@ interface SessionClaims {
 - **登录 / 注册响应返回同一份用户结构**（`lib/user-view.ts` 的 `buildSelfUserView`）：客户端把登录响应当作账号快照，额度与 `aiApiKey` 缺失会导致刚登录就显示 0 额度、且不播种内置 AI 服务商。
 
 - 错误：`401 Unauthorized.`（会话已注销/已过期/旧格式 token）、`404 User not found.`（账号已被删但会话记录尚未清理）
+
+### PUT /api/auth/profile
+
+更新当前用户的资料（昵称）。
+
+- 鉴权：用户会话
+- 请求体：`profileUpdateSchema`（strict）
+
+```json
+{ "displayName": "小明" }   // 1–32 字符，服务端 trim；null = 清除，展示端回落到邮箱
+```
+
+- 响应 `200`：与 `GET /api/auth/me` 结构一致的 `{ "user": SelfUserView }`（含新的 `displayName`），客户端可直接用它替换账号快照。
+- 头像不走这里：`PUT /api/avatars/user` 是网页与 Messenger App 共用的上传通道，走那里才能复用 Blob 快照/回滚与头像锁。
+- 错误：
+  - `400 Nickname must be 1-32 characters.`（纯空白同样被拒）
+  - `401 Unauthorized.`
+  - `404 User not found.`
 
 ### PUT /api/auth/password
 
@@ -472,6 +499,65 @@ SMTP 未配置时整站不出信：注册照常成功（账号保持未验证）
   - `400 Invalid password reset payload.`
   - `400 This reset link is invalid or has expired. Request a new one.`
   - `429 Too many attempts. Try again later.`（限流：同 IP 20 次/小时）
+
+---
+
+## 改绑邮箱 API
+
+两步：先向**新**地址发一封带 6 位验证码的邮件，再在控制台输入验证码完成改绑。要当前密码是因为邮箱就是登录身份——只凭一个被盗的会话改绑到攻击者邮箱等于永久接管账号。
+
+验证码复用 `auth_tokens` 集合（`purpose: "change_email"`，同样只存 SHA-256 摘要），但与链接令牌有两点不同：
+
+- 明文只有 10^6 种可能，所以消费时按 `(userId, email, code)` 三元组校验：别人的码用不到自己的会话上，也不是「猜一个码就能改任意账号」。
+- 有效期 10 分钟；重发即作废旧码；消费即删除（一码一用）。
+
+### POST /api/auth/change-email
+
+校验当前密码后，向新地址发送验证码。
+
+- 鉴权：用户会话
+- 请求体：`emailChangeRequestSchema`（strict）
+
+```json
+{ "email": "new@example.com", "currentPassword": "当前密码" }
+```
+
+- 响应 `200`：`{ "success": true, "email": "new@example.com" }`（回显规范化后的目标地址，前端据此展示第二步）
+- 错误：
+  - `400 A valid new email and your current password are required.`
+  - `400 That is already your email address.`
+  - `401 Unauthorized.` / `401 The current password is incorrect.`
+  - `404 User not found.`
+  - `409 An account with this email already exists.`（先查后写；并发下的唯一索引冲突同样映射为 `409`）
+  - `429 Too many attempts. Try again later.`（限流：同 IP 10 次/小时、同账号 5 次/小时）
+  - `503 Email delivery is not configured on this server. Contact the administrator.`（未配置 SMTP）
+  - `503 Unable to send the verification code. Please try again later.`（SMTP 投递失败）
+
+### POST /api/auth/change-email/confirm
+
+用验证码确认改绑。
+
+- 鉴权：用户会话
+- 请求体：`emailChangeConfirmSchema`（strict）
+
+```json
+{ "email": "new@example.com", "code": "123456" }
+```
+
+- 响应 `200`：与 `GET /api/auth/me` 结构一致的 `{ "user": SelfUserView }`，其中 `email` 已更新、`emailVerifiedAt` 为本次改绑时刻。
+- **副作用**：
+  - 新地址直接标记为已验证——收到验证码本身就证明了对该邮箱的控制权。
+  - 该账号剩余的全部 `auth_tokens`（旧地址的验证 / 重置链接、未用的改绑码）作废：它们证明的是对旧邮箱的控制权。
+  - **会话不失效**：`user_sessions` 按用户 ID 关联，与邮箱无关，各设备无需重新登录；旧邮箱从此无法登录。
+- 验证码在写库之前消费，因此「邮箱已被抢注」时也不会留下可重放的码。
+- 错误：
+  - `400 A valid email and the 6-digit verification code are required.`
+  - `400 That is already your email address.`
+  - `400 The verification code is invalid or has expired.`
+  - `401 Unauthorized.`
+  - `404 User not found.`
+  - `409 An account with this email already exists.`（两步之间被抢注）
+  - `429 Too many attempts. Try again later.`（限流：同 IP 30 次/小时、同账号 10 次/小时）
 
 ---
 
@@ -1040,6 +1126,7 @@ Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tool
 ```
 
 - 错误：`400 Upload a JPEG, PNG, WebP, or GIF avatar no larger than 5 MiB.`、`401`、`404 User not found.`、`500 Unable to update the user avatar.`
+- **与 Messenger App 同步**：App 上传头像走同一个端点，`/api/auth/me` 下发的 `avatarUrl` + `avatarVersion` 就是它的变更信号——版本变化时客户端重新拉取（ETag 条件 GET），`avatarUrl` 变回 `null` 时客户端删除本地缓存文件。网页控制台（`/console/account`）因此不需要额外同步通道：在这里换头像，App 下次刷新 `/me` 就会看到。
 
 ### DELETE /api/avatars/user
 
@@ -1244,7 +1331,8 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `_id` | string | 用户 ID（UUID） |
-| `email` | string | 唯一索引 |
+| `email` | string | 唯一索引；改绑走 `/api/auth/change-email`，改绑即标记已验证 |
+| `displayName` | string \| null | 用户中心设置的昵称（1–32 字符）；缺失/`null` = 未设置，展示端回落到邮箱 |
 | `passwordHash` | string | argon 风格哈希 |
 | `role` | `"user"` \| `"admin"` | 管理权限；首个注册用户自动晋升 |
 | `aiApiKey` | string | AI API Key（`sk-…`），有索引 |

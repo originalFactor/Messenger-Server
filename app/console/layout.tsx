@@ -34,7 +34,15 @@ export default async function ConsoleLayout({ children }: Readonly<{ children: R
   }
 
   return (
-    <ConsoleShell email={user.email} role={user.role}>
+    <ConsoleShell
+      email={user.email}
+      displayName={user.displayName}
+      // Relative on purpose: the console is same-origin with the API, so the
+      // session cookie rides along regardless of APP_BASE_URL. The API keeps
+      // returning an absolute URL for the mobile clients.
+      avatarUrl={user.avatarUrl ? `/api/avatars/user?v=${user.avatarVersion ?? 0}` : null}
+      role={user.role}
+    >
       {user.emailVerifiedAt === null ? <EmailVerificationBanner email={user.email} /> : null}
       {children}
     </ConsoleShell>

@@ -8,7 +8,8 @@
 - Shared web console (`/console`) for users and administrators; the first registered user is automatically promoted to admin
 - Web UI built with Tailwind CSS v4 + shadcn/ui (radix base, nova preset) and Geist fonts
 - Email/password accounts with JWT cookie sessions backed by a server-side `user_sessions` collection (30-day expiry, multi-device); each session doubles as a sync-progress ledger that lets the server purge entity tombstones no client still needs
-- SMTP e-mail flows: registration verification links and self-service password reset (single-use, hashed-at-rest tokens in `auth_tokens`); both degrade gracefully when SMTP is not configured
+- SMTP e-mail flows: registration verification links, self-service password reset, and e-mail rebinding with a 6-digit code (single-use, hashed-at-rest tokens in `auth_tokens`); all degrade gracefully when SMTP is not configured
+- User center (`/console/account`): nickname, avatar upload (the same blob the Messenger app reads), and e-mail rebinding
 - MongoDB-backed versioned entity synchronization with per-user monotonic watermarks and soft-delete tombstones
 - Card-key (卡密) plan system: admin-defined plans, batch card issuance, user redemption with quota and validity extension
 - Per-model rate billing consumed by the built-in AI API, with per-model and per-provider overall multipliers plus an admin-selectable 1x base model
@@ -26,7 +27,7 @@ Copy `.env.example` to `.env.local` for local development.
 - `MONGODB_URI`: MongoDB connection string. Use MongoDB Atlas or a replica set because versioned entity writes and redemptions use transactions.
 - `MONGODB_DB_NAME`: database name; defaults to `messenger`.
 
-### SMTP (e-mail verification and password reset)
+### SMTP (e-mail verification, password reset, and e-mail rebinding)
 
 Outgoing mail is entirely optional. Without `SMTP_HOST` the server sends nothing: registration still succeeds, accounts stay `emailVerifiedAt: null`, the console shows a resend reminder, and `POST /api/auth/forgot-password` answers `503 Email delivery is not configured on this server.` instead of pretending a message was sent.
 
@@ -36,7 +37,7 @@ Outgoing mail is entirely optional. Without `SMTP_HOST` the server sends nothing
 - `SMTP_USER` / `SMTP_PASSWORD`: optional credentials for authenticated relays.
 - `SMTP_FROM`: envelope sender; defaults to `Messenger Cloud <no-reply@APP_BASE_URL hostname>`.
 
-Verification links (`/verify-email?token=…`) are valid for 24 hours; reset links (`/reset-password?token=…`) for 30 minutes and only once. Only SHA-256 digests of the tokens are stored, so a database dump cannot be replayed. Deliverability depends on the relay accepting your `SMTP_FROM` domain — an unauthenticated sender that does not match the relay's allowed domain will be rejected or spam-filtered.
+Verification links (`/verify-email?token=…`) are valid for 24 hours; reset links (`/reset-password?token=…`) for 30 minutes and only once; the e-mail rebinding code (`/console/account`) is six digits and valid for 10 minutes. Only SHA-256 digests of the tokens are stored, so a database dump cannot be replayed. Deliverability depends on the relay accepting your `SMTP_FROM` domain — an unauthenticated sender that does not match the relay's allowed domain will be rejected or spam-filtered.
 
 ### Blob storage (avatars)
 
@@ -51,7 +52,7 @@ The former `ADMIN_PASSWORD` variable is removed: administration is a user role g
 
 All documents use application-generated string IDs as MongoDB `_id` values. Timestamps are Unix epoch milliseconds.
 
-- `users`: `_id`, `email`, `passwordHash`, `role` (`user` | `admin`), `aiApiKey`, `quotaBalance`, `quotaExpiresAt`, `avatarUrl`, `syncVersion`, `createdAt`, `updatedAt`, and `lastLoginAt`.
+- `users`: `_id`, `email`, `displayName`, `passwordHash`, `role` (`user` | `admin`), `aiApiKey`, `quotaBalance`, `quotaExpiresAt`, `avatarUrl`, `syncVersion`, `createdAt`, `updatedAt`, and `lastLoginAt`. `displayName` is the optional nickname from the user center; clients fall back to the e-mail when it is null.
 - `user_sessions`: `_id` (the JWT `sid`), `userId`, `createdAt`, `lastSeenAt`, `expiresAt`, `syncCursor`, `ip`, `userAgent`. The JWT cookie is only a credential — a request is accepted only while its `sid` maps to a row here, which is what makes logout, password changes and the 30-day expiry take effect immediately. Sessions carry no tombstones: signing out, changing the password or expiring deletes the row (the `expiresAt` TTL index is the backstop). One account can hold several sessions at once (one per device).
 - `agents`: `_id`, `userId`, agent configuration, `avatarUrl`, `version`, and `deleted`.
 - `conversations`: `_id`, `userId`, `agentId`, conversation overrides, one embedded `messages` array, `version`, and `deleted`.
@@ -122,7 +123,10 @@ See [`API.md`](./API.md) for the complete endpoint reference. Summary:
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
+- `PUT /api/auth/profile`
 - `PUT /api/auth/password`
+- `POST /api/auth/change-email`
+- `POST /api/auth/change-email/confirm`
 - `DELETE /api/auth/account`
 
 `PUT /api/auth/password` requires `currentPassword` and `newPassword`. `DELETE /api/auth/account` requires a JSON body containing `currentPassword` and permanently removes the authenticated user's account, synchronized entities, billing history, usage logs, and avatars.
