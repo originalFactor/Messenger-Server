@@ -70,7 +70,7 @@ async function verifyLock(verify?: LockVerifier): Promise<void> {
 
 async function listByPrefix(prefix: string, verify?: LockVerifier) {
   await verifyLock(verify);
-  // 两个后端都在内部翻页拉满后一次性返回；头像前缀下文件数很小。
+  // 存储层在内部翻页拉满后一次性返回；头像前缀下文件数很小。
   const page = await blobStore.list({ prefix });
   return page.blobs;
 }
@@ -248,8 +248,7 @@ export async function deleteMarketAgentAvatar(agentId: string, verify?: LockVeri
 }
 
 /**
- * DB 里的 avatarUrl 既可能是 fs 后端的裸 pathname，也可能是历史 Vercel
- * Blob 后端写入的完整 URL；统一规范化为逻辑路径并校验前缀。
+ * 将数据库里的头像引用规范化为逻辑路径并校验前缀。
  */
 function avatarLogicalPathFromUrl(url: string): string {
   const logicalPath = blobPathFromUrl(url);
@@ -289,9 +288,9 @@ function reportMissingBlob(pathname: string, message: string): void {
  * Avatar GET 的共享逻辑：条件 GET（ifNoneMatch 命中时后端只回 304 +
  * 元数据、不回内容流）；未命中才把完整内容流回传。
  *
- * 返回 `null` = 数据库里记着头像、但 Blob 已经不在（存储目录被清空、换了
- * BLOB_BACKEND、或迁移时漏拷文件）。这是**客户端可恢复的状态**，不是服务端
- * 故障：路由据此回 `404 Avatar not found.`，让客户端回落到默认头像。此前
+ * 返回 `null` = 数据库里记着头像、但对象已不在存储桶中。这是客户端可恢复
+ * 的状态，不是服务端故障：路由据此回 `404 Avatar not found.`，让客户端
+ * 回落到默认头像。此前
  * 这里直接 throw，于是每一次页面渲染都变成 500 + 整段堆栈。
  */
 export async function fetchAvatarWithConditional(

@@ -1,6 +1,6 @@
 # Messenger Server
 
-`server/` is the standalone Next.js SaaS service for Messenger: official website, web console, account & incremental sync, card-key plan billing, and the built-in AI API (upstream model relay). It runs on Vercel and on any self-hosted Node runtime. MongoDB stores synchronized application entities, billing data, and market snapshots, while avatar files live in a pluggable blob storage layer (Vercel Blob backend or a self-hosted filesystem backend).
+`server/` is the standalone Next.js SaaS service for Messenger: official website, web console, account & incremental sync, card-key plan billing, and the built-in AI API (upstream model relay). It runs on Vercel and on any self-hosted Node runtime. MongoDB stores synchronized application entities, billing data, and market snapshots, while avatar files live in private S3-compatible object storage.
 
 ## Features
 
@@ -14,9 +14,9 @@
 - Card-key (卡密) plan system: admin-defined plans, batch card issuance, user redemption with quota and validity extension
 - Per-model rate billing consumed by the built-in AI API, with per-model and per-provider overall multipliers plus an admin-selectable 1x base model
 - OpenAI-compatible AI API (`/v1/models`, `/v1/chat/completions`) relaying to admin-managed upstream model services with priority failover
-- Pluggable blob storage for avatars: Vercel Blob backend (existing deployments keep working) or self-hosted filesystem backend replacing the former local emulator
+- Private S3-compatible object storage for avatars
 - Authenticated public Agent Market with publish, update, import, and unpublish workflows
-- Vercel Blob-compatible avatar lifecycle management (snapshot/replacement/rollback semantics) regardless of backend
+- Avatar lifecycle management with snapshot, replacement, and rollback semantics
 
 ## Environment
 
@@ -39,12 +39,15 @@ Outgoing mail is entirely optional. Without `SMTP_HOST` the server sends nothing
 
 Verification links (`/verify-email?token=…`) are valid for 24 hours; reset links (`/reset-password?token=…`) for 30 minutes and only once; the e-mail rebinding code (`/console/account`) is six digits and valid for 10 minutes. Only SHA-256 digests of the tokens are stored, so a database dump cannot be replayed. Deliverability depends on the relay accepting your `SMTP_FROM` domain — an unauthenticated sender that does not match the relay's allowed domain will be rejected or spam-filtered.
 
-### Blob storage (avatars)
+### S3-compatible storage (avatars)
 
-- `BLOB_BACKEND`: `auto` (default) | `fs` | `vercel`. With `auto`, a configured `BLOB_READ_WRITE_TOKEN` selects the Vercel Blob backend (unchanged behavior for Vercel deployments); otherwise the filesystem backend is used.
-- `BLOB_STORAGE_DIR`: filesystem backend root directory; defaults to `./.blobs`. Requires a persistent disk (self-hosted deployments), and is git-ignored.
+- `S3_BUCKET`: required bucket name. Create the bucket beforehand and keep it private; grant the server credentials permission to list, read, write, and delete its avatar objects.
+- `S3_REGION`: region; defaults to `us-east-1`.
+- `S3_ENDPOINT`: optional custom endpoint for an S3-compatible provider; omit for AWS S3.
+- `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`: optional explicit credentials, supplied together. If omitted, the AWS credential chain is used.
+- `S3_FORCE_PATH_STYLE`: set to `true` to enable path-style addressing, as required by some S3-compatible providers.
 
-The following variables only apply to the Vercel Blob backend (`BLOB_BACKEND=vercel` or a Vercel deployment); local development and self-hosting need none of them: `BLOB_READ_WRITE_TOKEN`, `BLOB_STORE_ID`, `VERCEL_BLOB_API_URL`, `VERCEL_BLOB_STORAGE_URL`, `VERCEL_BLOB_RETRIES`.
+These settings apply to local development, Vercel, and self-hosted deployments alike. The configured endpoint must be reachable by the server, including from inside a container.
 
 The former `ADMIN_PASSWORD` variable is removed: administration is a user role granted to the first registered account.
 
@@ -93,14 +96,7 @@ An additional partial unique index protects the one-active-default-agent invaria
 
 ## Avatar Storage
 
-Avatar files live behind `lib/blob-store.ts`, a small pluggable storage interface with two backends:
-
-- **`fs` backend** (`lib/blob-fs.ts`): the real, self-hosted implementation that replaces the former `vercel-blob-emu` emulator. Content is stored under `BLOB_STORAGE_DIR` (default `./.blobs`) with a `.meta.json` sidecar holding the sha256 ETag and content type. Missing sidecars are tolerated (ETag recomputed from content, content type guessed from the extension), so migrating from another storage simply means copying the `avatars/` file tree into `BLOB_STORAGE_DIR`. Requires a persistent disk.
-- **`vercel` backend** (`lib/blob-vercel.ts`): a pass-through adapter over `vercel-blob-nonvercel` with the exact call semantics the server has always used, keeping existing Vercel deployments fully compatible with no data migration.
-
-Selection: `BLOB_BACKEND=auto` (default) picks Vercel when `BLOB_READ_WRITE_TOKEN` is set, otherwise `fs`; `BLOB_BACKEND=fs|vercel` forces either backend.
-
-Stable logical pathnames are used by both backends:
+Avatar files live in the configured private S3-compatible bucket behind `lib/blob-store.ts`. Stable object keys are:
 
 - User avatars: `avatars/users/{userId}.{ext}`
 - Agent avatars: `avatars/agents/{agentId}.{ext}`
@@ -213,21 +209,21 @@ pnpm build
 pnpm start   # serves on $PORT (default 3000); put a reverse proxy in front for TLS
 ```
 
-Self-hosted deployments should use the `fs` blob backend (default when no Vercel token is configured) and point `BLOB_STORAGE_DIR` at a persistent disk. The AI streaming proxy has a `maxDuration` export that Vercel clamps per plan; self-hosted runtimes have no function timeout.
+All deployments require access to the configured S3-compatible bucket for avatars. The AI streaming proxy has a `maxDuration` export that Vercel clamps per plan; self-hosted runtimes have no function timeout.
 
 ### Docker (self-hosted)
 
-`Dockerfile` and `compose.yaml` build the server alone. **MongoDB and the TLS reverse proxy are external** — the container listens on `0.0.0.0:3000` inside the Compose network and is published to loopback only.
+`Dockerfile` and `compose.yaml` build the server alone. **MongoDB, S3-compatible storage, and the TLS reverse proxy are external** — the container listens on `0.0.0.0:3000` inside the Compose network and is published to loopback only.
 
 ```bash
-cp .env.example .env      # JWT_SECRET, MONGODB_URI, APP_BASE_URL (public HTTPS origin)
+cp .env.example .env      # configure JWT_SECRET, MONGODB_URI, APP_BASE_URL and S3
 docker compose up -d --build
 curl -sf http://127.0.0.1:3000/api/plans    # readiness probe (hits MongoDB)
 ```
 
 - The image is a four-stage build (`base` → `deps`/`prod-deps`/`builder` → `runner`). `pnpm build` runs with dev dependencies; the runner stage receives only production dependencies, `.next/`, `public/`, `package.json`, and `next.config.ts`, and runs as the unprivileged `node` user. `.next/cache` is deleted in the builder stage because it is build-only state.
 - `compose.yaml` publishes on `127.0.0.1:${MESSENGER_PORT:-3000}`. If nginx runs in another container instead of on the host, set `MESSENGER_BIND=0.0.0.0` and attach both services to a shared network — never publish to a public interface directly.
-- `compose.yaml` forces `BLOB_BACKEND=fs` with `BLOB_STORAGE_DIR=/data/blobs` on the `blobs` volume. Back that volume up together with MongoDB — restoring either alone loses avatar content or the metadata that references it.
+- Configure the S3 variables in `.env`; Compose passes them to the server. Back up the private bucket together with MongoDB — restoring either alone loses avatar content or the metadata that references it.
 - `MONGODB_URI` must point at a replica set reachable from inside the container (e.g. `mongodb://host.docker.internal:27017/...` on Docker Desktop, or the host/LAN address on Linux; `127.0.0.1` inside the container is the container itself). Do not set `directConnection=true`.
 - The web client at `/app` is fetched during the image build. Set `WEB_CLIENT_URL` (explicit archive) or `WEB_CLIENT_REQUIRED=1` as build args to control that step; without either, a failed download only logs a warning and the site/API still work. `.dockerignore` keeps any local `public/app/` out of the context so a stale bundle is never baked in — if you want to ship a pre-downloaded client, remove those two ignore lines and set `WEB_CLIENT_URL` to a reachable archive.
 - `APP_BASE_URL` must be the public HTTPS origin: avatar URLs returned to mobile clients are absolute and built from it. The session cookie is `secure` under `NODE_ENV=production`, so serving the container over plain HTTP makes login silently fail.
@@ -268,7 +264,7 @@ pnpm install
 pnpm dev
 ```
 
-Open `http://localhost:3000` for the official website. Use `/register` to create the first account (it becomes the admin), then sign in at `/login` and manage the platform under `/console`. Local avatar files are written to `BLOB_STORAGE_DIR` (default `./.blobs`); no emulator or Vercel account is needed.
+Open `http://localhost:3000` for the official website. Use `/register` to create the first account (it becomes the admin), then sign in at `/login` and manage the platform under `/console`. Configure a reachable private S3-compatible bucket for avatars.
 
 Run validation with:
 
@@ -280,4 +276,4 @@ pnpm lint
 ## Breaking Changes
 
 - The former Redis/Vercel Blob whole-backup system and `/api/backups/*` endpoints were removed. Existing backup JSON payloads are not migrated automatically; a one-time migration is intentionally out of scope.
-- The `vercel-blob-emu` emulator submodule was removed. Local development uses the filesystem blob backend; existing deployments that move off Vercel can copy their stored `avatars/` file tree into `BLOB_STORAGE_DIR` (ETags are recomputed from content when sidecars are absent). Vercel deployments are unaffected.
+- Avatar storage now uses S3-compatible object storage only. Existing Vercel Blob or filesystem avatars are not migrated automatically; configure a private bucket and re-upload avatars as needed.

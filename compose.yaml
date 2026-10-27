@@ -1,9 +1,10 @@
 # Messenger server.
 #
-# MongoDB and nginx are NOT part of this file: point MONGODB_URI at your
-# existing replica set and terminate TLS in your existing reverse proxy.
+# MongoDB, S3-compatible storage and nginx are NOT part of this file: point
+# MONGODB_URI and S3 settings at reachable services and terminate TLS in your
+# existing reverse proxy.
 #
-#   cp .env.example .env    # fill JWT_SECRET, MONGODB_URI, APP_BASE_URL
+#   cp .env.example .env    # fill JWT_SECRET, MONGODB_URI, APP_BASE_URL and S3
 #   docker compose up -d --build
 #
 # The published port is bound to loopback so the only way in is nginx.
@@ -27,22 +28,13 @@ services:
     environment:
       NODE_ENV: production
       PORT: "3000"
-      BLOB_BACKEND: fs
-      BLOB_STORAGE_DIR: /data/blobs
     ports:
       # Loopback by default: the only entry point is your reverse proxy. If
       # nginx runs in another container, attach both to a shared network and
       # set MESSENGER_BIND=0.0.0.0 (or remove the publish entirely).
       - "${MESSENGER_BIND:-127.0.0.1}:${MESSENGER_PORT:-3000}:3000"
-    volumes:
-      # Avatar content plus .meta.json sidecars. Back this up together with
-      # MongoDB; both are required to restore the instance.
-      - blobs:/data/blobs
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-
-volumes:
-  blobs:

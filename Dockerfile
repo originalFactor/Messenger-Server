@@ -2,12 +2,12 @@
 
 # Messenger server — Next.js 16 App Router.
 #
-# MongoDB (replica set) and the TLS reverse proxy are EXTERNAL: this image only
-# runs the Node server on port 3000 and never exposes itself publicly.
+# MongoDB (replica set), S3-compatible storage and the TLS reverse proxy are
+# EXTERNAL: this image only runs the Node server on port 3000.
 #
 #   docker build -t messenger-server .
 #   docker run -d --name messenger-server --env-file .env \
-#     -p 127.0.0.1:3000:3000 -v messenger-blobs:/data/blobs messenger-server
+#     -p 127.0.0.1:3000:3000 messenger-server
 
 FROM node:24-bookworm-slim AS base
 # MUST match `packageManager` in package.json — a mismatched pnpm may refuse
@@ -50,13 +50,11 @@ RUN WEB_CLIENT_URL="$WEB_CLIENT_URL" \
 FROM base AS runner
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
-    PORT=3000 \
-    BLOB_STORAGE_DIR=/data/blobs
+    PORT=3000
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/.next ./.next
 COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/package.json /app/next.config.ts ./
-RUN mkdir -p /data/blobs && chown -R node:node /data
 USER node
 EXPOSE 3000
 # /api/plans is public and touches MongoDB, so this reports real readiness

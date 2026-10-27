@@ -1,6 +1,6 @@
 # Messenger Server API
 
-Messenger `server/` 是一个独立的 Next.js (App Router) SaaS 服务，提供官网、注册登录、网页控制台、账号云同步、卡密套餐计费与内置 AI API（上游模型中转），可部署在 Vercel 或任意自托管 Node 环境。所有业务数据存于 MongoDB（需为副本集），头像文件存于可插拔 Blob 存储层（Vercel Blob 后端或自托管文件系统后端）。
+Messenger `server/` 是一个独立的 Next.js (App Router) SaaS 服务，提供官网、注册登录、网页控制台、账号云同步、卡密套餐计费与内置 AI API（上游模型中转），可部署在 Vercel 或任意自托管 Node 环境。所有业务数据存于 MongoDB（需为副本集），头像文件存于私有 S3 兼容对象存储。
 
 - **运行时**: Node.js ≥ 20，Next.js 15.4
 - **路由运行时**: 所有触碰 MongoDB 或 Blob 的路由均声明 `export const runtime = "nodejs"`
@@ -1097,9 +1097,9 @@ Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tool
 4. 上传成功后写入新 `avatarUrl` 与 `avatarVersion`（= `Date.now()`）。
 5. 删除操作先清空 DB 字段再删 Blob。
 
-所有头像 GET 走认证代理：服务端经 `BlobStore` 接口（`lib/blob-store.ts`，Vercel Blob / 文件系统双后端）以条件 GET（`If-None-Match` → 304）流式返回内容。
+所有头像 GET 走认证代理：服务端从私有 S3 兼容存储以条件 GET（`If-None-Match` → 304）流式返回内容，不向客户端暴露对象地址。
 
-**DB 与 Blob 漂移按 404 处理**：`avatarUrl` 仍记在文档里、但 Blob 已不在（`BLOB_STORAGE_DIR` 被清空、切换了 `BLOB_BACKEND`、迁移漏拷文件）时，`fetchAvatarWithConditional` 返回 `null`，三个头像 GET 路由回 `404 Avatar not found.`，客户端回落到默认头像/图标。这是可恢复状态而非服务端故障，因此不再抛错转成 `500`（旧行为会让每次页面渲染都打出一整段堆栈）；每条路径只写一条 `avatar` 域警告日志，避免轮询刷屏。重新上传头像即可恢复。
+**DB 与对象存储漂移按 404 处理**：`avatarUrl` 仍记在文档里、但对象已不存在时，`fetchAvatarWithConditional` 返回 `null`，三个头像 GET 路由回 `404 Avatar not found.`，客户端回落到默认头像/图标。重新上传头像即可恢复。
 
 ### GET /api/avatars/user
 
@@ -1535,7 +1535,7 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 
 ### 头像 Blob 路径
 
-两种 Blob 后端（Vercel / 文件系统，见 README「Avatar Storage」）共用稳定的逻辑路径：
+S3 兼容对象存储（配置见 README「Avatar Storage」）使用稳定的对象键：
 
 - 用户头像：`avatars/users/{userId}.{ext}`
 - Agent 头像：`avatars/agents/{agentId}.{ext}`

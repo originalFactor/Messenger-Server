@@ -6,7 +6,6 @@ node_modules
 # Local state and secrets never enter the build context.
 .git
 .vercel
-.blobs
 .env
 .env.*
 !.env.example

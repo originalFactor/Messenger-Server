@@ -15,5 +15,3 @@
 allowBuilds:
   sharp: true
   unrs-resolver: true
-minimumReleaseAgeExclude:
-  - vercel-blob-nonvercel@2.6.1

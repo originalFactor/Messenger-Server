@@ -27,11 +27,18 @@ export const env = {
   appBaseUrl: () => process.env.APP_BASE_URL ?? "http://localhost:3000",
   mongoUri: () => requireEnv("MONGODB_URI"),
   mongoDbName: () => process.env.MONGODB_DB_NAME ?? "messenger",
-  // Blob 存储：auto（默认）= 配置了 BLOB_READ_WRITE_TOKEN 时走 Vercel Blob，
-  // 否则走文件系统后端；也可显式指定 "vercel" | "fs"。
-  blobBackend: () => (process.env.BLOB_BACKEND ?? "auto").trim().toLowerCase(),
-  blobStorageDir: () => process.env.BLOB_STORAGE_DIR ?? "./.blobs",
-  blobReadWriteToken: () => process.env.BLOB_READ_WRITE_TOKEN ?? "",
+  s3Bucket: () => requireEnv("S3_BUCKET"),
+  s3Region: () => process.env.S3_REGION || "us-east-1",
+  s3Endpoint: () => process.env.S3_ENDPOINT || undefined,
+  s3ForcePathStyle: () => process.env.S3_FORCE_PATH_STYLE === "true",
+  s3Credentials: () => {
+    const accessKeyId = process.env.S3_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
+    if (Boolean(accessKeyId) !== Boolean(secretAccessKey)) {
+      throw new Error("S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set together");
+    }
+    return accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey } : undefined;
+  },
 };
 
 export function appUrl(path: string): string {

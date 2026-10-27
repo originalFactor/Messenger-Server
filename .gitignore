@@ -6,7 +6,6 @@ coverage/
 .env.*
 !.env.example
 next-env.d.ts
-.blobs/
 tsconfig.tsbuildinfo
 
 # The compiled Compose Multiplatform web client (copied from :webApp by

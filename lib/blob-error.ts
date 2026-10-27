@@ -14,5 +14,5 @@
  * limitations under the License.
  */
 
-/** 条件删除（ifMatch）时 ETag 不匹配抛出；与 Vercel Blob SDK 的同名错误语义一致。 */
+/** Conditional delete failed because the stored ETag did not match. */
 export class BlobPreconditionFailedError extends Error {}
