@@ -21,8 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUserSession } from "@/lib/auth";
 import { formatPlanPrice } from "@/lib/format";
-import { DEFAULT_BASELINE_MODEL } from "@/lib/model-metadata";
-import { getModelRateSettings, listPlans } from "@/lib/storage";
+import { listPlans } from "@/lib/storage";
 import type { PlanDoc } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -30,10 +29,10 @@ export const dynamic = "force-dynamic";
 /** 编译期常量（next.config.ts 的 env）：只有构建时 public/app/ 存在才挂载 /app。 */
 const WEB_CLIENT_AVAILABLE = process.env.WEB_CLIENT_AVAILABLE === "1";
 
-function formatQuota(tokens: number): string {
-  if (tokens >= 100_000_000) return `${(tokens / 100_000_000).toFixed(tokens % 100_000_000 === 0 ? 0 : 1)} 亿 tokens`;
-  if (tokens >= 10_000) return `${(tokens / 10_000).toFixed(tokens % 10_000 === 0 ? 0 : 1)} 万 tokens`;
-  return `${tokens} tokens`;
+function formatQuota(credits: number): string {
+  if (credits >= 100_000_000) return `${(credits / 100_000_000).toFixed(credits % 100_000_000 === 0 ? 0 : 1)} 亿 credit`;
+  if (credits >= 10_000) return `${(credits / 10_000).toFixed(credits % 10_000 === 0 ? 0 : 1)} 万 credit`;
+  return `${credits} credit`;
 }
 
 const features = [
@@ -62,20 +61,11 @@ const features = [
 export default async function HomePage() {
   const session = await requireUserSession();
   let plans: PlanDoc[] = [];
-  let baseModelId: string | null = null;
   try {
-    const [listedPlans, rateSettings] = await Promise.all([
-      listPlans({ enabledOnly: true }),
-      getModelRateSettings(),
-    ]);
-    plans = listedPlans;
-    baseModelId = rateSettings.baseModelId;
+    plans = await listPlans({ enabledOnly: true });
   } catch (error) {
     console.error("Unable to load public plans for the homepage.", error);
   }
-  // 套餐额度以管理员选定的 1x 基准模型的峰时输出为基准；未设基准时回退
-  // 到 models.dev 归一化口径的基准模型（见 lib/model-metadata.ts）。
-  const baselineModel = baseModelId ?? DEFAULT_BASELINE_MODEL;
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -185,34 +175,24 @@ export default async function HomePage() {
               <CardContent className="text-sm text-muted-foreground">暂无可售套餐，敬请期待。</CardContent>
             </Card>
           ) : (
-            <>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {plans.map((plan) => (
-                  <Card key={plan._id} className="transition-colors hover:border-muted-foreground/40">
-                    <CardHeader>
-                      <CardTitle className="text-sm font-medium text-muted-foreground">{plan.name}</CardTitle>
-                      <div className="text-3xl font-bold tracking-tighter">
-                        {plan.price ? formatPlanPrice(plan.price) : formatQuota(plan.quotaTokens)}
-                      </div>
-                      <CardDescription>
-                        {formatQuota(plan.quotaTokens)} · 有效期 {plan.validityDays} 天
-                      </CardDescription>
-                    </CardHeader>
-                    {plan.description ? (
-                      <CardContent className="text-sm text-muted-foreground">{plan.description}</CardContent>
-                    ) : null}
-                  </Card>
-                ))}
-              </div>
-              <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-                套餐额度以 <span className="font-medium text-foreground">{baselineModel}</span> 的价格为基准折算；
-                各模型的具体价格请参考{" "}
-                <Link className="underline underline-offset-4 hover:text-foreground" href="/models">
-                  模型广场
-                </Link>{" "}
-                页，实际消耗按所选模型计算。
-              </p>
-            </>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {plans.map((plan) => (
+                <Card key={plan._id} className="transition-colors hover:border-muted-foreground/40">
+                  <CardHeader>
+                    <CardTitle className="text-sm font-medium text-muted-foreground">{plan.name}</CardTitle>
+                    <div className="text-3xl font-bold tracking-tighter">
+                      {plan.price ? formatPlanPrice(plan.price) : formatQuota(plan.quotaTokens)}
+                    </div>
+                    <CardDescription>
+                      {formatQuota(plan.quotaTokens)} · 有效期 {plan.validityDays} 天
+                    </CardDescription>
+                  </CardHeader>
+                  {plan.description ? (
+                    <CardContent className="text-sm text-muted-foreground">{plan.description}</CardContent>
+                  ) : null}
+                </Card>
+              ))}
+            </div>
           )}
         </section>
       </main>
