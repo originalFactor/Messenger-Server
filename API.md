@@ -693,7 +693,7 @@ SMTP 未配置时整站不出信：注册照常成功（账号保持未验证）
 返回 models.dev（`api.json`）按供应商压平合并后的模型倍率元数据，实例内存缓存 24 小时；models.dev 不可用时返回空映射。
 
 - 输入/输出/缓存读取倍率以 `deepseek/deepseek-v4.1-flash` 的峰时输出成本为基准归一化（基准恰为 1.0）；`cost.cache_read` 缺失时按该模型的输入价折算。
-- 响应 `200`：`{ "metadata": { "gpt-4o": { "inputRate": 0.25, "cacheReadRate": 0.125, "outputRate": 1.0 } } }`
+- 响应 `200`：`{ "metadata": { "gpt-4o": { "inputRate": 0.25, "cacheReadRate": 0.125, "outputRate": 1.0 } }, "degraded": false }`；`degraded=true` 表示使用了持久化快照或最终 1x 降级。
 - 上下文窗口不再由服务端提供（客户端自行从 models.dev `models.json` 推导）。
 - 供「更新元数据」入口与上游元数据展示使用。
 
@@ -742,7 +742,7 @@ SMTP 未配置时整站不出信：注册照常成功（账号保持未验证）
 
 返回 models.dev（`https://models.dev/api.json`）按供应商压平合并后的倍率映射，实例内存缓存 24 小时；models.dev 不可用时返回空映射。完整 `vendor/model` 键与 `/` 后的裸 ID 均可命中。
 
-- 响应 `200`：`{ "metadata": { "gpt-4o": { "inputRate": 0.25, "cacheReadRate": 0.125, "outputRate": 1.0 }, "…": {} } }`。
+- 响应 `200`：`{ "metadata": { "gpt-4o": { "inputRate": 0.25, "cacheReadRate": 0.125, "outputRate": 1.0 }, "…": {} }, "degraded": false }`。`degraded=true` 表示使用了持久化快照或最终 1x 降级。
 
 ### GET|PUT /api/admin/models/base
 

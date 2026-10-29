@@ -16,6 +16,7 @@
 
 import { z } from "zod";
 import { getDb } from "@/lib/mongo";
+import { createLogger } from "@/lib/runtime-logs";
 
 /**
  * models.dev 公开模型元数据：
@@ -90,6 +91,8 @@ export type ModelRateMap = Record<string, ModelRates>;
 interface MetadataCache {
   fetchedAt: number;
   rates: ModelRateMap;
+  /** True when the data came from a stale snapshot or an empty-rate fallback. */
+  degraded: boolean;
 }
 
 let cache: MetadataCache | null = null;
@@ -205,7 +208,7 @@ async function fetchMetadata(): Promise<MetadataCache> {
     }
   }
 
-  return { fetchedAt: Date.now(), rates };
+  return { fetchedAt: Date.now(), rates, degraded: false };
 }
 
 /**
@@ -222,6 +225,7 @@ interface MetadataSnapshotDoc {
 }
 
 const SNAPSHOT_ID = "models_dev";
+const metadataLog = createLogger("relay");
 
 async function readSnapshot(): Promise<MetadataCache | null> {
   try {
@@ -230,7 +234,7 @@ async function readSnapshot(): Promise<MetadataCache | null> {
     if (!doc || !doc.rates || Object.keys(doc.rates).length === 0) {
       return null;
     }
-    return { fetchedAt: doc.fetchedAt, rates: doc.rates };
+    return { fetchedAt: doc.fetchedAt, rates: doc.rates, degraded: true };
   } catch {
     return null;
   }
@@ -277,10 +281,12 @@ export async function getModelDefaults(forceRefresh = false): Promise<MetadataCa
       // 所有模型都按 1x 计费。
       const snapshot = await readSnapshot();
       if (snapshot) {
+        metadataLog.warn("Using the persisted models.dev snapshot after metadata refresh failed.");
         cache = snapshot;
         return snapshot;
       }
-      return { fetchedAt: 0, rates: {} as ModelRateMap };
+      metadataLog.error("models.dev metadata is unavailable; rate resolution is degraded to 1x.");
+      return { fetchedAt: 0, rates: {} as ModelRateMap, degraded: true };
     })
     .finally(() => {
       inflight = null;

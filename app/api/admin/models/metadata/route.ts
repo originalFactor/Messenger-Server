@@ -34,10 +34,10 @@ export async function GET(request: Request) {
   }
 
   const forceRefresh = new URL(request.url).searchParams.get("refresh") === "1";
-  const { rates } = await getModelDefaults(forceRefresh);
+  const { rates, degraded } = await getModelDefaults(forceRefresh);
   const metadata: Record<string, { cacheReadRate: number; inputRate: number; outputRate: number }> = {};
   for (const [modelId, rate] of Object.entries(rates)) {
     metadata[modelId] = { cacheReadRate: rate.cacheRead, inputRate: rate.input, outputRate: rate.output };
   }
-  return jsonOk({ metadata });
+  return jsonOk({ metadata, degraded });
 }
