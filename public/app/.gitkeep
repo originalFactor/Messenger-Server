@@ -1,4 +1,0 @@
-# The compiled Compose Multiplatform web client is unpacked here by
-# 'pnpm build' -> 'pnpm web:client' (scripts/fetch-web-client.mjs).
-
-# The built output is git-ignored; this file only keeps the directory.

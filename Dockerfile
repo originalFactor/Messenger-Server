@@ -34,18 +34,10 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store,sharing=locked \
 FROM base AS builder
 ENV NEXT_TELEMETRY_DISABLED=1
 # `pnpm build` downloads the compiled Compose Multiplatform client from the
-# parent repository's `web-distribution` CI artifact via nightly.link into
-# public/app/. Leave both empty to ship without /app (a warning, not a
-# failure); set WEB_CLIENT_REQUIRED=1 where shipping it is mandatory.
-# WEB_CLIENT_URL bypasses the nightly.link lookup entirely (air-gapped or
 # private mirrors).
-ARG WEB_CLIENT_URL=""
-ARG WEB_CLIENT_REQUIRED=""
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN WEB_CLIENT_URL="$WEB_CLIENT_URL" \
-    WEB_CLIENT_REQUIRED="$WEB_CLIENT_REQUIRED" \
-    pnpm build && rm -rf .next/cache
+RUN pnpm build && rm -rf .next/cache
 
 FROM base AS runner
 ENV NODE_ENV=production \

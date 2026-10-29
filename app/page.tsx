@@ -15,7 +15,7 @@
  */
 
 import Link from "next/link";
-import { AppWindow, ArrowRight, CloudCog, CreditCard, RefreshCw } from "lucide-react";
+import { ArrowRight, CloudCog, CreditCard, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,8 +26,6 @@ import type { PlanDoc } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-/** 编译期常量（next.config.ts 的 env）：只有构建时 public/app/ 存在才挂载 /app。 */
-const WEB_CLIENT_AVAILABLE = process.env.WEB_CLIENT_AVAILABLE === "1";
 
 function formatQuota(credits: number): string {
   if (credits >= 100_000_000) return `${(credits / 100_000_000).toFixed(credits % 100_000_000 === 0 ? 0 : 1)} 亿 credit`;
@@ -135,14 +133,6 @@ export default async function HomePage() {
                   <ArrowRight />
                 </Link>
               </Button>
-              {WEB_CLIENT_AVAILABLE ? (
-                <Button asChild variant="outline">
-                  <Link href="/app">
-                    <AppWindow />
-                    打开网页版
-                  </Link>
-                </Button>
-              ) : null}
               <Button asChild variant="outline">
                 <Link href="https://github.com/originalFactor/Messenger">下载 Messenger</Link>
               </Button>

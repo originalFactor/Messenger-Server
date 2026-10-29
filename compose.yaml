@@ -17,10 +17,6 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        # Empty = build succeeds without the Compose web client; /app is just
-        # missing. Set to "1" to make a failed download fail the build.
-        WEB_CLIENT_REQUIRED: ${WEB_CLIENT_REQUIRED:-}
-        WEB_CLIENT_URL: ${WEB_CLIENT_URL:-}
     image: messenger-server:latest
     restart: unless-stopped
     init: true

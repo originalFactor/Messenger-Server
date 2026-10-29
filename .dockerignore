@@ -10,11 +10,6 @@ node_modules
 .env.*
 !.env.example
 
-# The web client is downloaded during `pnpm build`; a stale local copy would
-# otherwise be baked into the image.
-public/app/*
-!public/app/.gitkeep
-
 coverage
 tsconfig.tsbuildinfo
 next-env.d.ts

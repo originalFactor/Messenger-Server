@@ -225,35 +225,8 @@ curl -sf http://127.0.0.1:3000/api/plans    # readiness probe (hits MongoDB)
 - `compose.yaml` publishes on `127.0.0.1:${MESSENGER_PORT:-3000}`. If nginx runs in another container instead of on the host, set `MESSENGER_BIND=0.0.0.0` and attach both services to a shared network — never publish to a public interface directly.
 - Configure the S3 variables in `.env`; Compose passes them to the server. Back up the private bucket together with MongoDB — restoring either alone loses avatar content or the metadata that references it.
 - `MONGODB_URI` must point at a replica set reachable from inside the container (e.g. `mongodb://host.docker.internal:27017/...` on Docker Desktop, or the host/LAN address on Linux; `127.0.0.1` inside the container is the container itself). Do not set `directConnection=true`.
-- The web client at `/app` is fetched during the image build. Set `WEB_CLIENT_URL` (explicit archive) or `WEB_CLIENT_REQUIRED=1` as build args to control that step; without either, a failed download only logs a warning and the site/API still work. `.dockerignore` keeps any local `public/app/` out of the context so a stale bundle is never baked in — if you want to ship a pre-downloaded client, remove those two ignore lines and set `WEB_CLIENT_URL` to a reachable archive.
 - `APP_BASE_URL` must be the public HTTPS origin: avatar URLs returned to mobile clients are absolute and built from it. The session cookie is `secure` under `NODE_ENV=production`, so serving the container over plain HTTP makes login silently fail.
 - The container healthcheck calls `/api/plans`, so a healthy container requires a reachable MongoDB.
-
-### Web client (Compose Multiplatform) at /app
-
-The Messenger web client is a Kotlin/Wasm Compose application. Its output is **not** committed: `pnpm build` downloads the compiled bundle and unpacks it into `public/app/` before `next build` runs, so every deployment ships whatever the parent repository last built on `main`.
-
-It is consumed as a build artifact because this repository is the `server/` submodule of the Messenger repository — the Kotlin/Wasm toolchain that produces it is not available here.
-
-How the pieces connect:
-
-- **Producing side** — the parent repository's CI (`.github/workflows/ci.yml` → `build-all.yml` → `build-web.yml`) uploads the `web-distribution` artifact on every successful run on `main`.
-- **Consuming side** — `scripts/fetch-web-client.mjs` downloads that artifact through [nightly.link](https://nightly.link) (`https://nightly.link/originalFactor/Messenger/workflows/ci/main/web-distribution.zip`, which redirects to GitHub's time-limited artifact download URL with no login required) and unpacks it into `public/app/`. It is wired into `pnpm build`, and can be run on its own with `pnpm web:client` (`--force` to re-download).
-
-`next.config.ts` rewrites `/app` to `/app/index.html` (Next.js does not serve a directory index from `public/`, and `/app/` is normalized back to `/app`), and injects a `<base href="/app/">` at unpack time so the client's relative asset references resolve under the mount path. `Cross-Origin-Opener-Policy`/`Cross-Origin-Embedder-Policy` are sent for `/app/:path*` only — the Compose renderer needs cross-origin isolation, but applying COEP site-wide would break third-party embeds.
-
-Configuration (all optional):
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `WEB_CLIENT_REPO` | `originalFactor/Messenger` | Repository the nightly.link artifact lives in |
-| `WEB_CLIENT_BRANCH` | `main` | Branch the nightly.link URL resolves against |
-| `WEB_CLIENT_URL` | — | Explicit archive URL; skips the nightly.link lookup |
-| `WEB_CLIENT_BASE_PATH` | `/app/` | Mount path written into the `<base>` tag |
-| `WEB_CLIENT_REQUIRED` | unset | `1` makes a download failure fail the build |
-| `GITHUB_TOKEN` | — | Only needed when the source repository is private |
-
-By default a download failure is a **warning**, not an error: the service still starts (the website, console, and API are unaffected) and only `/app` is missing. Set `WEB_CLIENT_REQUIRED=1` in an environment where shipping the web client is mandatory. The unpack replaces `public/app/` atomically — a failed download leaves the previous build in place.
 
 ## Local Development
 

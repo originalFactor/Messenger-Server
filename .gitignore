@@ -8,10 +8,6 @@ coverage/
 next-env.d.ts
 tsconfig.tsbuildinfo
 
-# The compiled Compose Multiplatform web client (copied from :webApp by
-# copyWebAppDistribution). Only public/app/.gitkeep is committed.
-public/app/*
-!public/app/.gitkeep
 
 # Local dev auth token scratch file
 .tmp-token.txt
