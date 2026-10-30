@@ -10,13 +10,26 @@
 import { useMemo, useState } from "react";
 import { Bot, Check, ChevronRight, FolderKanban, Plus, Save, Server, Trash2, WandSparkles } from "lucide-react";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgentDoc, ModelEmbed, ProjectDoc, ProviderDoc } from "@/lib/types";
 import type { PlazaModel } from "@/lib/model-plaza";
@@ -158,6 +171,35 @@ function projectDraft(project: ProjectDoc): ProjectDraft {
 async function readError(response: Response, fallback: string) {
   const payload = await response.json().catch(() => null) as { error?: string } | null;
   return payload?.error ?? fallback;
+}
+
+function FollowToggle({ id, label, checked, onCheckedChange }: { id: string; label: string; checked: boolean; onCheckedChange: (checked: boolean) => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      <Checkbox id={id} checked={checked} onCheckedChange={(value) => onCheckedChange(value === true)} />
+      <Label htmlFor={id} className="text-xs font-normal text-muted-foreground">{label}</Label>
+    </div>
+  );
+}
+
+function DeleteButton({ onConfirm }: { onConfirm: () => void }) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="destructive"><Trash2 /> 删除</Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>确定删除这个配置吗？</AlertDialogTitle>
+          <AlertDialogDescription>删除会同步到你的所有设备。</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>取消</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={onConfirm}>删除</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 }
 
 export function ConsoleManagement({ initialAgents, initialProviders, initialProjects, builtinModels }: Props) {
@@ -370,7 +412,7 @@ export function ConsoleManagement({ initialAgents, initialProviders, initialProj
 
   async function removeCurrent() {
     const current = tab === "agents" ? agent : tab === "providers" ? provider : project;
-    if (!current || !window.confirm("确定删除这个配置吗？")) return;
+    if (!current) return;
     const resource = tab === "agents" ? "agents" : tab === "providers" ? "providers" : "projects";
     try {
       const response = await fetch(`/api/${resource}/${current.id}`, { method: "DELETE" });
@@ -404,51 +446,50 @@ export function ConsoleManagement({ initialAgents, initialProviders, initialProj
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Workspace</p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-tight">管理 Messenger</h1>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">直接在 Web 配置同步到手机、桌面端和 Web Messenger 的 Agents、Providers 与 Projects。</p>
+        <div className="grid gap-1">
+          <h1 className="text-xl font-semibold tracking-tight">配置管理</h1>
+          <p className="max-w-2xl text-sm text-muted-foreground">直接在 Web 配置同步到手机、桌面端和 Web Messenger 的 Agents、Providers 与 Projects。</p>
         </div>
         <Button onClick={addItem}><Plus /> 新建{tabMeta.label.slice(0, -1)}</Button>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[250px_minmax(0,1fr)]">
-        <Card className="h-fit">
-          <CardContent className="space-y-1 p-2">
-            {(["agents", "providers", "projects"] as const).map((item) => {
-              const meta = {
-                agents: { label: "Agents", icon: Bot, count: agents.length },
-                providers: { label: "Providers", icon: Server, count: providers.length },
-                projects: { label: "Projects", icon: FolderKanban, count: projects.length },
-              }[item];
-              const Icon = meta.icon;
-              return (
-                <button key={item} type="button" onClick={() => setTab(item)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm transition-colors ${tab === item ? "bg-primary text-primary-foreground shadow-sm" : "hover:bg-muted"}`}>
-                  <Icon className="size-4" />
-                  <span className="flex-1 font-medium">{meta.label}</span>
-                  <span className={`text-xs ${tab === item ? "text-primary-foreground/70" : "text-muted-foreground"}`}>{meta.count}</span>
-                </button>
-              );
-            })}
-          </CardContent>
-        </Card>
+      <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
+        <TabsList>
+          {(["agents", "providers", "projects"] as const).map((item) => {
+            const meta = {
+              agents: { label: "Agents", icon: Bot, count: agents.length },
+              providers: { label: "Providers", icon: Server, count: providers.length },
+              projects: { label: "Projects", icon: FolderKanban, count: projects.length },
+            }[item];
+            const Icon = meta.icon;
+            return (
+              <TabsTrigger key={item} value={item}>
+                <Icon />
+                {meta.label}
+                <Badge variant="secondary" className="px-1.5 tabular-nums">{meta.count}</Badge>
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+      </Tabs>
 
+      <div className="grid gap-6">
         <div className="min-w-0 space-y-4">
           <Card>
             <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
-                <div className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary"><TabIcon className="size-5" /></div>
+                <div className="grid size-10 place-items-center rounded-lg bg-muted text-muted-foreground"><TabIcon className="size-5" /></div>
                 <div><CardTitle>{tabMeta.label}</CardTitle><CardDescription>{tabMeta.description}</CardDescription></div>
               </div>
               <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="筛选..." className="h-9 sm:w-48" />
             </CardHeader>
             <CardContent className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {visibleItems.length === 0 ? <button type="button" onClick={addItem} className="rounded-xl border border-dashed p-5 text-left text-sm text-muted-foreground hover:bg-muted/50">还没有配置，点击新建 →</button> : null}
+              {visibleItems.length === 0 ? <button type="button" onClick={addItem} className="rounded-lg border border-dashed p-5 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/50">还没有配置，点击新建 →</button> : null}
               {visibleItems.map((item) => {
                 const id = item._id;
                 const active = (tab === "agents" ? agent?.id : tab === "providers" ? provider?.id : project?.id) === id;
                 return (
-                  <button key={id} type="button" onClick={() => selectItem(item)} className={`group rounded-xl border p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${active ? "border-primary bg-primary/5 ring-1 ring-primary/20" : "bg-card"}`}>
+                  <button key={id} type="button" onClick={() => selectItem(item)} className={`group rounded-lg border p-4 text-left transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${active ? "border-primary bg-muted" : "bg-card hover:bg-muted/50"}`}>
                     <div className="flex items-start gap-3">
                       <div className={`grid size-9 place-items-center rounded-lg ${active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
                         {tab === "agents" ? <Bot className="size-4" /> : tab === "providers" ? <Server className="size-4" /> : <FolderKanban className="size-4" />}
@@ -471,16 +512,16 @@ export function ConsoleManagement({ initialAgents, initialProviders, initialProj
                   <div className="grid gap-2"><Label>角色</Label><Select value={agent.role} disabled={agent.role === "default"} onValueChange={(value) => setAgent({ ...agent, role: value as AgentDraft["role"] })}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="default">默认 Agent</SelectItem><SelectItem value="chat">聊天 Agent</SelectItem><SelectItem value="title">标题生成 Agent</SelectItem></SelectContent></Select></div>
                 </div>
                 <div className="grid gap-2"><Label>描述</Label><Input value={agent.description} onChange={(event) => setAgent({ ...agent, description: event.target.value })} placeholder="可选" /></div>
-                <div className="grid gap-2"><Label>System prompt</Label>{canFollowDefaults ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={agent.followDefaultSystemPrompt} onChange={(event) => setAgent({ ...agent, followDefaultSystemPrompt: event.target.checked })} />跟随默认 Agent</div> : null}<Textarea value={agent.systemPrompt} disabled={agent.followDefaultSystemPrompt && canFollowDefaults} onChange={(event) => setAgent({ ...agent, systemPrompt: event.target.value })} className="min-h-32" /></div>
-                <div className="grid gap-3 rounded-xl border p-3">{canFollowDefaults ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={agent.followDefaultModel} onChange={(event) => setAgent({ ...agent, followDefaultModel: event.target.checked })} />模型跟随默认 Agent</div> : null}<div className="grid gap-4 sm:grid-cols-2"><Select value={agent.selectedProviderId} disabled={agent.followDefaultModel && canFollowDefaults} onValueChange={(value) => setAgent({ ...agent, selectedProviderId: value, defaultModelId: "" })}><SelectTrigger className="w-full"><SelectValue placeholder="选择 Provider" /></SelectTrigger><SelectContent>{allProviders.map((item) => <SelectItem key={item._id} value={item._id}>{item.name}</SelectItem>)}</SelectContent></Select><Select value={agent.defaultModelId} disabled={agent.followDefaultModel && canFollowDefaults} onValueChange={(value) => setAgent({ ...agent, defaultModelId: value })}><SelectTrigger className="w-full"><SelectValue placeholder={selectedAgentModels.length ? "选择模型" : "该 Provider 暂无模型"} /></SelectTrigger><SelectContent>{selectedAgentModels.map((model) => <SelectItem key={model.modelId} value={model.modelId}>{model.displayName || model.modelId}</SelectItem>)}</SelectContent></Select></div><p className="text-xs text-muted-foreground">{selectedAgentProvider?.name ?? "先选择 Provider"} · {agent.defaultModelId || "未选择模型"}</p></div>
+                <div className="grid gap-2"><Label>System prompt</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultSystemPrompt" label="跟随默认 Agent" checked={agent.followDefaultSystemPrompt} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultSystemPrompt: checked })} /> : null}<Textarea value={agent.systemPrompt} disabled={agent.followDefaultSystemPrompt && canFollowDefaults} onChange={(event) => setAgent({ ...agent, systemPrompt: event.target.value })} className="min-h-32" /></div>
+                <div className="grid gap-3 rounded-lg border p-3">{canFollowDefaults ? <FollowToggle id="agent-followDefaultModel" label="模型跟随默认 Agent" checked={agent.followDefaultModel} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultModel: checked })} /> : null}<div className="grid gap-4 sm:grid-cols-2"><Select value={agent.selectedProviderId} disabled={agent.followDefaultModel && canFollowDefaults} onValueChange={(value) => setAgent({ ...agent, selectedProviderId: value, defaultModelId: "" })}><SelectTrigger className="w-full"><SelectValue placeholder="选择 Provider" /></SelectTrigger><SelectContent>{allProviders.map((item) => <SelectItem key={item._id} value={item._id}>{item.name}</SelectItem>)}</SelectContent></Select><Select value={agent.defaultModelId} disabled={agent.followDefaultModel && canFollowDefaults} onValueChange={(value) => setAgent({ ...agent, defaultModelId: value })}><SelectTrigger className="w-full"><SelectValue placeholder={selectedAgentModels.length ? "选择模型" : "该 Provider 暂无模型"} /></SelectTrigger><SelectContent>{selectedAgentModels.map((model) => <SelectItem key={model.modelId} value={model.modelId}>{model.displayName || model.modelId}</SelectItem>)}</SelectContent></Select></div><p className="text-xs text-muted-foreground">{selectedAgentProvider?.name ?? "先选择 Provider"} · {agent.defaultModelId || "未选择模型"}</p></div>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="grid gap-2">{canFollowDefaults ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={agent.followDefaultTemperature} onChange={(event) => setAgent({ ...agent, followDefaultTemperature: event.target.checked })} />Temperature 跟随默认</div> : null}<Input type="number" step="0.1" value={agent.temperature} disabled={agent.followDefaultTemperature && canFollowDefaults} onChange={(event) => setAgent({ ...agent, temperature: event.target.value })} /></div>
-                  <div className="grid gap-2">{canFollowDefaults ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={agent.followDefaultTopP} onChange={(event) => setAgent({ ...agent, followDefaultTopP: event.target.checked })} />Top P 跟随默认</div> : null}<Input type="number" step="0.05" value={agent.topP} disabled={agent.followDefaultTopP && canFollowDefaults} onChange={(event) => setAgent({ ...agent, topP: event.target.value })} /></div>
-                  <div className="grid gap-2">{canFollowDefaults ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={agent.followDefaultMaxTokens} onChange={(event) => setAgent({ ...agent, followDefaultMaxTokens: event.target.checked })} />Max tokens 跟随默认</div> : null}<Input type="number" value={agent.maxTokens} disabled={agent.followDefaultMaxTokens && canFollowDefaults} onChange={(event) => setAgent({ ...agent, maxTokens: event.target.value })} placeholder="自动" /></div>
-                  <div className="grid gap-2">{canFollowDefaults ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={agent.followDefaultReasoningEffort} onChange={(event) => setAgent({ ...agent, followDefaultReasoningEffort: event.target.checked })} />Reasoning 跟随默认</div> : null}<Input value={agent.reasoningEffort} disabled={agent.followDefaultReasoningEffort && canFollowDefaults} onChange={(event) => setAgent({ ...agent, reasoningEffort: event.target.value })} placeholder="default / low / high" /></div>
+                  <div className="grid gap-2">{canFollowDefaults ? <FollowToggle id="agent-followDefaultTemperature" label="Temperature 跟随默认" checked={agent.followDefaultTemperature} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTemperature: checked })} /> : null}<Input type="number" step="0.1" value={agent.temperature} disabled={agent.followDefaultTemperature && canFollowDefaults} onChange={(event) => setAgent({ ...agent, temperature: event.target.value })} /></div>
+                  <div className="grid gap-2">{canFollowDefaults ? <FollowToggle id="agent-followDefaultTopP" label="Top P 跟随默认" checked={agent.followDefaultTopP} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTopP: checked })} /> : null}<Input type="number" step="0.05" value={agent.topP} disabled={agent.followDefaultTopP && canFollowDefaults} onChange={(event) => setAgent({ ...agent, topP: event.target.value })} /></div>
+                  <div className="grid gap-2">{canFollowDefaults ? <FollowToggle id="agent-followDefaultMaxTokens" label="Max tokens 跟随默认" checked={agent.followDefaultMaxTokens} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultMaxTokens: checked })} /> : null}<Input type="number" value={agent.maxTokens} disabled={agent.followDefaultMaxTokens && canFollowDefaults} onChange={(event) => setAgent({ ...agent, maxTokens: event.target.value })} placeholder="自动" /></div>
+                  <div className="grid gap-2">{canFollowDefaults ? <FollowToggle id="agent-followDefaultReasoningEffort" label="Reasoning 跟随默认" checked={agent.followDefaultReasoningEffort} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultReasoningEffort: checked })} /> : null}<Input value={agent.reasoningEffort} disabled={agent.followDefaultReasoningEffort && canFollowDefaults} onChange={(event) => setAgent({ ...agent, reasoningEffort: event.target.value })} placeholder="default / low / high" /></div>
                 </div>
                 <p className="text-xs text-muted-foreground">默认 Agent 作为角色单独存在；当前默认 Agent 不能直接取消，请在其他 Agent 上选择“默认 Agent”完成转移。</p>
-                <div className="flex flex-wrap justify-between gap-2"><Button variant="outline" className="text-destructive hover:text-destructive" onClick={() => void removeCurrent()}><Trash2 /> 删除</Button><Button onClick={() => void saveAgent()} disabled={saving}><Save /> {saving ? "保存中..." : "保存 Agent"}</Button></div>
+                <div className="flex flex-wrap justify-between gap-2"><DeleteButton onConfirm={() => void removeCurrent()} /><Button onClick={() => void saveAgent()} disabled={saving}><Save /> {saving ? "保存中..." : "保存 Agent"}</Button></div>
               </CardContent>
             </Card>
           ) : null}
@@ -496,9 +537,9 @@ export function ConsoleManagement({ initialAgents, initialProviders, initialProj
                 <div className="grid gap-2"><Label>Base URL</Label><Input value={provider.baseUrl} onChange={(event) => setProvider({ ...provider, baseUrl: event.target.value })} placeholder="https://api.example.com/v1" /></div>
                 <div className="grid gap-2"><Label>API Key</Label><Input type="password" value={provider.apiKey} onChange={(event) => setProvider({ ...provider, apiKey: event.target.value })} /></div>
                 <div className="grid gap-3"><div className="flex items-center justify-between"><div><Label>模型</Label><p className="text-xs text-muted-foreground">只会把启用的模型提供给聊天选择器。</p></div><Button type="button" variant="outline" size="sm" onClick={() => setProvider({ ...provider, models: [...provider.models, { id: crypto.randomUUID(), modelId: "", displayName: "", isEnabled: true, contextWindow: null, inputRate: null, outputRate: null, createdAt: now() }] })}><Plus /> 添加模型</Button></div>
-                  {provider.models.length === 0 ? <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">还没有模型，请至少添加一个模型。</div> : provider.models.map((model, index) => <div key={model.id} className="grid gap-2 rounded-xl border bg-muted/20 p-3 sm:grid-cols-[1fr_1fr_auto_auto] sm:items-center"><Input value={model.modelId} onChange={(event) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, modelId: event.target.value } : item) })} placeholder="模型 ID" /><Input value={model.displayName} onChange={(event) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, displayName: event.target.value } : item) })} placeholder="显示名称（可选）" /><label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch size="sm" checked={model.isEnabled} onCheckedChange={(checked) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, isEnabled: checked } : item) })} />启用</label><Button type="button" variant="ghost" size="icon" onClick={() => setProvider({ ...provider, models: provider.models.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 className="size-4" /></Button></div>)}
+                  {provider.models.length === 0 ? <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">还没有模型，请至少添加一个模型。</div> : provider.models.map((model, index) => <div key={model.id} className="grid gap-2 rounded-lg border bg-muted/30 p-3 sm:grid-cols-[1fr_1fr_auto_auto] sm:items-center"><Input value={model.modelId} onChange={(event) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, modelId: event.target.value } : item) })} placeholder="模型 ID" /><Input value={model.displayName} onChange={(event) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, displayName: event.target.value } : item) })} placeholder="显示名称（可选）" /><label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch size="sm" checked={model.isEnabled} onCheckedChange={(checked) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, isEnabled: checked } : item) })} />启用</label><Button type="button" variant="ghost" size="icon" onClick={() => setProvider({ ...provider, models: provider.models.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 className="size-4" /></Button></div>)}
                 </div>
-                <div className="flex flex-wrap justify-between gap-2"><Button variant="outline" className="text-destructive hover:text-destructive" onClick={() => void removeCurrent()}><Trash2 /> 删除</Button><Button onClick={() => void saveProvider()} disabled={saving}><Save /> {saving ? "保存中..." : "保存 Provider"}</Button></div>
+                <div className="flex flex-wrap justify-between gap-2"><DeleteButton onConfirm={() => void removeCurrent()} /><Button onClick={() => void saveProvider()} disabled={saving}><Save /> {saving ? "保存中..." : "保存 Provider"}</Button></div>
               </CardContent>
             </Card>
           ) : null}
@@ -509,7 +550,7 @@ export function ConsoleManagement({ initialAgents, initialProviders, initialProj
               <CardContent className="grid gap-5">
                 <div className="grid gap-2"><Label>名称</Label><Input value={project.name} onChange={(event) => setProject({ ...project, name: event.target.value })} /></div>
                 <div className="grid gap-2"><Label>工作区路径</Label><Input value={project.workspace} onChange={(event) => setProject({ ...project, workspace: event.target.value })} placeholder="可选，例如 /workspace/my-project" /></div>
-                <div className="flex flex-wrap justify-between gap-2"><Button variant="outline" className="text-destructive hover:text-destructive" onClick={() => void removeCurrent()}><Trash2 /> 删除</Button><Button onClick={() => void saveProject()} disabled={saving}><Save /> {saving ? "保存中..." : "保存 Project"}</Button></div>
+                <div className="flex flex-wrap justify-between gap-2"><DeleteButton onConfirm={() => void removeCurrent()} /><Button onClick={() => void saveProject()} disabled={saving}><Save /> {saving ? "保存中..." : "保存 Project"}</Button></div>
               </CardContent>
             </Card>
           ) : null}

@@ -237,13 +237,13 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
         </SidebarFooter>
         <SidebarRail />
       </Sidebar>
-      <SidebarInset>
+      <SidebarInset className="min-w-0">
         <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
           <SidebarTrigger className="-ml-1" />
           <Separator orientation="vertical" className="mr-1 data-[orientation=vertical]:h-4" />
           <span className="text-sm text-muted-foreground">控制台</span>
         </header>
-        <div className={pathname.startsWith("/console/messenger") ? "w-full flex-1 overflow-hidden p-0" : "mx-auto w-full max-w-5xl flex-1 p-4 sm:p-6"}>{children}</div>
+        <div className={pathname.startsWith("/console/messenger") ? "w-full min-w-0 flex-1 overflow-hidden p-0" : "mx-auto w-full max-w-5xl min-w-0 flex-1 p-4 sm:p-6"}>{children}</div>
       </SidebarInset>
     </SidebarProvider>
   );

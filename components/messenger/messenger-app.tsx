@@ -8,13 +8,17 @@
  */
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Bot,
+  Brain,
   Check,
   ChevronDown,
   LoaderCircle,
   MessageSquarePlus,
   PanelLeft,
+  Plus,
+  Search,
   Send,
   Sparkles,
   Trash2,
@@ -22,10 +26,27 @@ import {
 } from "lucide-react";
 import MarkdownIt from "markdown-it";
 import katex from "katex";
+import { cn } from "cn";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { UserAvatar } from "@/components/console/user-avatar";
 import type { AgentDoc, ConversationDoc, MessageEmbed, ProviderDoc } from "@/lib/types";
@@ -74,15 +95,32 @@ const markdown = new MarkdownIt({
 });
 
 type StoredPart = {
-  type?: string;
-  text?: string;
-  name?: string;
-  arguments?: string;
-  output?: string;
-  isError?: boolean;
+  type?: string | null;
+  text?: string | null;
+  callId?: string | null;
+  name?: string | null;
+  arguments?: string | null;
+  output?: string | null;
+  isError?: boolean | null;
 };
 
-type RenderMessage = MessageEmbed & { parts: StoredPart[] };
+type ToolEntry = {
+  callId: string | null;
+  name: string;
+  arguments: string;
+  /** null = the call has no result yet. */
+  output: string | null;
+  isError: boolean;
+};
+
+type AgentBlock =
+  | { kind: "thinking"; text: string }
+  | { kind: "text"; text: string; error?: boolean }
+  | { kind: "tool"; tool: ToolEntry };
+
+type AgentTurn = { id: string; role: "agent"; blocks: AgentBlock[]; sending: boolean };
+type UserItem = { id: string; role: "user"; text: string };
+type RenderItem = UserItem | AgentTurn;
 
 function parseParts(message: MessageEmbed): StoredPart[] {
   if (!message.partsJson) return [];
@@ -94,23 +132,74 @@ function parseParts(message: MessageEmbed): StoredPart[] {
   }
 }
 
-function groupMessages(messages: MessageEmbed[]): RenderMessage[] {
-  const groups: RenderMessage[] = [];
+function pushContent(blocks: AgentBlock[], content: string, error: boolean) {
+  const { thinking, answer } = splitThinking(content);
+  const last = blocks[blocks.length - 1];
+  if (thinking) {
+    if (last?.kind === "thinking") last.text = `${last.text}\n\n${thinking}`;
+    else blocks.push({ kind: "thinking", text: thinking });
+  }
+  if (answer) {
+    const tail = blocks[blocks.length - 1];
+    if (!error && tail?.kind === "text" && !tail.error) tail.text = `${tail.text}\n\n${answer}`;
+    else blocks.push({ kind: "text", text: answer, error });
+  }
+}
+
+function attachResult(blocks: AgentBlock[], result: { callId: string | null; name: string; output: string; isError: boolean }) {
+  const tools = blocks.flatMap((block) => (block.kind === "tool" ? [block.tool] : []));
+  const target = result.callId
+    ? tools.find((tool) => tool.callId === result.callId)
+    : tools.find((tool) => tool.output === null);
+  if (target) {
+    target.output = result.output;
+    target.isError = result.isError;
+    return;
+  }
+  blocks.push({ kind: "tool", tool: { callId: result.callId, name: result.name, arguments: "", output: result.output, isError: result.isError } });
+}
+
+/**
+ * Consecutive assistant/tool messages are one Agent turn: text and reasoning are merged, and every
+ * tool call is paired with its result (by `callId`) into a single entry.
+ */
+function groupMessages(messages: MessageEmbed[]): RenderItem[] {
+  const items: RenderItem[] = [];
+  let turn: AgentTurn | null = null;
   for (const message of messages) {
     if (message.role === "system") continue;
-    const parts = parseParts(message);
-    const previous = groups[groups.length - 1];
-    if (previous && previous.role === message.role && (message.role === "assistant" || message.role === "tool")) {
-      previous.content = [previous.content, message.content].filter((value) => value.trim()).join("\n\n");
-      previous.parts.push(...parts);
-      previous.status = message.status;
-      previous.errorMessage = message.errorMessage ?? previous.errorMessage;
-      previous.timestamp = message.timestamp;
+    if (message.role === "user") {
+      turn = null;
+      items.push({ id: message.id, role: "user", text: message.content });
       continue;
     }
-    groups.push({ ...message, parts });
+    if (!turn) {
+      turn = { id: message.id, role: "agent", blocks: [], sending: false };
+      items.push(turn);
+    }
+    turn.sending = message.status === "SENDING";
+    const error = message.status === "ERROR";
+    const parts = parseParts(message);
+    const hasText = parts.some((part) => part.type === "text");
+    const hasToolParts = parts.some((part) => part.type === "tool_call" || part.type === "tool_result");
+    if (message.role === "tool" && !hasToolParts) {
+      attachResult(turn.blocks, { callId: null, name: "tool", output: message.content, isError: false });
+      continue;
+    }
+    if (!hasText && message.role !== "tool" && message.content.trim()) pushContent(turn.blocks, message.content, error);
+    for (const part of parts) {
+      if (part.type === "text") pushContent(turn.blocks, part.text ?? "", error);
+      else if (part.type === "tool_call") {
+        turn.blocks.push({
+          kind: "tool",
+          tool: { callId: part.callId ?? null, name: part.name ?? "tool", arguments: part.arguments ?? "", output: null, isError: false },
+        });
+      } else if (part.type === "tool_result") {
+        attachResult(turn.blocks, { callId: part.callId ?? null, name: part.name ?? "tool", output: part.output ?? "", isError: part.isError === true });
+      }
+    }
   }
-  return groups;
+  return items;
 }
 
 function splitThinking(content: string): { thinking: string; answer: string } {
@@ -151,9 +240,216 @@ function MarkdownMessage({ content }: { content: string }) {
   return <div className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-function AgentAvatar({ agent }: { agent: AgentDoc | undefined }) {
-  if (!agent) return <div className="mt-1 grid size-8 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground"><Bot className="size-4" /></div>;
-  return <UserAvatar src={agent.avatarUrl ? `/api/avatars/agents/${agent._id}?v=${agent.avatarVersion ?? 0}` : null} name={agent.name} className="mt-1 size-8 rounded-xl bg-primary text-primary-foreground text-primary-foreground" />;
+function AgentAvatar({ agent, className }: { agent: AgentDoc | undefined; className?: string }) {
+  if (!agent) {
+    return (
+      <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground ring-1 ring-foreground/10", className)}>
+        <Bot className="size-4" />
+      </span>
+    );
+  }
+  return (
+    <UserAvatar
+      src={agent.avatarUrl ? `/api/avatars/agents/${agent._id}?v=${agent.avatarVersion ?? 0}` : null}
+      name={agent.name}
+      className={className}
+    />
+  );
+}
+
+function NewConversationMenu({
+  agents,
+  onSelect,
+  align = "start",
+  children,
+}: {
+  agents: AgentDoc[];
+  onSelect: (agent: AgentDoc) => void;
+  align?: "start" | "end";
+  children: React.ReactNode;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
+      <DropdownMenuContent align={align} className="w-64">
+        <DropdownMenuLabel>选择 Agent</DropdownMenuLabel>
+        {agents.map((item) => (
+          <DropdownMenuItem key={item._id} onSelect={() => onSelect(item)}>
+            <AgentAvatar agent={item} className="size-6 text-xs" />
+            <span className="min-w-0 flex-1 truncate">{item.name}</span>
+            {item.isDefault ? <Badge variant="outline">默认</Badge> : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function ThinkingBlock({ content, streaming }: { content: string; streaming: boolean }) {
+  return (
+    <Collapsible defaultOpen={streaming} className="group/thinking w-full rounded-lg border bg-background text-xs">
+      <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
+        <Brain className="size-3.5" />
+        思考过程
+        <ChevronDown className="ml-auto size-3.5 transition-transform group-data-[state=open]/thinking:rotate-180" />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="border-t px-3 py-3 text-muted-foreground">
+          <MarkdownMessage content={content} />
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function toolSummary(args: string): string {
+  try {
+    const parsed = JSON.parse(args) as unknown;
+    if (parsed && typeof parsed === "object") {
+      const first = Object.values(parsed).find((value) => typeof value === "string");
+      if (typeof first === "string") return first.replace(/\s+/g, " ").trim();
+    }
+  } catch {
+    // Not JSON (or still streaming): fall through to the raw text.
+  }
+  return args.replace(/\s+/g, " ").trim();
+}
+
+function ToolSection({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="grid gap-1">
+      <p className="font-medium text-muted-foreground">{label}</p>
+      <pre className="max-h-48 overflow-auto rounded-md bg-muted/60 p-2 font-mono text-[11px] break-words whitespace-pre-wrap">{text}</pre>
+    </div>
+  );
+}
+
+/** One tool call together with its result; collapsed by default. */
+function ToolCard({ tool, running }: { tool: ToolEntry; running: boolean }) {
+  const status = tool.isError ? "failed" : tool.output !== null ? "done" : running ? "running" : "none";
+  return (
+    <Collapsible className="group/tool w-full rounded-lg border bg-background text-xs">
+      <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-left outline-none hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50">
+        <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="shrink-0 font-medium">{tool.name}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">{toolSummary(tool.arguments)}</span>
+        <Badge variant={status === "failed" ? "destructive" : status === "done" ? "secondary" : "outline"} className="shrink-0">
+          {status === "running" ? <LoaderCircle className="animate-spin" /> : null}
+          {status === "failed" ? "失败" : status === "done" ? "完成" : status === "running" ? "运行中" : "无结果"}
+        </Badge>
+        <ChevronDown className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]/tool:rotate-180" />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="grid gap-3 border-t p-3">
+          {tool.arguments ? <ToolSection label="调用参数" text={tool.arguments} /> : null}
+          {tool.output !== null ? <ToolSection label="返回结果" text={tool.output || "（空）"} /> : null}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function ConversationItem({
+  conversation,
+  active,
+  onSelect,
+  onDelete,
+}: {
+  conversation: ConversationDoc;
+  active: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "group flex min-w-0 items-center gap-1 rounded-lg pr-1 transition-colors",
+        active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60",
+      )}
+    >
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-current={active ? "true" : undefined}
+        className="min-w-0 flex-1 rounded-lg px-3 py-2 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
+        <p className="truncate text-sm font-medium">{conversation.title || "新对话"}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{relativeTime(conversation.updatedAt)}</p>
+      </button>
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
+            aria-label="删除会话"
+          >
+            <Trash2 />
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除这个会话？</AlertDialogTitle>
+            <AlertDialogDescription>「{conversation.title || "新对话"}」将被删除，并同步到你的其他设备。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={onDelete}>
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+function MessageRow({
+  item,
+  agent,
+  userName,
+  userAvatarUrl,
+}: {
+  item: RenderItem;
+  agent: AgentDoc | undefined;
+  userName: string;
+  userAvatarUrl: string | null;
+}) {
+  if (item.role === "user") {
+    return (
+      <div className="flex min-w-0 flex-row-reverse items-start gap-3">
+        <UserAvatar src={userAvatarUrl} name={userName} />
+        <div className="max-w-[min(88%,48rem)] min-w-0 rounded-xl bg-primary px-4 py-2.5 text-sm leading-7 text-primary-foreground">
+          <div className="break-words whitespace-pre-wrap">{item.text}</div>
+        </div>
+      </div>
+    );
+  }
+
+  const last = item.blocks[item.blocks.length - 1];
+  const waiting = item.sending && (!last || last.kind === "tool");
+  if (item.blocks.length === 0 && !waiting) return null;
+
+  return (
+    <div className="flex min-w-0 items-start gap-3">
+      <AgentAvatar agent={agent} />
+      <div className="flex w-full max-w-3xl min-w-0 flex-1 flex-col gap-3 overflow-hidden rounded-xl bg-muted px-4 py-3 text-sm leading-7 text-foreground">
+        {item.blocks.map((block, index) => {
+          if (block.kind === "thinking") {
+            return <ThinkingBlock key={index} content={block.text} streaming={item.sending && index === item.blocks.length - 1} />;
+          }
+          if (block.kind === "tool") return <ToolCard key={index} tool={block.tool} running={item.sending} />;
+          return (
+            <div key={index} className={cn("min-w-0", block.error && "text-destructive")}>
+              <MarkdownMessage content={block.text} />
+              {block.error ? <p className="mt-2 text-xs opacity-80">发送失败</p> : null}
+            </div>
+          );
+        })}
+        {waiting ? <LoaderCircle className="size-4 animate-spin" /> : null}
+      </div>
+    </div>
+  );
 }
 
 function relativeTime(timestamp: number): string {
@@ -178,6 +474,8 @@ export function MessengerApp({ initialAgents, initialConversations, initialProvi
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const defaultAgent = agents.find((agent) => agent.isDefault) ?? agents[0];
+  // The title Agent only generates conversation titles, so it is not offered for new chats.
+  const chatAgents = agents.filter((item) => item.role !== "title");
   const titleAgentSource = agents.find((item) => item.role === "title");
   const titleAgent = titleAgentSource && defaultAgent
     ? {
@@ -242,12 +540,12 @@ export function MessengerApp({ initialAgents, initialConversations, initialProvi
     if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? "保存会话失败");
   }
 
-  function startConversation() {
-    if (!defaultAgent || !providers[0]) {
+  function startConversation(chosen: AgentDoc) {
+    if (!providers[0]) {
       toast.error("请先在手机端配置 Agent 和 Provider。");
       return;
     }
-    const selectedProvider = providers.find((item) => item.models.some((model) => model.isEnabled && model.modelId === defaultAgent.defaultModelId))
+    const selectedProvider = providers.find((item) => item.models.some((model) => model.isEnabled && model.modelId === chosen.defaultModelId))
       ?? providers.find((item) => item.models.some((model) => model.isEnabled))
       ?? providers[0];
     if (!selectedProvider) {
@@ -258,7 +556,7 @@ export function MessengerApp({ initialAgents, initialConversations, initialProvi
     const next: ConversationDoc = {
       _id: crypto.randomUUID(),
       userId: "",
-      agentId: defaultAgent._id,
+      agentId: chosen._id,
       title: "新对话",
       providerId: selectedProvider._id,
       overrideModelId: null,
@@ -432,97 +730,172 @@ export function MessengerApp({ initialAgents, initialConversations, initialProvi
 
   if (!defaultAgent || providers.length === 0) {
     return (
-      <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center rounded-3xl border border-dashed bg-card/70 p-8 text-center">
-        <div className="max-w-md space-y-4">
-          <div className="mx-auto grid size-14 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/20">
-            <Sparkles className="size-6" />
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight">准备你的第一个 AI 对话</h1>
-          <p className="text-sm leading-6 text-muted-foreground">
-            Web Messenger 使用你在手机端同步的 Agent、Provider 和模型配置。请先在 Messenger 中完成配置，再回到这里开始聊天。
-          </p>
+      <Empty className="min-h-[calc(100svh-3.5rem)] rounded-none">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Sparkles />
+          </EmptyMedia>
+          <EmptyTitle>准备你的第一个 AI 对话</EmptyTitle>
+          <EmptyDescription>
+            Web Messenger 使用你在手机端同步的 Agent、Provider 和模型配置。请先完成配置，再回到这里开始聊天。
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent className="flex-row justify-center">
           <Button asChild>
-            <a href="/console/account">打开账号设置</a>
+            <Link href="/console/manage">前往配置管理</Link>
           </Button>
-        </div>
-      </div>
+          <Button asChild variant="outline">
+            <Link href="/console/account">打开用户中心</Link>
+          </Button>
+        </EmptyContent>
+      </Empty>
     );
   }
 
+  const groupedMessages = selected ? groupMessages(selected.messages) : [];
+
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 w-full overflow-hidden bg-[#0d1720] text-slate-100">
-      <aside className={`${sidebarOpen ? "w-[280px]" : "w-0"} min-w-0 shrink-0 overflow-hidden border-r border-white/10 bg-[#111820] transition-[width] duration-300`}>
-        <div className="flex h-full min-w-[280px] flex-col">
-          <div className="flex items-center justify-between border-b border-white/10 px-4 py-4">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-300">Messenger</p>
-              <h1 className="mt-1 text-lg font-semibold tracking-tight">你的对话</h1>
+    <div className="flex h-[calc(100svh-3.5rem)] min-h-0 w-full overflow-hidden bg-background">
+      <aside
+        className={cn(
+          "shrink-0 overflow-hidden border-r bg-sidebar text-sidebar-foreground transition-[width] duration-300",
+          sidebarOpen ? "w-72 max-md:absolute max-md:inset-y-14 max-md:left-0 max-md:z-10 max-md:shadow-lg" : "w-0 border-r-0",
+        )}
+      >
+        <div className="flex h-full w-72 flex-col">
+          <div className="flex items-center justify-between gap-2 p-3">
+            <h1 className="px-1 text-sm font-semibold tracking-tight">对话</h1>
+            <NewConversationMenu agents={chatAgents} onSelect={startConversation} align="end">
+              <Button size="icon-sm" variant="outline" aria-label="新建对话">
+                <MessageSquarePlus />
+              </Button>
+            </NewConversationMenu>
+          </div>
+          <div className="px-3 pb-3">
+            <div className="relative">
+              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="搜索对话..."
+                className="pl-8"
+              />
             </div>
-            <Button size="icon" variant="outline" className="border-white/15 bg-white/5 text-slate-100 hover:bg-white/10" onClick={startConversation} aria-label="新建对话"><MessageSquarePlus /></Button>
           </div>
-          <div className="px-3 py-3"><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索对话..." className="h-9 border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-500" /></div>
-          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-3">
-            {filteredConversations.length === 0 ? (
-              <button type="button" onClick={startConversation} className="mx-2 mt-8 w-[calc(100%-1rem)] rounded-xl border border-dashed border-white/15 p-4 text-left text-sm text-slate-400 hover:bg-white/5">开始一个新对话 →</button>
-            ) : filteredConversations.map((conversation) => {
-              const active = conversation._id === selectedId;
-              return <div key={conversation._id} className={`group mb-1 flex min-w-0 items-center gap-1 rounded-xl px-2 py-1 ${active ? "bg-cyan-400/10" : "hover:bg-white/5"}`}>
-                <button type="button" onClick={() => setSelectedId(conversation._id)} className="min-w-0 flex-1 px-2 py-2.5 text-left"><p className={`truncate text-sm font-medium ${active ? "text-cyan-200" : "text-slate-200"}`}>{conversation.title || "新对话"}</p><p className="mt-1 text-xs text-slate-500">{relativeTime(conversation.updatedAt)}</p></button>
-                <Button variant="ghost" size="icon" className="size-8 text-slate-500 opacity-0 hover:text-red-300 group-hover:opacity-100" onClick={() => void deleteConversation(conversation._id)} aria-label="删除会话"><Trash2 className="size-3.5" /></Button>
-              </div>;
-            })}
-          </div>
-          <div className="border-t border-white/10 px-4 py-3 text-xs text-slate-500">{conversations.length} 个会话 · {providers.length} 个 Provider</div>
+          <Separator />
+          <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
+            <div className="grid gap-1 p-2">
+              {filteredConversations.length === 0 ? (
+                <NewConversationMenu agents={chatAgents} onSelect={startConversation}>
+                  <Button variant="ghost" className="justify-start text-muted-foreground">
+                    <Plus />
+                    开始一个新对话
+                  </Button>
+                </NewConversationMenu>
+              ) : (
+                filteredConversations.map((conversation) => (
+                  <ConversationItem
+                    key={conversation._id}
+                    conversation={conversation}
+                    active={conversation._id === selectedId}
+                    onSelect={() => setSelectedId(conversation._id)}
+                    onDelete={() => void deleteConversation(conversation._id)}
+                  />
+                ))
+              )}
+            </div>
+          </ScrollArea>
+          <Separator />
+          <p className="px-4 py-3 text-xs text-muted-foreground">
+            {conversations.length} 个会话 · {providers.length} 个 Provider
+          </p>
         </div>
       </aside>
 
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-[radial-gradient(circle_at_80%_0%,rgba(14,116,144,0.23),transparent_35%),#0d1720]">
-        <header className="flex min-w-0 shrink-0 items-center justify-between border-b border-white/10 bg-[#0d1720]/90 px-3 py-3 backdrop-blur-xl sm:px-5">
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex h-14 min-w-0 shrink-0 items-center justify-between gap-3 border-b px-3 sm:px-4">
           <div className="flex min-w-0 items-center gap-3">
-            <Button variant="ghost" size="icon" className="text-slate-300 hover:bg-white/10 hover:text-white" onClick={() => setSidebarOpen((open) => !open)} aria-label="切换会话栏"><PanelLeft /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setSidebarOpen((open) => !open)} aria-label="切换会话栏">
+              <PanelLeft />
+            </Button>
             <AgentAvatar agent={agent} />
-            <div className="min-w-0"><h2 className="truncate text-sm font-semibold text-white">{selected?.title ?? "Messenger"}</h2><p className="truncate text-xs text-slate-400">{agent?.name ?? "Agent"} · {availableModel ?? "未选择模型"}</p></div>
+            <div className="min-w-0">
+              <h2 className="truncate text-sm font-medium">{selected?.title ?? "Messenger"}</h2>
+              <p className="truncate text-xs text-muted-foreground">
+                {agent?.name ?? "Agent"} · {availableModel ?? "未选择模型"}
+              </p>
+            </div>
           </div>
-          <Badge variant="outline" className="hidden gap-1.5 rounded-full border-emerald-400/30 bg-emerald-400/10 text-emerald-200 sm:flex"><Check className="size-3" /> 已同步</Badge>
+          <Badge variant="secondary" className="hidden shrink-0 sm:flex">
+            <Check /> 已同步
+          </Badge>
         </header>
 
         {!selected ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center p-6"><div className="max-w-sm text-center"><div className="mx-auto mb-4 grid size-16 place-items-center rounded-3xl bg-cyan-400/15 text-cyan-200"><Bot className="size-8" /></div><h2 className="text-xl font-semibold">选择一个对话</h2><p className="mt-2 text-sm leading-6 text-slate-400">从左侧打开历史对话，或者新建一个空白会话。</p><Button className="mt-5" onClick={startConversation}>新建对话</Button></div></div>
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Bot />
+              </EmptyMedia>
+              <EmptyTitle>选择一个对话</EmptyTitle>
+              <EmptyDescription>从左侧打开历史对话，或者新建一个空白会话。</EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <NewConversationMenu agents={chatAgents} onSelect={startConversation}>
+                <Button>
+                  <MessageSquarePlus />
+                  新建对话
+                </Button>
+              </NewConversationMenu>
+            </EmptyContent>
+          </Empty>
         ) : (
           <>
-            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-6 sm:px-8">
-              <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-6">
-                {selected.messages.length === 0 ? (
-                  <div className="flex flex-1 flex-col items-center justify-center py-24 text-center"><div className="mb-5 grid size-16 place-items-center rounded-3xl bg-gradient-to-br from-cyan-400 to-blue-600 text-white shadow-xl shadow-cyan-900/30"><Sparkles className="size-7" /></div><h3 className="text-2xl font-semibold tracking-tight">今天想一起完成什么？</h3><p className="mt-2 max-w-sm text-sm leading-6 text-slate-400">提问、写作、头脑风暴，或者把一个复杂问题拆成下一步。</p></div>
-                ) : groupMessages(selected.messages).map((message) => {
-                  const parts = message.parts;
-                  const { thinking, answer } = splitThinking(message.content);
-                  const isTool = message.role === "tool";
-                  const toolParts = parts.filter((part) => part.type === "tool_call" || part.type === "tool_result");
-                  const renderedToolParts = toolParts.length > 0
-                    ? toolParts
-                    : isTool
-                      ? [{ type: "tool_result", name: "tool", output: message.content }]
-                      : [];
-                  const visibleText = isTool ? "" : answer || parts.filter((part) => part.type === "text").map((part) => part.text ?? "").join("");
-                  const isUser = message.role === "user";
-                  return <div key={message.id} className={`flex min-w-0 items-start gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
-                    {!isUser ? <AgentAvatar agent={agent} /> : null}
-                    <div className={`min-w-0 max-w-[min(88%,48rem)] ${isUser ? "order-first" : ""}`}>
-                      {thinking ? <details open={message.status === "SENDING"} className="mb-2 overflow-hidden rounded-xl border border-amber-300/20 bg-amber-200/5 text-xs text-amber-100"><summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 font-medium"><ChevronDown className="size-3" />思考过程</summary><div className="border-t border-amber-300/10 px-3 py-3 text-amber-100/75"><MarkdownMessage content={thinking} /></div></details> : null}
-                      {renderedToolParts.map((part, index) => <div key={`${message.id}-tool-${index}`} className="mb-2 rounded-xl border border-cyan-300/20 bg-cyan-300/5 p-3 text-xs text-cyan-100"><div className="mb-2 flex items-center gap-2 font-medium"><Wrench className="size-3.5" />{part.type === "tool_call" ? `调用 ${part.name ?? "工具"}` : `工具结果 · ${part.name ?? "工具"}`}</div><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/20 p-2 font-mono text-[11px] text-cyan-50/80">{part.type === "tool_call" ? part.arguments ?? "" : part.output ?? ""}</pre></div>)}
-                      {visibleText || message.status === "SENDING" ? <div className={`overflow-hidden rounded-2xl px-4 py-3 text-sm leading-7 shadow-sm ${isUser ? "rounded-br-md bg-cyan-500 text-white" : "rounded-bl-md border border-white/10 bg-[#18232d] text-slate-100"} ${message.status === "ERROR" ? "border-red-400/50 text-red-200" : ""}`}>{message.status === "SENDING" && !visibleText ? <LoaderCircle className="size-4 animate-spin" /> : isUser ? <div className="whitespace-pre-wrap break-words">{visibleText}</div> : <MarkdownMessage content={visibleText} />}{message.status === "ERROR" ? <p className="mt-2 text-xs opacity-80">发送失败 · 可重试</p> : null}</div> : null}
-                    </div>
-                    {isUser ? <UserAvatar src={userAvatarUrl} name={userName} className="mt-1 size-8 rounded-xl bg-cyan-500 text-white" /> : null}
-                  </div>;
-                })}
+            <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
+              <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
+                {groupedMessages.length === 0 ? (
+                  <Empty className="py-24">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <Sparkles />
+                      </EmptyMedia>
+                      <EmptyTitle>今天想一起完成什么？</EmptyTitle>
+                      <EmptyDescription>提问、写作、头脑风暴，或者把一个复杂问题拆成下一步。</EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                ) : (
+                  groupedMessages.map((message) => (
+                    <MessageRow key={message.id} item={message} agent={agent} userName={userName} userAvatarUrl={userAvatarUrl} />
+                  ))
+                )}
                 <div ref={bottomRef} />
               </div>
-            </div>
-            <form onSubmit={sendMessage} className="min-w-0 shrink-0 border-t border-white/10 bg-[#0d1720]/90 px-3 pb-4 pt-3 backdrop-blur-xl sm:px-8 sm:pb-5">
-              <div className="mx-auto w-full min-w-0 max-w-3xl rounded-2xl border border-white/10 bg-[#18232d] p-2 shadow-2xl shadow-black/20">
-                <Textarea ref={textareaRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="给 Messenger 发消息...（Enter 发送，Shift + Enter 换行）" className="min-h-12 w-full resize-none border-0 bg-transparent px-3 py-2 text-slate-100 shadow-none focus-visible:ring-0" disabled={isSending} />
-                <div className="flex min-w-0 items-center justify-between gap-3 px-2 pb-1"><p className="min-w-0 truncate text-[11px] text-slate-500">{availableModel ? `${availableModel} · 云端额度计费` : "请先选择模型"}</p><Button type="submit" size="sm" disabled={!draft.trim() || isSending || selected.writable === false} className="shrink-0 rounded-xl bg-cyan-500 text-white hover:bg-cyan-400">{isSending ? <LoaderCircle className="animate-spin" /> : <Send />}发送</Button></div>
+            </ScrollArea>
+            <form onSubmit={sendMessage} className="shrink-0 px-4 pb-4 sm:px-6">
+              <div className="mx-auto w-full min-w-0 max-w-3xl rounded-xl border bg-card p-2 shadow-xs focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50">
+                <Textarea
+                  ref={textareaRef}
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  placeholder="给 Messenger 发消息...（Enter 发送，Shift + Enter 换行）"
+                  className="min-h-12 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
+                  disabled={isSending}
+                />
+                <div className="flex min-w-0 items-center justify-between gap-3 px-1 pt-1">
+                  <p className="min-w-0 truncate text-xs text-muted-foreground">
+                    {availableModel ? `${availableModel} · 云端额度计费` : "请先选择模型"}
+                  </p>
+                  <Button type="submit" size="sm" disabled={!draft.trim() || isSending || selected.writable === false}>
+                    {isSending ? <LoaderCircle className="animate-spin" /> : <Send />}
+                    发送
+                  </Button>
+                </div>
               </div>
             </form>
           </>
