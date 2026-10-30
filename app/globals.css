@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "katex/dist/katex.min.css";
 
 /* 跟随系统偏好的明暗主题：保留 Tailwind 默认的 prefers-color-scheme dark 变体，
    不使用 shadcn 模板里基于 .dark class 的变体。 */
@@ -142,4 +143,76 @@ body:has([data-slot="dialog-content"]) [data-slot="table-container"] {
 }
 body:has([data-slot="dialog-content"]) [data-slot="table-container"]::-webkit-scrollbar {
     display: none;
+}
+
+/* Web Messenger rich text. Keep code and wide tables inside the bubble. */
+.markdown-body {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.markdown-body > :first-child {
+    margin-top: 0;
+}
+.markdown-body > :last-child {
+    margin-bottom: 0;
+}
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body blockquote,
+.markdown-body pre,
+.markdown-body table {
+    margin: 0.75rem 0;
+}
+.markdown-body ul {
+    list-style: disc;
+    padding-left: 1.25rem;
+}
+.markdown-body ol {
+    list-style: decimal;
+    padding-left: 1.25rem;
+}
+.markdown-body blockquote {
+    border-left: 3px solid rgb(103 232 249 / 0.5);
+    padding-left: 0.85rem;
+    color: rgb(203 213 225 / 0.8);
+}
+.markdown-body code {
+    border-radius: 0.35rem;
+    background: rgb(15 23 42 / 0.65);
+    padding: 0.12rem 0.35rem;
+    font-family: var(--font-geist-mono), ui-monospace, monospace;
+    font-size: 0.88em;
+}
+.markdown-body pre {
+    max-width: 100%;
+    overflow-x: auto;
+    border-radius: 0.75rem;
+    background: rgb(2 6 23 / 0.8);
+    padding: 0.85rem;
+}
+.markdown-body pre code {
+    display: block;
+    overflow-wrap: normal;
+    background: transparent;
+    padding: 0;
+    white-space: pre;
+}
+.markdown-body a {
+    color: rgb(103 232 249);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+.markdown-body table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+}
+.markdown-body th,
+.markdown-body td {
+    border: 1px solid rgb(148 163 184 / 0.25);
+    padding: 0.4rem 0.65rem;
+    text-align: left;
+    white-space: nowrap;
 }

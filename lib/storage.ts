@@ -492,6 +492,14 @@ export async function upsertAgent(userId: string, agent: AgentUpsertInput): Prom
     }
 
     const db = await getDb();
+    const nextRole = nextIsDefault ? null : (agent.role ?? existing?.role ?? "chat");
+    if (nextRole === "title" && existing?.role !== "title") {
+      await db.collection<AgentDoc>("agents").updateMany(
+        { userId, _id: { $ne: agent.id }, role: "title", deleted: false },
+        { $set: { role: "chat", updatedAt: agent.updatedAt, version } },
+        { session },
+      );
+    }
     await db.collection<AgentDoc>("agents").updateOne(
       { _id: agent.id, userId },
       {
@@ -517,7 +525,7 @@ export async function upsertAgent(userId: string, agent: AgentUpsertInput): Prom
           marketAgentId: agent.marketAgentId ?? null,
           marketAgentVersion: agent.marketAgentVersion ?? null,
           marketAgentRole: agent.marketAgentRole ?? null,
-          role: agent.role ?? null,
+          role: nextRole,
           toolsEnabled: agent.toolsEnabled ?? false,
           toolsFollowDefault: agent.toolsFollowDefault ?? false,
           toolsConfig: agent.toolsConfig ?? {},
