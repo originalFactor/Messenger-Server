@@ -900,6 +900,8 @@ export async function upsertProject(userId: string, project: ProjectUpsertInput)
           userId,
           name: project.name,
           workspace: project.workspace,
+          // 不带 deviceId 的写入（旧客户端）保留已记录的所有者，而不是抹掉它。
+          ...(project.deviceId ? { deviceId: project.deviceId } : {}),
           createdAt: project.createdAt,
           updatedAt: project.updatedAt,
           version,

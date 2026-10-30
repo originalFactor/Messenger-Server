@@ -31,6 +31,7 @@ Messenger `server/` 是一个独立的 Next.js (App Router) SaaS 服务，提供
 - [AI API（OpenAI 兼容代理）](#ai-apiopenai-兼容代理)
 - [实体同步 API](#实体同步-api)
 - [增量同步 API](#增量同步-api)
+- [远程项目中转 API](#远程项目中转-api)
 - [头像 API](#头像-api)
 - [Agent 市场 API](#agent-市场-api)
 - [数据模型](#数据模型)
@@ -192,6 +193,12 @@ interface SessionClaims {
 | PUT | `/api/providers/{id}` | 用户 | 新增/更新 Provider |
 | DELETE | `/api/providers/{id}` | 用户 | 软删除 Provider |
 | GET | `/api/sync` | 用户 | 拉取增量同步数据 |
+| PUT | `/api/projects/{id}` | 用户 | 创建/更新项目（含所属设备 `deviceId`） |
+| DELETE | `/api/projects/{id}` | 用户 | 软删除项目 |
+| GET | `/api/remote/events?deviceId=` | 用户 | 设备中转长连接（SSE，连接即在线） |
+| POST | `/api/remote/tool-call` | 用户 | 把工作区工具调用转发给项目所属设备 |
+| POST | `/api/remote/tool-result` | 用户 | 把工具结果转发回发起设备 |
+| POST | `/api/remote/tool-cancel` | 用户 | 通知所属设备中止工具 |
 | GET | `/api/avatars/user` | 用户 | 读取当前用户头像 |
 | PUT | `/api/avatars/user` | 用户 | 上传/替换用户头像 |
 | DELETE | `/api/avatars/user` | 用户 | 删除用户头像 |
@@ -1004,6 +1011,20 @@ Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tool
 - 响应 `200`：`{ "id": "provider-uuid", "version": 48 }`
 - 错误：`400`、`401`、`404`、`500 Unable to delete the provider.`
 
+### PUT /api/projects/{id}
+
+创建或更新项目（项目 = 命名工作区 + 它拥有的会话）。
+
+- 鉴权：用户会话
+- 请求体（严格校验，未知字段 `400`）：`{ "id", "name", "workspace", "deviceId"?, "createdAt", "updatedAt" }`
+  - `deviceId`：拥有该工作区的设备（`[A-Za-z0-9_-]{1,64}`）。工作区工具只会在这台设备上执行；该设备离线时项目对其它设备不可用。缺省/`null` 时**保留**已记录的所有者（旧客户端不会抹掉它）。
+- 响应 `200`：`{ "id": "project-uuid", "version": 49 }`
+- 错误：`400`、`401`、`500 Unable to save the project.`
+
+### DELETE /api/projects/{id}
+
+软删除项目，响应与错误同 Provider。
+
 ---
 
 ## 增量同步 API
@@ -1073,6 +1094,36 @@ Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tool
 - `400 limit must be a positive integer.`
 - `401 Unauthorized.`
 - `500 Unable to load synchronization data.`
+
+---
+
+## 远程项目中转 API
+
+账号内设备之间的交换机：每台设备持有一条 SSE 长连接，连接存在即「在线」；中转把工具调用/结果/取消按 `targetDeviceId` 转发给目标设备的连接。**载荷不落库、不解释**，也没有集合和索引。所有请求都用会话 Cookie 鉴权，并按会话所属账号隔离——永远无法向其他账号的设备投递。
+
+> **单实例限制**：在线集合保存在进程内存中（`lib/remote-hub.ts`）。多实例部署前必须换成跨进程发布订阅（如 MongoDB change stream），否则落在不同实例的设备互相看不到在线。`compose.yaml` 的拓扑是单实例。反向代理需放行长连接（服务端已发 `X-Accel-Buffering: no`，并每 15 秒发一次保活注释帧）。
+
+### GET /api/remote/events?deviceId={deviceId}
+
+设备长连接，`text/event-stream`。连接建立即登记为在线（同一设备重连会顶替旧连接），断开即离线。会话被注销后连接最迟在约 1 分钟内被服务端关闭（全部会话被删时立即关闭）。
+
+| 事件 | 数据 |
+|---|---|
+| `presence` | `{ "devices": ["id", …] }`：该账号当前在线的全部设备；建立连接时先收到一帧，之后每次变化一帧（包含自己） |
+| `toolCall` | `{ callId, fromDeviceId, targetDeviceId, projectId, conversationId, name, argumentsJson }` |
+| `toolResult` | `{ callId, targetDeviceId, output, isError }` |
+| `toolCancel` | `{ callId, targetDeviceId }` |
+
+错误：`400`（`deviceId` 缺失或非法）、`401`。
+
+### POST /api/remote/tool-call · tool-result · tool-cancel
+
+请求体即上表对应事件的 `data`（严格校验；`argumentsJson` ≤ 1,000,000 字符，`output` ≤ 4,000,000 字符），原样转发给 `targetDeviceId`。
+
+- 响应 `202`：`{ "delivered": true }`
+- `409`：目标设备不在线（核心据此把项目标为不可用）
+- `403`：仅 `tool-call`，`fromDeviceId` 不是该账号当前在线的设备
+- `400`、`401`、`413`
 
 ---
 
@@ -1519,7 +1570,7 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 - `agents`: `{ userId: 1, version: 1 }`、`{ userId: 1, deleted: 1, version: 1 }`（墓碑清理）
 - `conversations`: `{ userId: 1, version: 1 }`、`{ userId: 1, agentId: 1 }`
 - `providers`: `{ userId: 1, version: 1 }`
-- `projects`: `{ userId: 1, version: 1 }`
+- `projects`: `{ userId: 1, version: 1 }`（文档含 `deviceId`，见 `PUT /api/projects/{id}`）
 - `market_agents`: `{ deleted: 1, updatedAt: -1, _id: 1 }`、`{ ownerUserId: 1, deleted: 1 }`
 - `card_keys`: 唯一 `{ code: 1 }`、`{ status: 1, createdAt: -1, _id: 1 }`、`{ planId: 1, status: 1 }`
 - `redemptions`: `{ userId: 1, createdAt: -1, _id: 1 }`

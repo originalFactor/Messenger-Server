@@ -182,11 +182,47 @@ export const providerSchema = z.object({
   updatedAt: z.number().int().nonnegative(),
 }).strict();
 
+/** 设备 ID：客户端安装时生成的稳定随机串（目前是 UUID），只用于路由，不含个人信息。 */
+export const deviceIdSchema = z.string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9_-]+$/, "Device IDs may only contain letters, numbers, underscores, and hyphens.");
+
+// ---------------------------------------------------------------------------
+// 远程项目中转（`/api/remote/*`）：载荷只校验形状与大小，内容原样转发。
+// ---------------------------------------------------------------------------
+
+const relayCallIdSchema = z.string().min(1).max(128);
+
+export const remoteToolCallSchema = z.object({
+  callId: relayCallIdSchema,
+  fromDeviceId: deviceIdSchema,
+  targetDeviceId: deviceIdSchema,
+  projectId: entityIdSchema,
+  conversationId: entityIdSchema,
+  name: z.string().min(1).max(128),
+  argumentsJson: z.string().max(1_000_000),
+}).strict();
+
+export const remoteToolResultSchema = z.object({
+  callId: relayCallIdSchema,
+  targetDeviceId: deviceIdSchema,
+  output: z.string().max(4_000_000),
+  isError: z.boolean().default(false),
+}).strict();
+
+export const remoteToolCancelSchema = z.object({
+  callId: relayCallIdSchema,
+  targetDeviceId: deviceIdSchema,
+}).strict();
+
 export const projectSchema = z.object({
   id: entityIdSchema,
   name: z.string().trim().min(1).max(200),
   // 工作区目录绝对路径（设备相关，但随项目一起同步）。
   workspace: z.string().max(2_000),
+  // 拥有该工作区的设备。工作区工具只会在这台设备上执行；缺省/null 表示旧数据。
+  deviceId: deviceIdSchema.nullable().optional(),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
 }).strict();

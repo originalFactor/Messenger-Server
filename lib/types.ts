@@ -395,6 +395,8 @@ export interface ProjectDoc {
   name: string;
   /** 项目工作区目录（绝对路径）。 */
   workspace: string;
+  /** 拥有该工作区的设备；旧数据与未上报的客户端为 `null`/缺省。 */
+  deviceId?: string | null;
   createdAt: number;
   updatedAt: number;
   version: number;
@@ -526,6 +528,7 @@ export interface ProjectUpsertInput {
   id: string;
   name: string;
   workspace: string;
+  deviceId?: string | null;
   createdAt: number;
   updatedAt: number;
 }
