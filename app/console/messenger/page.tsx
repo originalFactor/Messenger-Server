@@ -45,6 +45,7 @@ export default async function MessengerPage() {
       initialAgents={sync.agents.filter((agent) => !agent.deleted)}
       initialConversations={sync.conversations.filter((conversation) => !conversation.deleted)}
       initialProviders={[builtinProvider, ...sync.providers.filter((provider) => !provider.deleted)]}
+      initialProjects={sync.projects.filter((project) => !project.deleted)}
       userName={user?.displayName ?? user?.email ?? "You"}
       userAvatarUrl={user?.avatarUrl ? `/api/avatars/user?v=${user.avatarVersion ?? 0}` : null}
     />
