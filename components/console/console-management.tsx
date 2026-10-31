@@ -274,6 +274,7 @@ export function ConsoleManagement({ initialAgents, initialProviders, initialProj
       toast.error("请填写有效的 Agent 名称、提示词和采样参数。");
       return;
     }
+    const previousAgent = agents.find((item) => item._id === agent.id);
     setSaving(true);
     try {
       const response = await fetch(`/api/agents/${agent.id}`, {
@@ -297,9 +298,10 @@ export function ConsoleManagement({ initialAgents, initialProviders, initialProj
           followDefaultMaxTokens: agent.followDefaultMaxTokens,
           followDefaultReasoningEffort: agent.followDefaultReasoningEffort,
           role: agent.role === "title" ? "title" : "chat",
-          toolsEnabled: false,
-          toolsFollowDefault: false,
-          toolsConfig: null,
+          // Tool settings are edited on the other clients; keep whatever is stored.
+          toolsEnabled: previousAgent?.toolsEnabled ?? false,
+          toolsFollowDefault: previousAgent?.toolsFollowDefault ?? false,
+          toolsConfig: previousAgent?.toolsConfig ?? null,
           createdAt: agent.createdAt,
           updatedAt: now(),
         }),
