@@ -17,7 +17,7 @@
  */
 
 import { toast } from "sonner";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -41,9 +41,28 @@ export function AuthForm({ mode, mailEnabled }: { mode: "login" | "register"; ma
   const [code, setCode] = useState("");
   const [sendingCode, setSendingCode] = useState(false);
 
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!cooldownUntil) return;
+    const timer = window.setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000));
+      setCooldownSeconds(remaining);
+      if (remaining === 0) window.clearInterval(timer);
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [cooldownUntil]);
+
+  function startCooldown(seconds: number) {
+    setCooldownUntil(Date.now() + seconds * 1000);
+    setCooldownSeconds(seconds);
+  }
+
   const isRegister = mode === "register";
 
   async function sendCode() {
+    if (busy || sendingCode || cooldownSeconds > 0) return;
     setError(null);
     setSendingCode(true);
     try {
@@ -52,6 +71,12 @@ export function AuthForm({ mode, mailEnabled }: { mode: "login" | "register"; ma
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
+      if (response.ok) {
+        startCooldown(60);
+      } else if (response.status === 429) {
+        const retryAfter = Number(response.headers.get("Retry-After"));
+        startCooldown(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter) : 60);
+      }
       const payload = await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok) {
         setError(payload?.error ?? "验证码发送失败，请稍后重试。");
@@ -167,8 +192,8 @@ export function AuthForm({ mode, mailEnabled }: { mode: "login" | "register"; ma
                   value={code}
                   onChange={(event) => setCode(event.target.value)}
                 />
-                <Button type="button" variant="outline" disabled={busy || sendingCode || !email.trim()} onClick={sendCode}>
-                  {sendingCode ? "发送中…" : "发送验证码"}
+                <Button type="button" variant="outline" disabled={busy || sendingCode || cooldownSeconds > 0 || !email.trim()} onClick={sendCode}>
+                  {sendingCode ? "发送中…" : cooldownSeconds > 0 ? `${cooldownSeconds} 秒后重发` : "发送验证码"}
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">验证码 10 分钟内有效，注册成功后邮箱即完成验证。</p>
