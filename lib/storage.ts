@@ -15,6 +15,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { consumeRegistrationCode } from "@/lib/auth-tokens";
 import { type ClientSession, type Db, type Filter, MongoBulkWriteError, MongoServerError } from "mongodb";
 import { renewAvatarLock, type AvatarLock } from "@/lib/avatar-locks";
 import { generateCardCode, normalizeCardCode } from "@/lib/apikeys";
@@ -132,21 +133,21 @@ export interface SaveUserResult {
  * 用户晋升为 admin，并向 system_bootstrap 写入标记文档 —— 标记的
  * 唯一索引让并发注册只产生一名管理员（后到的事务 dup-key 中止）。
  */
-export async function saveUser(user: StoredUser): Promise<SaveUserResult> {
+export async function saveUser(user: StoredUser, registrationCode?: string): Promise<SaveUserResult> {
   try {
-    return await saveUserTransaction(user);
+    return await saveUserTransaction(user, registrationCode);
   } catch (error) {
     // 标记文档 dup-key 意味着并发注册已产出管理员：整个事务回滚后
     // 以普通用户身份重试一次。邮箱冲突时重试同样 dup-key，由调用方
     // 映射为 409。
     if (isDuplicateKeyError(error)) {
-      return saveUserTransaction(user);
+      return saveUserTransaction(user, registrationCode);
     }
     throw error;
   }
 }
 
-async function saveUserTransaction(user: StoredUser): Promise<SaveUserResult> {
+async function saveUserTransaction(user: StoredUser, registrationCode?: string): Promise<SaveUserResult> {
   const client = await getMongoClient();
   const session = client.startSession();
   const defaultAgentId = randomUUID();
@@ -155,6 +156,9 @@ async function saveUserTransaction(user: StoredUser): Promise<SaveUserResult> {
   try {
     await session.withTransaction(async () => {
       const db = await getDb();
+      if (registrationCode !== undefined) {
+        await consumeRegistrationCode(user.email, registrationCode, session);
+      }
       let role: UserRole = "user";
       if (!(await hasAdminUser(session))) {
         role = "admin";

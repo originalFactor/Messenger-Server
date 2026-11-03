@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { redirect } from "next/navigation";
+import { mailEnabled } from "@/lib/mail";
 import { AuthShell } from "@/components/auth-shell";
 import { ForgotPasswordForm } from "@/components/forgot-password-form";
 
@@ -22,6 +24,7 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "找回密码" };
 
 export default function ForgotPasswordPage() {
+  if (!mailEnabled()) redirect("/login");
   return (
     <AuthShell>
       <ForgotPasswordForm />

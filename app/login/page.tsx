@@ -17,6 +17,7 @@
 import { redirect } from "next/navigation";
 import { AuthForm } from "@/components/auth-form";
 import { AuthShell } from "@/components/auth-shell";
+import { mailEnabled } from "@/lib/mail";
 import { requireUserSession } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -27,7 +28,7 @@ export default async function LoginPage() {
   }
   return (
     <AuthShell>
-      <AuthForm mode="login" />
+      <AuthForm mode="login" mailEnabled={mailEnabled()} />
     </AuthShell>
   );
 }

@@ -18,6 +18,7 @@ import { redirect } from "next/navigation";
 import { ConsoleShell } from "@/components/console/console-shell";
 import { EmailVerificationBanner } from "@/components/console/email-verification-banner";
 import { requireUserSession } from "@/lib/auth";
+import { mailEnabled } from "@/lib/mail";
 import { getUserById } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
@@ -43,7 +44,7 @@ export default async function ConsoleLayout({ children }: Readonly<{ children: R
       avatarUrl={user.avatarUrl ? `/api/avatars/user?v=${user.avatarVersion ?? 0}` : null}
       role={user.role}
     >
-      {user.emailVerifiedAt === null ? <EmailVerificationBanner email={user.email} /> : null}
+      {mailEnabled() && user.emailVerifiedAt === null ? <EmailVerificationBanner email={user.email} /> : null}
       {children}
     </ConsoleShell>
   );

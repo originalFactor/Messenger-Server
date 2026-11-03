@@ -64,7 +64,7 @@ export function EmailVerificationBanner({ email }: { email: string }) {
       <AlertTitle>邮箱尚未验证</AlertTitle>
       <AlertDescription>
         <span className="mb-2 block">
-          验证后才能在忘记密码时收到重置邮件。我们已向 {email} 发送验证链接。
+          请验证邮箱 {email}，以便在忘记密码时找回账号。点击下方按钮接收验证链接。
         </span>
         <span className="flex flex-wrap gap-2">
           <Button size="sm" onClick={resend} disabled={busy}>

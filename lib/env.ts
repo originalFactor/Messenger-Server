@@ -45,14 +45,14 @@ export function appUrl(path: string): string {
   return new URL(path, `${env.appBaseUrl().replace(/\/+$/, "")}/`).toString();
 }
 
-/** SMTP 出信配置（`SMTP_HOST` 缺失即整站不发信）。 */
+/** SMTP 出信配置（`SMTP_HOST` / `SMTP_USER` / `SMTP_PASSWORD` 缺失即整站不发信）。 */
 export interface SmtpSettings {
   host: string;
   port: number;
   /** 465 隐式 TLS；587 走 STARTTLS（nodemailer 按服务端能力升级）。 */
   secure: boolean;
-  user: string | null;
-  password: string | null;
+  user: string;
+  password: string;
   /** 信封 From，默认 `Messenger Cloud <no-reply@APP_BASE_URL 主机名>`。 */
   from: string;
 }
@@ -66,13 +66,15 @@ function appHostname(): string {
 }
 
 /**
- * 解析 SMTP 配置：未设置 `SMTP_HOST` 返回 `null`（发信功能整体关闭，
+ * 解析 SMTP 配置：SMTP 主机或凭据未完整配置时返回 `null`（发信功能整体关闭，
  * 注册与登录不受影响）。端口缺失按 587，`SMTP_SECURE` 未显式设置时
  * 465 = 隐式 TLS、其余 = STARTTLS。
  */
 export function smtpSettings(): SmtpSettings | null {
   const host = process.env.SMTP_HOST?.trim();
-  if (!host) {
+  const user = process.env.SMTP_USER?.trim();
+  const password = process.env.SMTP_PASSWORD;
+  if (!host || !user || !password?.trim()) {
     return null;
   }
   const portValue = Number(process.env.SMTP_PORT?.trim() || "587");
@@ -83,8 +85,6 @@ export function smtpSettings(): SmtpSettings | null {
     : secureFlag === "0" || secureFlag === "false"
       ? false
       : port === 465;
-  const user = process.env.SMTP_USER?.trim() || null;
-  const password = process.env.SMTP_PASSWORD?.trim() || null;
   const from = process.env.SMTP_FROM?.trim()
     || `Messenger Cloud <no-reply@${appHostname()}>`;
   return { host, port, secure, user, password, from };

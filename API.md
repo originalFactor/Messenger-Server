@@ -143,7 +143,8 @@ interface SessionClaims {
 
 | 方法 | 路径 | 鉴权 | 用途 |
 | --- | --- | --- | --- |
-| POST | `/api/auth/register` | 无 | 注册账号（首个用户晋升管理员）并签发会话，后台发送验证邮件 |
+| POST | `/api/auth/register/send-code` | 无 | SMTP 启用时发送注册验证码 |
+| POST | `/api/auth/register` | 无 | 注册账号（首个用户晋升管理员）并签发会话；SMTP 启用时要求验证码并直接验证邮箱 |
 | POST | `/api/auth/login` | 无 | 登录并签发会话 |
 | POST | `/api/auth/logout` | 无 | 注销当前用户会话 |
 | GET | `/api/auth/me` | 用户 | 获取当前用户信息（含角色/额度/API Key/邮箱验证状态） |
@@ -220,17 +221,22 @@ interface SessionClaims {
 
 ## 认证 API
 
+### POST /api/auth/register/send-code
+
+SMTP 主机和凭据均配置时启用（否则 `503`）。无需登录，请求体 `{ "email": "user@example.com" }`（trim、转小写），发送 6 位注册验证码，成功返回 `{ "success": true }`。验证码绑定邮箱和用途，10 分钟内有效，重发使旧码失效。发送失败返回 `503`，非法邮箱返回 `400`。限流：IP 10 次/小时、邮箱 3 次/小时及 1 次/分钟（固定窗口），超限返回 `429`。
+
 ### POST /api/auth/register
 
 注册新账号，自动签发用户会话，并在同一 MongoDB 事务中创建默认 Agent（名为「默认 Agent」、`systemPrompt: "You are a helpful assistant."`、`temperature: 0.7`、`topP: 1`、`isDefault: true`）。
 
 - 鉴权：无
-- 请求体：`credentialsSchema`
+- 请求体：`registrationSchema`
 
 ```jsonc
 {
   "email": "user@example.com",   // 会被 trim + 转小写 + email 校验
-  "password": "至少8位"           // 8–200 字符
+  "password": "至少8位",          // 8–200 字符
+  "code": "123456"                // SMTP 启用时必填；未启用时省略
 }
 ```
 
@@ -242,7 +248,7 @@ interface SessionClaims {
     "id": "uuid",
     "email": "user@example.com",
     "displayName": null,          // 昵称未设置，展示端回落到邮箱
-    "emailVerifiedAt": null,     // 点开验证邮件后才变成验证时刻
+    "emailVerifiedAt": null,     // SMTP 启用时为注册验证时刻；未启用时 null
     "role": "user",              // 全站无管理员时为 "admin"（首个注册用户）
     "aiApiKey": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "quotaBalance": 0,           // 新账号没有套餐条目
@@ -260,8 +266,10 @@ interface SessionClaims {
 
 - 错误：
   - `400 Invalid registration payload.`
+  - `400 A 6-digit email verification code is required.`
+  - `400 The verification code is invalid or has expired.`
   - `409 An account with this email already exists.`（先查后写，捕获唯一键冲突兜底）
-  - `429 Too many attempts. Try again later.`（限流：同 IP 10 次/小时；响应带 `Retry-After`）
+  - `429 Too many attempts. Try again later.`（限流：同 IP 10 次/小时；SMTP 启用时同邮箱 10 次/小时；响应带 `Retry-After`）
 
 ### POST /api/auth/login
 
@@ -461,7 +469,7 @@ interface SessionClaims {
 
 ## 找回密码 API
 
-SMTP 未配置时整站不出信：注册照常成功（账号保持未验证），找回密码接口返回 `503` 而不是假装已发送。
+SMTP_HOST、SMTP_USER、SMTP_PASSWORD 任一未配置时整站不出信：注册无需验证码（账号保持未验证），网页隐藏注册验证码、找回密码入口和后验证横幅；找回密码接口返回 `503` 而不是假装已发送。
 
 ### POST /api/auth/forgot-password
 

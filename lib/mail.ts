@@ -21,7 +21,7 @@ import { createLogger } from "@/lib/runtime-logs";
 /**
  * 出信（SMTP）。
  *
- * 未配置 `SMTP_HOST` 时整站不发信：注册照常成功（只是不动邮箱验证状态），
+ * SMTP 主机或凭据未完整配置时整站不发信：注册照常成功（只是不动邮箱验证状态），
  * 找回密码接口直接返回 503 而不是静默吞掉——让「邮件永远收不到」可见。
  *
  * transporter 缓存在 globalThis 上：Next.js 的开发热重载会重新求值模块，
@@ -50,9 +50,7 @@ function getTransport(): Transporter {
       host: settings.host,
       port: settings.port,
       secure: settings.secure,
-      auth: settings.user
-        ? { user: settings.user, pass: settings.password ?? "" }
-        : undefined,
+      auth: { user: settings.user, pass: settings.password },
       // 自建 SMTP 常带自签证书；不在这里放宽校验，交给运维配置可信 CA。
       connectionTimeout: 10_000,
       greetingTimeout: 10_000,
@@ -222,4 +220,24 @@ export async function sendVerificationEmail(email: string, token: string, expire
 /** 发送找回密码邮件；未配置 SMTP 或投递失败时返回 `false`。 */
 export async function sendPasswordResetEmail(email: string, token: string, expiresInMinutes: number): Promise<boolean> {
   return sendMail(passwordResetEmail(email, token, expiresInMinutes));
+}
+
+/** 注册前验证邮箱；与存量用户的验证链接分开。 */
+export function registrationCodeEmail(email: string, code: string, expiresInMinutes: number): MailContent {
+  return {
+    to: email,
+    subject: "你的 Messenger Cloud 注册验证码",
+    text: `注册验证码：${code}\n验证码 ${expiresInMinutes} 分钟内有效，且只能使用一次。若非本人操作，请忽略本邮件。`,
+    html: layout({
+      heading: "验证邮箱并注册",
+      paragraphs: ["请在注册页输入上面的验证码完成注册。", `验证码 ${expiresInMinutes} 分钟内有效，且只能使用一次。`],
+      code,
+      action: { label: "前往注册", href: appUrl("/register") },
+      note: "如果这不是你本人的操作，忽略本邮件即可。",
+    }),
+  };
+}
+
+export async function sendRegistrationCode(email: string, code: string, expiresInMinutes: number): Promise<boolean> {
+  return sendMail(registrationCodeEmail(email, code, expiresInMinutes));
 }

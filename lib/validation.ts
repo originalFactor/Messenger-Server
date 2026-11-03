@@ -26,6 +26,10 @@ export const credentialsSchema = z.object({
   password: z.string().min(8).max(200),
 });
 
+export const registrationSchema = credentialsSchema.extend({
+  code: z.string().trim().regex(/^\d{6}$/).optional(),
+});
+
 export const passwordChangeSchema = z.object({
   currentPassword: z.string().min(1).max(200),
   newPassword: z.string().min(8).max(200),

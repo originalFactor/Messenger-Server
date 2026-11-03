@@ -15,7 +15,7 @@
  */
 
 import { createHash, randomBytes, randomInt } from "node:crypto";
-import { MongoServerError } from "mongodb";
+import { MongoServerError, type ClientSession } from "mongodb";
 import { getDb } from "@/lib/mongo";
 
 /**
@@ -29,9 +29,9 @@ import { getDb } from "@/lib/mongo";
  * 用户点开旧邮件也不会成功。过期由 TTL 索引（`expiresAt`）兜底回收。
  */
 
-export type AuthTokenPurpose = "verify_email" | "reset_password" | "change_email";
+export type AuthTokenPurpose = "verify_email" | "reset_password" | "change_email" | "register_email";
 
-/** 注册验证邮件的有效期。 */
+/** 存量未验证用户的验证链接有效期。 */
 export const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 /** 找回密码邮件的有效期（短一些：它能直接改密码）。 */
 export const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
@@ -183,4 +183,51 @@ export async function consumeEmailChangeCode(
   // 一码一用：同一用户残留的其它改绑码一并作废。
   await tokens.deleteMany({ userId, purpose: "change_email" });
   return true;
+}
+
+export const REGISTRATION_CODE_TTL_MS = 10 * 60 * 1000;
+
+interface RegistrationCodeDoc extends AuthTokenDoc {
+  codeHash: string;
+}
+
+export class InvalidRegistrationCodeError extends Error {
+  constructor() {
+    super("The verification code is invalid or has expired.");
+  }
+}
+
+/** 每个邮箱只保留一个注册码；摘要包含用途、邮箱和验证码，避免跨邮箱复用。 */
+export async function issueRegistrationCode(email: string): Promise<string> {
+  const db = await getDb();
+  const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+  const now = Date.now();
+  await db.collection<RegistrationCodeDoc>("auth_tokens").replaceOne(
+    { _id: hashToken(`register_email:${email}`) },
+    {
+      userId: `registration:${email}`,
+      email,
+      purpose: "register_email",
+      codeHash: hashToken(`register_email:${email}:${code}`),
+      createdAt: now,
+      expiresAt: new Date(now + REGISTRATION_CODE_TTL_MS),
+    },
+    { upsert: true },
+  );
+  return code;
+}
+
+/** 与创建用户共用事务：注册失败回滚后仍可用原码重试。 */
+export async function consumeRegistrationCode(email: string, code: string, session: ClientSession): Promise<void> {
+  const db = await getDb();
+  const doc = await db.collection<RegistrationCodeDoc>("auth_tokens").findOneAndDelete({
+    _id: hashToken(`register_email:${email}`),
+    email,
+    purpose: "register_email",
+    codeHash: hashToken(`register_email:${email}:${code}`),
+    expiresAt: { $gt: new Date() },
+  }, { session });
+  if (!doc) {
+    throw new InvalidRegistrationCodeError();
+  }
 }

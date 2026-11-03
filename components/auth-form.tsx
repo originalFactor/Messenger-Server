@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { toast } from "sonner";
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -30,15 +31,39 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export function AuthForm({ mode }: { mode: "login" | "register" }) {
+export function AuthForm({ mode, mailEnabled }: { mode: "login" | "register"; mailEnabled: boolean }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [code, setCode] = useState("");
+  const [sendingCode, setSendingCode] = useState(false);
 
   const isRegister = mode === "register";
+
+  async function sendCode() {
+    setError(null);
+    setSendingCode(true);
+    try {
+      const response = await fetch("/api/auth/register/send-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      if (!response.ok) {
+        setError(payload?.error ?? "验证码发送失败，请稍后重试。");
+        return;
+      }
+      toast.success("验证码已发送，10 分钟内有效，请查收。重发后旧码失效。");
+    } catch {
+      setError("网络错误，请稍后重试。");
+    } finally {
+      setSendingCode(false);
+    }
+  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -52,7 +77,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
       const response = await fetch(`/api/auth/${mode}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, ...(isRegister && mailEnabled ? { code } : {}) }),
       });
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string } | null;
@@ -87,7 +112,8 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
               autoComplete="email"
               placeholder="you@example.com"
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => { setEmail(event.target.value); setCode(""); }}
+              disabled={busy || sendingCode}
             />
           </div>
           <div className="grid gap-2">
@@ -102,14 +128,14 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
-            {isRegister ? null : (
+            {!isRegister && mailEnabled ? (
               <Link
                 className="justify-self-end text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                 href="/forgot-password"
               >
                 忘记密码？
               </Link>
-            )}
+            ) : null}
           </div>
           {isRegister ? (
             <div className="grid gap-2">
@@ -126,8 +152,30 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
               />
             </div>
           ) : null}
+          {isRegister && mailEnabled ? (
+            <div className="grid gap-2">
+              <Label htmlFor="code">邮箱验证码</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="code"
+                  required
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  placeholder="6 位验证码"
+                  value={code}
+                  onChange={(event) => setCode(event.target.value)}
+                />
+                <Button type="button" variant="outline" disabled={busy || sendingCode || !email.trim()} onClick={sendCode}>
+                  {sendingCode ? "发送中…" : "发送验证码"}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">验证码 10 分钟内有效，注册成功后邮箱即完成验证。</p>
+            </div>
+          ) : null}
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
-          <Button type="submit" disabled={busy}>
+          <Button type="submit" disabled={busy || sendingCode}>
             {busy ? "请稍候…" : isRegister ? "注册" : "登录"}
           </Button>
         </form>

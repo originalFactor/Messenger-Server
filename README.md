@@ -8,7 +8,7 @@
 - Shared web console (`/console`) for users and administrators; the first registered user is automatically promoted to admin
 - Web UI built with Tailwind CSS v4 + shadcn/ui (radix base, nova preset) and Geist fonts
 - Email/password accounts with JWT cookie sessions backed by a server-side `user_sessions` collection (30-day expiry, multi-device); each session doubles as a sync-progress ledger that lets the server purge entity tombstones no client still needs
-- SMTP e-mail flows: registration verification links, self-service password reset, and e-mail rebinding with a 6-digit code (single-use, hashed-at-rest tokens in `auth_tokens`); all degrade gracefully when SMTP is not configured
+- SMTP e-mail flows: registration verification codes and legacy verification links, self-service password reset, and e-mail rebinding with a 6-digit code (single-use, hashed-at-rest tokens in `auth_tokens`); all degrade gracefully when SMTP is not configured
 - User center (`/console/account`): nickname, avatar upload (the same blob the Messenger app reads), and e-mail rebinding
 - MongoDB-backed versioned entity synchronization with per-user monotonic watermarks and soft-delete tombstones
 - Card-key (卡密) plan system: admin-defined plans, batch card issuance, user redemption with quota and validity extension
@@ -29,15 +29,15 @@ Copy `.env.example` to `.env.local` for local development.
 
 ### SMTP (e-mail verification, password reset, and e-mail rebinding)
 
-Outgoing mail is entirely optional. Without `SMTP_HOST` the server sends nothing: registration still succeeds, accounts stay `emailVerifiedAt: null`, the console shows a resend reminder, and `POST /api/auth/forgot-password` answers `503 Email delivery is not configured on this server.` instead of pretending a message was sent.
+Outgoing mail is entirely optional. Mail is enabled only when `SMTP_HOST`, `SMTP_USER` and `SMTP_PASSWORD` are all configured. Otherwise the server sends nothing: registration succeeds without a code, accounts stay `emailVerifiedAt: null`, registration code controls, password recovery links and the console verification banner are hidden, and `POST /api/auth/forgot-password` answers `503 Email delivery is not configured on this server.` instead of pretending a message was sent.
 
-- `SMTP_HOST`: SMTP relay hostname. Set it to enable verification and reset mail.
+- `SMTP_HOST`: SMTP relay hostname; requires credentials below to enable mail.
 - `SMTP_PORT`: relay port; defaults to `587`.
 - `SMTP_SECURE`: `1`/`true` for implicit TLS, `0`/`false` for plain or STARTTLS. Defaults to `true` only for port `465`.
-- `SMTP_USER` / `SMTP_PASSWORD`: optional credentials for authenticated relays.
+- `SMTP_USER` / `SMTP_PASSWORD`: required credentials to activate mail features.
 - `SMTP_FROM`: envelope sender; defaults to `Messenger Cloud <no-reply@APP_BASE_URL hostname>`.
 
-Verification links (`/verify-email?token=…`) are valid for 24 hours; reset links (`/reset-password?token=…`) for 30 minutes and only once; the e-mail rebinding code (`/console/account`) is six digits and valid for 10 minutes. Only SHA-256 digests of the tokens are stored, so a database dump cannot be replayed. Deliverability depends on the relay accepting your `SMTP_FROM` domain — an unauthenticated sender that does not match the relay's allowed domain will be rejected or spam-filtered.
+When mail is enabled, registration requires a six-digit code sent through `POST /api/auth/register/send-code`; it expires after 10 minutes and is consumed atomically with account creation. Successful registration sets `emailVerifiedAt` immediately. Existing unverified users keep the verification-link flow. Verification links (`/verify-email?token=…`) are valid for 24 hours; reset links (`/reset-password?token=…`) for 30 minutes and only once; the e-mail rebinding code (`/console/account`) is six digits and valid for 10 minutes. Only SHA-256 digests of the tokens are stored, so a database dump cannot be replayed. Deliverability depends on the relay accepting your `SMTP_FROM` domain — an unauthenticated sender that does not match the relay's allowed domain will be rejected or spam-filtered.
 
 ### S3-compatible storage (avatars)
 
