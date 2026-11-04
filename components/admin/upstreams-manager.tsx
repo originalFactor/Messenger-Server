@@ -1503,8 +1503,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       <BaseModelPicker />
 
       <Dialog open={showForm} onOpenChange={setFormOpen}>
-        <DialogContent className="max-h-[calc(100vh-6rem)] overflow-y-auto sm:max-w-5xl">
-          <DialogHeader className="pr-8">
+        <DialogContent className="flex max-h-[calc(100dvh-6rem)] flex-col overflow-hidden sm:max-w-5xl">
+          <DialogHeader className="shrink-0 pr-8">
             <DialogTitle>{editingId ? "编辑上游" : "新增上游"}</DialogTitle>
             <DialogDescription>
               填写模型服务的接口地址，例如{" "}
@@ -1514,7 +1514,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
               优先级数字越小越优先，同一模型有多个来源时会自动按优先级切换。
             </DialogDescription>
           </DialogHeader>
-          <form id="upstream-form" className="grid gap-4" onSubmit={submit}>
+          <form id="upstream-form" className="-mx-4 grid min-h-0 flex-1 gap-4 overflow-y-auto overscroll-contain px-4" onSubmit={submit}>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="grid gap-2">
                 <Label htmlFor="upstream-name">名称</Label>
@@ -1808,7 +1808,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
 
             {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
           </form>
-          <DialogFooter>
+          <DialogFooter className="relative z-20 shrink-0">
             <Button type="submit" form="upstream-form" disabled={modelActionsBusy}>
               {editingId ? "保存" : "创建"}
             </Button>
