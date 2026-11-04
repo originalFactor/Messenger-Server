@@ -46,6 +46,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { ConversationSettings } from "@/components/messenger/conversation-settings";
 import { ConfigurationManagement } from "@/components/messenger/configuration-management";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { PlazaModel } from "@/lib/model-plaza";
@@ -485,6 +486,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
   const [agents, setAgents] = useState(initialAgents);
   const [providers, setProviders] = useState(initialProviders);
   const [projects, setProjects] = useState(initialProjects);
+  const [conversationSettingsOpen, setConversationSettingsOpen] = useState(false);
   const [managementOpen, setManagementOpen] = useState(initialManagementOpen);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const updateConfiguration = useCallback((configuration: { agents: AgentDoc[]; providers: ProviderDoc[]; projects: ProjectDoc[] }) => {
@@ -520,7 +522,15 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
       }
     : titleAgentSource;
   const selected = conversations.find((conversation) => conversation._id === selectedId) ?? null;
-  const agent = agents.find((item) => item._id === selected?.agentId) ?? defaultAgent;
+  const sourceAgent = agents.find((item) => item._id === selected?.agentId) ?? defaultAgent;
+  const agent = sourceAgent && defaultAgent && !sourceAgent.isDefault ? {
+    ...sourceAgent,
+    defaultModelId: sourceAgent.followDefaultModel ? defaultAgent.defaultModelId : sourceAgent.defaultModelId,
+    temperature: sourceAgent.followDefaultTemperature ? defaultAgent.temperature : sourceAgent.temperature,
+    topP: sourceAgent.followDefaultTopP ? defaultAgent.topP : sourceAgent.topP,
+    maxTokens: sourceAgent.followDefaultMaxTokens ? defaultAgent.maxTokens : sourceAgent.maxTokens,
+    reasoningEffort: sourceAgent.followDefaultReasoningEffort ? defaultAgent.reasoningEffort : sourceAgent.reasoningEffort,
+  } : sourceAgent;
   const provider = providers.find((item) => item._id === selected?.providerId) ?? providers[0];
   const availableModel = selected?.overrideModelId ?? agent?.defaultModelId ?? provider?.models.find((model) => model.isEnabled)?.modelId ?? null;
   const project = selected?.projectId ? projects.find((item) => item._id === selected.projectId) : undefined;
@@ -745,6 +755,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
             temperature: selected.overrideTemperature ?? agent.temperature,
             top_p: selected.overrideTopP ?? agent.topP,
             max_tokens: selected.overrideMaxTokens ?? agent.maxTokens ?? undefined,
+            reasoning_effort: selected.overrideReasoningEffort ?? agent.reasoningEffort ?? undefined,
           }),
         });
         if (!response.ok) {
@@ -957,6 +968,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <Button variant="ghost" size="icon" disabled={!selected || isSending} onClick={() => setConversationSettingsOpen(true)} aria-label="对话设置"><SlidersHorizontal /></Button>
             {selected?.projectId ? (
               <Badge variant={projectBlock ? "outline" : "secondary"} className="max-w-48">
                 <Folder />
@@ -1065,6 +1077,12 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
           </>
         )}
       </main>
+      {conversationSettingsOpen && selected ? (
+        <ConversationSettings key={selected._id} conversation={selected} providers={providers} onClose={() => setConversationSettingsOpen(false)} onSave={async (next) => {
+          await saveConversation(next);
+          updateConversation(next);
+        }} />
+      ) : null}
       <Dialog open={managementOpen} onOpenChange={setManagementOpen}>
         <DialogContent className="flex h-[calc(100dvh-2rem)] flex-col sm:max-w-5xl">
           <DialogHeader className="shrink-0">
