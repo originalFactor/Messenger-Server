@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Activity, ArrowDownToLine, Plus, RefreshCw } from "lucide-react";
+import { Activity, ArrowDownToLine, ChevronsUpDown, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,7 +55,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatPeakWindows, parsePeakWindows } from "@/lib/pricing";
 import { catalogModelDefault, rankCatalogModels } from "@/lib/model-rates";
 import type { UpstreamDoc, UpstreamModelMeta, UpstreamModelPrice } from "@/lib/types";
@@ -298,71 +299,91 @@ function ModelEditor({
 
         <div className="grid gap-4">
           <div className="grid min-w-0 gap-2 rounded-lg border p-3">
-            <Label className="text-xs">pi-catalog 目标模型</Label>
-            <p className="break-all font-mono text-xs">
-              {catalogModelId || "自动匹配"}
-            </p>
+            <Label htmlFor="catalog-model-target" className="text-xs">pi-catalog 目标模型</Label>
+            <Popover
+              modal
+              open={choosingCatalog}
+              onOpenChange={(next) => {
+                setChoosingCatalog(next);
+                if (next) {
+                  setCatalogSearch("");
+                  setCatalogLimit(50);
+                }
+              }}
+            >
+              <PopoverTrigger asChild>
+                <Button
+                  id="catalog-model-target"
+                  type="button"
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={choosingCatalog}
+                  className="w-full min-w-0 justify-between font-mono text-xs"
+                >
+                  <span className="truncate">{catalogModelId || "自动匹配"}</span>
+                  <ChevronsUpDown className="ml-2 size-4 shrink-0 text-muted-foreground" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
+                <Command shouldFilter={false}>
+                  <CommandInput
+                    aria-label="搜索 pi-catalog 模型"
+                    placeholder="搜索模型 ID 或供应商…"
+                    value={catalogSearch}
+                    onValueChange={(value) => {
+                      setCatalogSearch(value);
+                      setCatalogLimit(50);
+                    }}
+                  />
+                  <CommandList className="max-h-64">
+                    <CommandGroup>
+                      <CommandItem
+                        value="__auto__"
+                        data-checked={!catalogModelId}
+                        onSelect={() => {
+                          onChange({ catalogModelId: "" });
+                          setChoosingCatalog(false);
+                        }}
+                      >
+                        自动匹配（恢复默认）
+                      </CommandItem>
+                    </CommandGroup>
+                    <CommandGroup heading={`${catalogResults.length} 个结果 · 按匹配度排序`}>
+                      {catalogResults.slice(0, catalogLimit).map((id) => (
+                        <CommandItem
+                          key={id}
+                          value={id}
+                          data-checked={id === catalogModelId}
+                          className="font-mono text-xs"
+                          onSelect={() => {
+                            onChange({ catalogModelId: id });
+                            setChoosingCatalog(false);
+                          }}
+                        >
+                          <span className="min-w-0 break-all">{id}</span>
+                        </CommandItem>
+                      ))}
+                      {catalogResults.length > catalogLimit ? (
+                        <CommandItem value="__more__" onSelect={() => setCatalogLimit((limit) => limit + 50)}>
+                          显示更多
+                        </CommandItem>
+                      ) : null}
+                    </CommandGroup>
+                    {catalogResults.length === 0 ? (
+                      <p className="p-3 text-xs text-muted-foreground" role="status">
+                        {Object.keys(catalog).length === 0 ? "目录尚未加载，请先更新元数据。" : "没有找到匹配的模型。"}
+                      </p>
+                    ) : null}
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
             {catalogModelId && !Object.hasOwn(catalog, catalogModelId) ? (
               <p className="text-xs text-destructive">当前目录中未找到此目标，请更新元数据或重新选择。</p>
             ) : null}
             <p className="text-[10px] text-muted-foreground">
               用于默认倍率、长上下文阶梯和峰谷配置；自定义覆盖和上游报价仍优先。修改后需保存上游。
             </p>
-            <div className="flex gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => setChoosingCatalog((value) => !value)}>
-                {choosingCatalog ? "收起选择" : "选择目标模型"}
-              </Button>
-              {catalogModelId ? (
-                <Button type="button" variant="ghost" size="sm" onClick={() => onChange({ catalogModelId: "" })}>
-                  恢复自动匹配
-                </Button>
-              ) : null}
-            </div>
-            {choosingCatalog ? (
-              <div className="grid min-w-0 gap-2">
-                <Input
-                  aria-label="搜索 pi-catalog 模型"
-                  placeholder="搜索模型 ID 或供应商…"
-                  value={catalogSearch}
-                  onChange={(event) => {
-                    setCatalogSearch(event.target.value);
-                    setCatalogLimit(50);
-                  }}
-                />
-                <p className="text-[10px] text-muted-foreground" aria-live="polite">
-                  {catalogResults.length} 个结果，按与当前模型的匹配度排序
-                </p>
-                <ScrollArea className="h-52 rounded-md border [&_[data-slot=scroll-area-viewport]>div]:!block">
-                  <div className="grid min-w-0 gap-1 p-1">
-                    {catalogResults.slice(0, catalogLimit).map((id) => (
-                      <Button
-                        key={id}
-                        type="button"
-                        variant={id === catalogModelId ? "secondary" : "ghost"}
-                        className="h-auto min-h-8 w-full min-w-0 justify-start py-2 text-left font-mono text-xs"
-                        aria-pressed={id === catalogModelId}
-                        onClick={() => {
-                          onChange({ catalogModelId: id });
-                          setChoosingCatalog(false);
-                        }}
-                      >
-                        <span className="break-all whitespace-normal">{id}</span>
-                      </Button>
-                    ))}
-                    {catalogResults.length === 0 ? (
-                      <p className="p-3 text-xs text-muted-foreground">
-                        {Object.keys(catalog).length === 0 ? "目录尚未加载，请先更新元数据。" : "没有找到匹配的模型。"}
-                      </p>
-                    ) : null}
-                    {catalogResults.length > catalogLimit ? (
-                      <Button type="button" variant="ghost" size="sm" onClick={() => setCatalogLimit((limit) => limit + 50)}>
-                        显示更多
-                      </Button>
-                    ) : null}
-                  </div>
-                </ScrollArea>
-              </div>
-            ) : null}
           </div>
 
           <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
