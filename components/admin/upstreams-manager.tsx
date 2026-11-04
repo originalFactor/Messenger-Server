@@ -776,6 +776,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   /** 表中保留但停用的模型：不写入 models，仍在表格中显示，可随时重新启用。 */
   const [disabledModels, setDisabledModels] = useState<string[]>([]);
   const [manualModel, setManualModel] = useState("");
+  const [modelSearch, setModelSearch] = useState("");
+  const [unconfiguredOnly, setUnconfiguredOnly] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -838,6 +840,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setDiscoveredModels([]);
     setDisabledModels([]);
     setManualModel("");
+    setModelSearch("");
+    setUnconfiguredOnly(false);
     setEditingModelMeta({});
     setMetaDrafts({});
     setModelPrices({});
@@ -866,6 +870,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setDiscoveredModels([...upstream.models].sort((a, b) => a.localeCompare(b)));
     setDisabledModels([...(upstream.disabledModels ?? [])].sort((a, b) => a.localeCompare(b)));
     setManualModel("");
+    setModelSearch("");
+    setUnconfiguredOnly(false);
     setEditingModelMeta(upstream.modelMeta ?? {});
     setMetaDrafts({});
     setModelPrices(upstream.modelPrices ?? {});
@@ -913,7 +919,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   }
 
   function disableCheckedModels() {
-    const checked = new Set(checkedModels);
+    const checked = new Set(visibleCheckedModels);
     setSelectedModels((models) => models.filter((id) => !checked.has(id)));
     setDisabledModels((models) => [...new Set([...models, ...checked])]);
     toast.success(`已停用 ${checked.size} 个模型，保存上游后生效。`);
@@ -948,6 +954,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       selected.includes(modelId) ? selected : [...selected, modelId].sort((a, b) => a.localeCompare(b)),
     );
     setManualModel("");
+    setModelSearch("");
+    setUnconfiguredOnly(false);
   }
 
   async function fetchFormModels() {
@@ -1087,6 +1095,13 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
 
   function rowCatalogModelId(modelId: string): string {
     return metaDrafts[modelId]?.catalogModelId ?? editingModelMeta[modelId]?.catalogModelId ?? "";
+  }
+
+  function rowDisplayName(modelId: string): string {
+    return resolveModelCapabilities(modelId, catalogCapabilities, {
+      catalogModelId: rowCatalogModelId(modelId),
+      displayName: (metaDrafts[modelId]?.displayName ?? editingModelMeta[modelId]?.displayName)?.trim() || null,
+    }).displayName ?? modelId;
   }
 
   function rowUnconfigured(modelId: string): boolean {
@@ -1527,7 +1542,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       setFormError("请先填写 Base URL。");
       return;
     }
-    const ids = [...checkedModels];
+    const ids = [...visibleCheckedModels];
     const controller = new AbortController();
     batchTestController.current = controller;
     setBatchTestProgress({ completed: 0, total: ids.length });
@@ -1559,9 +1574,22 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
    */
   const tableModelIds = [...new Set([...discoveredModels, ...selectedModels, ...disabledModels])];
   const sortedDiscovered = [...tableModelIds].sort((a, b) => a.localeCompare(b));
+  const rowFacts = new Map(sortedDiscovered.map((modelId) => [modelId, {
+    displayName: rowDisplayName(modelId),
+    unconfigured: rowUnconfigured(modelId),
+  }] as const));
   const checkedSet = new Set(checkedModels);
-  const checkedCount = tableModelIds.filter((id) => checkedSet.has(id)).length;
-  const allChecked = tableModelIds.length > 0 && checkedCount === tableModelIds.length;
+  const searchTerms = modelSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const visibleModelIds = sortedDiscovered.filter((modelId) => {
+    if (unconfiguredOnly && !rowFacts.get(modelId)?.unconfigured) return false;
+    const text = `${modelId} ${rowFacts.get(modelId)?.displayName}`.toLowerCase();
+    return searchTerms.every((term) => text.includes(term));
+  });
+  const unconfiguredCount = [...rowFacts.values()].filter((row) => row.unconfigured).length;
+  const visibleCheckedModels = visibleModelIds.filter((id) => checkedSet.has(id));
+  const checkedCount = visibleCheckedModels.length;
+  const hiddenCheckedCount = tableModelIds.filter((id) => checkedSet.has(id)).length - checkedCount;
+  const allChecked = visibleModelIds.length > 0 && checkedCount === visibleModelIds.length;
   const modelActionsBusy = busy || testingModel !== null || batchTestProgress !== null;
   return (
     <div className="grid gap-4">
@@ -1709,18 +1737,25 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
             </div>
 
             <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <Input aria-label="搜索模型 ID 或显示名" placeholder="搜索模型 ID 或显示名…" className="h-8 min-w-40 flex-1 text-xs" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} />
+                <Button type="button" variant={unconfiguredOnly ? "secondary" : "outline"} size="sm" aria-pressed={unconfiguredOnly} disabled={!catalogLoaded} onClick={() => setUnconfiguredOnly((value) => !value)}>仅看未配置（{unconfiguredCount}）</Button>
+                {modelSearch || unconfiguredOnly ? <Button type="button" variant="ghost" size="sm" onClick={() => { setModelSearch(""); setUnconfiguredOnly(false); }}>清除筛选</Button> : null}
+                <span className="text-xs text-muted-foreground">显示 {visibleModelIds.length} / {tableModelIds.length}</span>
+              </div>
               {tableModelIds.length > 0 ? (
                 <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-lg border bg-popover p-2">
-                  <span className="text-xs text-muted-foreground">已选 {checkedCount} / {tableModelIds.length}</span>
+                  <span className="text-xs text-muted-foreground">当前结果已选 {checkedCount} / {visibleModelIds.length}</span>
+                  {hiddenCheckedCount > 0 ? <span className="text-xs text-muted-foreground">筛选外已选 {hiddenCheckedCount}（不参与本次批量操作）</span> : null}
                   <Button type="button" variant="outline" size="sm" disabled={modelActionsBusy || checkedCount === 0}
                     onClick={() => void testCheckedModels()}>批量测试</Button>
                   <Button type="button" variant="outline" size="sm" disabled={modelActionsBusy || checkedCount === 0}
                     onClick={disableCheckedModels}>批量停用</Button>
                   <Button type="button" variant="outline" size="sm" disabled={modelActionsBusy || checkedCount === 0}
-                    onClick={() => setBulkEditingModels([...checkedModels])}>批量编辑</Button>
+                    onClick={() => setBulkEditingModels([...visibleCheckedModels])}>批量编辑</Button>
                   <Button type="button" variant="destructive" size="sm" disabled={modelActionsBusy || checkedCount === 0}
-                    onClick={() => setPendingDeleteModels([...checkedModels])}>批量删除</Button>
-                  <Button type="button" variant="ghost" size="sm" disabled={modelActionsBusy || checkedCount === 0}
+                    onClick={() => setPendingDeleteModels([...visibleCheckedModels])}>批量删除</Button>
+                  <Button type="button" variant="ghost" size="sm" disabled={modelActionsBusy || checkedCount + hiddenCheckedCount === 0}
                     onClick={() => setCheckedModels([])}>取消选择</Button>
                   {batchTestProgress ? (
                     <>
@@ -1738,9 +1773,9 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                     <TableHeader>
                       <TableRow>
                         <TableHead className="w-10">
-                          <Checkbox aria-label="全选模型用于批量操作" disabled={modelActionsBusy}
+                          <Checkbox aria-label="全选当前筛选结果用于批量操作" disabled={modelActionsBusy || visibleModelIds.length === 0}
                             checked={allChecked ? true : checkedCount > 0 ? "indeterminate" : false}
-                            onCheckedChange={(checked) => setCheckedModels(checked === true ? [...tableModelIds] : [])} />
+                            onCheckedChange={(checked) => setCheckedModels((current) => checked === true ? [...new Set([...current, ...visibleModelIds])] : current.filter((id) => !visibleModelIds.includes(id)))} />
                         </TableHead>
                         <TableHead>模型 ID</TableHead>
                         <TableHead>显示名</TableHead>
@@ -1749,11 +1784,9 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {sortedDiscovered.map((modelId) => {
-                        const displayName = resolveModelCapabilities(modelId, catalogCapabilities, {
-                          catalogModelId: rowCatalogModelId(modelId),
-                          displayName: (metaDrafts[modelId]?.displayName ?? editingModelMeta[modelId]?.displayName)?.trim() || null,
-                        }).displayName ?? modelId;
+                      {visibleModelIds.length === 0 ? <TableRow><TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">没有匹配的模型，请调整搜索或筛选条件。</TableCell></TableRow> : null}
+                      {visibleModelIds.map((modelId) => {
+                        const displayName = rowFacts.get(modelId)?.displayName ?? modelId;
                         const rowDisabled = disabledModels.includes(modelId);
                         const enabled = selectedModels.includes(modelId);
                         const effective = effectiveMeta(modelId);
@@ -1770,8 +1803,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                             </TableCell>
                             <TableCell className="font-mono text-xs">
                               {modelId}
-                              {rowUnconfigured(modelId) ? (
-                                <Badge variant="outline" className="ml-2 font-sans text-[10px]" title="未匹配到 catalog，且未手动配置模型元数据或倍率">
+                              {rowFacts.get(modelId)?.unconfigured ? (
+                                <Badge variant="outline" className="ml-2 border-orange-500/40 bg-orange-500/10 font-sans text-[10px] text-orange-700 dark:text-orange-300" title="未匹配到 catalog，且未手动配置模型元数据或倍率">
                                   未配置
                                 </Badge>
                               ) : null}
