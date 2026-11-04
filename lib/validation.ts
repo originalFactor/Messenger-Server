@@ -21,7 +21,7 @@ export const entityIdSchema = z.string()
   .max(200)
   .regex(/^[A-Za-z0-9_-]+$/, "IDs may only contain letters, numbers, underscores, and hyphens.");
 
-/** Read-only fork catalog lookup for Messenger Web model capabilities. */
+/** Read-only pi.dev catalog lookup for Messenger Web model capabilities. */
 export const modelMetadataQuerySchema = z.string().trim().min(1).max(512);
 
 export const credentialsSchema = z.object({

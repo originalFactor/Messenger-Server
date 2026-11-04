@@ -1013,7 +1013,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       };
       const metadata = payload.metadata ?? {};
       if (Object.keys(metadata).length === 0) {
-        toast.error("pi-catalog 无可用元数据（服务器可能无法访问 jsDelivr）");
+        toast.error("pi-catalog 无可用元数据（服务器可能无法访问 pi.dev）");
         return;
       }
       setCatalogMeta(metadata);

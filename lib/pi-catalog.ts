@@ -20,8 +20,8 @@ import { createLogger } from "@/lib/runtime-logs";
 import type { LongContextTier, PeakWindow, RateCard, TimeBasedPricing } from "@/lib/pricing";
 
 /**
- * pi-catalog 公开模型价目表（https://cdn.jsdelivr.net/npm/@oh-my-pi/pi-catalog/src/models.json）：
- * 压缩 v1 目录解码后按供应商嵌套，条目带 cost（每百万 token 的美元价格：input / output /
+ * pi-catalog 公开模型价目表（https://pi.dev/api/models）：
+ * 按供应商嵌套，条目带 cost（每百万 token 的美元价格：input / output /
  * cacheRead / cacheWrite，可带长上下文价格 `longContext` 与峰谷配置
  * `timeBased`），用于在上游 `/v1/models` 没有报价时提供默认倍率 ——
  * 基准为 deepseek/deepseek-flash 的输出价格（其输出倍率恰为 1.0），所有
@@ -41,7 +41,7 @@ import type { LongContextTier, PeakWindow, RateCard, TimeBasedPricing } from "@/
  * 时回退内存缓存，冷实例再回退数据库快照，永不抛出。
  */
 
-const API_URL = "https://cdn.jsdelivr.net/npm/@oh-my-pi/pi-catalog/src/models.json";
+const API_URL = "https://pi.dev/api/models";
 const CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
 const CATALOG_TIMEOUT_MS = 10_000;
 
@@ -120,74 +120,15 @@ const catalogModelSchema = z.object({
     .optional(),
 });
 
-/** Compact v1 wire format documented by the catalog's model-catalog-format.ts. */
-const encodedValueSchema = z.union([
-  z.string(), z.number(), z.boolean(), z.null(), z.tuple([z.number().int().min(-1)]),
-]);
-const compactCatalogSchema = z.object({
-  version: z.literal(1),
-  keys: z.array(z.string()),
-  booleanShapes: z.array(z.array(z.number().int().nonnegative())),
-  nodes: z.array(z.union([
-    z.tuple([z.literal(0), z.array(encodedValueSchema), z.number().int().nonnegative(), z.array(z.number())]),
-    z.tuple([z.literal(1), z.array(encodedValueSchema)]),
-  ])),
-  providers: z.array(z.tuple([
-    z.string(), encodedValueSchema,
-    z.array(z.tuple([z.string(), encodedValueSchema]).rest(z.unknown())),
-  ])),
-});
-
-/** Decode model data only; API compatibility deltas are unrelated to pricing. */
+/** Validate providers independently so one malformed provider cannot discard the catalog. */
 function decodeCatalog(payload: unknown): Record<string, Record<string, unknown>> {
-  const data = compactCatalogSchema.parse(payload);
-  const decoded = new Map<number, unknown>();
-  const visiting = new Set<number>();
-  const keyAt = (id: unknown): string => {
-    if (typeof id !== "number" || !Number.isInteger(id) || data.keys[id] === undefined) {
-      throw new Error("Invalid catalog property reference");
-    }
-    return data.keys[id];
-  };
-  const decode = (value: z.infer<typeof encodedValueSchema>): unknown => {
-    if (!Array.isArray(value)) return value;
-    const id = value[0];
-    if (id === -1) return undefined;
-    if (decoded.has(id)) return decoded.get(id);
-    const node = data.nodes[id];
-    if (!node || visiting.has(id)) throw new Error("Invalid catalog node reference");
-    visiting.add(id);
-    let result: unknown;
-    if (node[0] === 1) {
-      result = node[1].map(decode);
-    } else {
-      const fields: Record<string, unknown> = Object.create(null);
-      if (node[1].length % 2) throw new Error("Invalid catalog object properties");
-      for (let i = 0; i < node[1].length; i += 2) {
-        fields[keyAt(node[1][i])] = decode(node[1][i + 1]);
-      }
-      const shape = data.booleanShapes[node[2]];
-      if (!shape) throw new Error("Invalid catalog boolean shape");
-      shape.forEach((key, bit) => {
-        fields[keyAt(key)] = ((node[3][bit >>> 5] >>> (bit % 32)) & 1) === 1;
-      });
-      result = fields;
-    }
-    visiting.delete(id);
-    decoded.set(id, result);
-    return result;
-  };
-  const providers: Record<string, Record<string, unknown>> = Object.create(null);
-  const objectSchema = z.record(z.string(), z.unknown());
-  for (const [provider, constants, rows] of data.providers) {
-    const defaults = objectSchema.parse(decode(constants));
-    const models: Record<string, unknown> = Object.create(null);
-    for (const [id, model] of rows) {
-      models[id] = { ...defaults, ...objectSchema.parse(decode(model)) };
-    }
-    providers[provider] = models;
+  const providers = z.record(z.string(), z.unknown()).parse(payload);
+  const models: Record<string, Record<string, unknown>> = Object.create(null);
+  for (const [provider, value] of Object.entries(providers)) {
+    const parsed = z.record(z.string(), z.unknown()).safeParse(value);
+    if (parsed.success) models[provider] = parsed.data;
   }
-  return providers;
+  return models;
 }
 
 /** 一份目录条目归一化后的价目卡（基础四腿 + 长上下文阶梯 + 峰谷）。 */
@@ -219,10 +160,8 @@ const modelMetadataSchema = z.object({
   maxTokens: z.number().positive().nullish(),
   input: z.array(z.string()).optional(),
   reasoning: z.boolean().optional(),
-  thinking: z.object({
-    efforts: z.array(z.string().min(1)),
-    defaultLevel: z.string().optional(),
-  }).optional(),
+  thinkingLevelMap: z.record(z.string(), z.string().nullable()).optional(),
+  compat: z.object({ supportsTemperature: z.boolean().optional() }).optional(),
 });
 
 function extractModelMetadata(providers: Record<string, Record<string, unknown>>): CatalogMetadataMap {
@@ -233,10 +172,18 @@ function extractModelMetadata(providers: Record<string, Record<string, unknown>>
       const parsed = modelMetadataSchema.safeParse(raw);
       if (!parsed.success) continue;
       const model = parsed.data;
-      const efforts = [...new Set(model.thinking?.efforts ?? [])];
+      // Pi: null disables a level, absent standard levels use identity mapping;
+      // xhigh/max require an explicit mapping. Expose provider wire values.
+      const map = model.thinkingLevelMap;
+      const efforts = model.reasoning ? [...new Set([
+        ...(typeof map?.off === "string" && map.off ? [map.off] : []),
+        ...["minimal", "low", "medium", "high", "xhigh", "max"]
+          .filter((level) => map?.[level] !== null && (!(level === "xhigh" || level === "max") || map?.[level] !== undefined))
+          .map((level) => map?.[level] ?? level),
+      ])] : [];
       const value: CatalogModelMetadata = {
         displayName: model.name ?? null,
-        supportsTemperature: model.supportsTemperature ?? true,
+        supportsTemperature: model.supportsTemperature ?? model.compat?.supportsTemperature ?? true,
         supportsTopP: model.supportsTopP ?? true,
         supportsPenalties: model.supportsPenalties ?? true,
         contextWindow: model.contextWindow ?? null,
@@ -244,8 +191,7 @@ function extractModelMetadata(providers: Record<string, Record<string, unknown>>
         inputModalities: model.input ?? [],
         reasoning: model.reasoning ?? null,
         reasoningEfforts: efforts,
-        defaultReasoningEffort: model.thinking?.defaultLevel && efforts.includes(model.thinking.defaultLevel)
-          ? model.thinking.defaultLevel : null,
+        defaultReasoningEffort: null,
       };
       metadata[`${provider}/${id}`] = value;
       const existing = aliases.get(id);
@@ -479,7 +425,7 @@ async function fetchCatalog(): Promise<CatalogCache> {
 /**
  * pi-catalog 的进程内缓存 + MongoDB 持久化兜底。
  *
- * 只放进程内缓存在 serverless 上不够：冷启动遇到 jsDelivr 不可达时
+ * 只放进程内缓存在 serverless 上不够：冷启动遇到 pi.dev 不可达时
  * `rates` 为空，没有上游报价的模型都会按 1x 计费（模型间相对价格全丢）。
  * 因此每次成功拉取都写一份快照，冷启动/故障时用最后一份好数据。
  */
@@ -488,6 +434,7 @@ interface CatalogSnapshotDoc {
   fetchedAt: number;
   rates: CatalogRateMap;
   models?: CatalogMetadataMap;
+  sourceUrl?: string;
 }
 
 const SNAPSHOT_ID = "pi_catalog";
@@ -497,7 +444,7 @@ async function readSnapshot(): Promise<CatalogCache | null> {
   try {
     const db = await getDb();
     const doc = await db.collection<CatalogSnapshotDoc>("model_metadata").findOne({ _id: SNAPSHOT_ID });
-    if (!doc || !doc.rates || Object.keys(doc.rates).length === 0) {
+    if (!doc || doc.sourceUrl !== API_URL || !doc.rates || Object.keys(doc.rates).length === 0) {
       return null;
     }
     // 上一版快照没有 cacheWrite 腿：补齐后再返回，否则整条解析链会出现
@@ -524,7 +471,7 @@ async function writeSnapshot(snapshot: CatalogCache): Promise<void> {
     const db = await getDb();
     await db.collection<CatalogSnapshotDoc>("model_metadata").updateOne(
       { _id: SNAPSHOT_ID },
-      { $set: { fetchedAt: snapshot.fetchedAt, rates: snapshot.rates, models: snapshot.models } },
+      { $set: { fetchedAt: snapshot.fetchedAt, rates: snapshot.rates, models: snapshot.models, sourceUrl: API_URL } },
       { upsert: true },
     );
   } catch {
@@ -543,7 +490,7 @@ export async function getCatalogRates(forceRefresh = false): Promise<CatalogCach
   }
   inflight = fetchCatalog()
     .then(async (data) => {
-      // jsDelivr 完全不可达时不缓存空结果，避免一次瞬时故障把 24h 缓存
+      // pi.dev 完全不可达时不缓存空结果，避免一次瞬时故障把 24h 缓存
       // 投毒成全空（显示不计费 1x）；下次请求会重试。
       if (Object.keys(data.rates).length === 0) {
         throw new Error("pi-catalog returned no metadata");

@@ -707,7 +707,7 @@ SMTP_HOST、SMTP_USER、SMTP_PASSWORD 任一未配置时整站不出信：注册
 
 Messenger Web 的模型能力查询，需有效用户会话（普通用户可用）；未登录返回 `401`，空或超过 512 字符的模型 ID 返回 `400`。
 
-从 fork catalog 解码出的模型能力中匹配完整/裸 ID 及已有的前后缀别名，响应：
+从 pi.dev catalog 解码出的模型能力中匹配完整/裸 ID 及已有的前后缀别名，响应：
 
 ```json
 {
@@ -727,7 +727,7 @@ Messenger Web 的模型能力查询，需有效用户会话（普通用户可用
 
 ### GET /api/admin/models/metadata
 
-返回 pi-catalog（`https://cdn.jsdelivr.net/npm/@oh-my-pi/pi-catalog/src/models.json`）压缩 v1 目录解码并按供应商压平合并后的模型倍率元数据，实例内存缓存 24 小时；源不可用或载荷无效时回退内存缓存，再回退 MongoDB 快照；全部不可用时返回空映射。
+返回 pi-catalog（`https://pi.dev/api/models`）按供应商压平合并后的模型倍率元数据，实例内存缓存 24 小时；源不可用或载荷无效时回退内存缓存，再回退 MongoDB 快照；全部不可用时返回空映射。
 
 - 输入 / 缓存读取 / 缓存写入 / 输出四条腿都以 `deepseek/deepseek-flash` 的输出价格为基准归一化（基准恰为 1.0）；`cost.cacheRead` 缺失时按该模型的输入价折算，`cost.cacheWrite` 缺失时按 `cacheRead` 折算。
 - 长上下文阶梯（`tiers`）与峰谷（`timeBased`）按目录原样下传，阶梯价格同分母折算；峰谷系数是无量纲比值，原样保留。
@@ -815,7 +815,7 @@ Messenger Web 的模型能力查询，需有效用户会话（普通用户可用
 
 ### GET /api/admin/models/metadata
 
-返回 pi-catalog（`https://cdn.jsdelivr.net/npm/@oh-my-pi/pi-catalog/src/models.json`）压缩 v1 目录解码并按供应商压平合并后的倍率映射，实例内存缓存 24 小时；源不可用或载荷无效时回退内存缓存，再回退 MongoDB 快照；全部不可用时返回空映射。完整 `vendor/model` 键与裸模型 ID 均可命中；完整键优先保留对应供应商报价，裸 ID 优先官方供应商。`longContext` 转换为内部 `tiers`，保留阈值的包含关系及四腿价格。
+返回 pi-catalog（`https://pi.dev/api/models`）按供应商压平合并后的倍率映射，实例内存缓存 24 小时；源不可用或载荷无效时回退内存缓存，再回退 MongoDB 快照；全部不可用时返回空映射。完整 `vendor/model` 键与裸模型 ID 均可命中；完整键优先保留对应供应商报价，裸 ID 优先官方供应商。`longContext` 转换为内部 `tiers`，保留阈值的包含关系及四腿价格。
 
 - 上游 `/v1/models` 自报的报价按上游存放（`upstreams.modelPrices`），解析时优先于本目录；只有上游没返回（或返回 0）的字段才回退到这里。
 
@@ -1699,7 +1699,7 @@ Web 聊天与标题请求均省略未启用/空值采样参数。配置格式转
 
 `modelMeta[modelId]` 的四腿倍率不再需要 `override` 开关：缺省/null 继承，显式 0 免费。各腿独立继承，修改输入倍率不会固化或改写未填写的缓存倍率。旧 `override=false` 的休眠价格仍不生效；新编辑器保存后移除旧开关及休眠价格。
 
-新增可选字段（缺省/null 从 `catalogModelId` 指定的目录模型或自动匹配的 fork catalog 继承）：
+新增可选字段（缺省/null 从 `catalogModelId` 指定的目录模型或自动匹配的 pi.dev catalog 继承）：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1716,3 +1716,5 @@ Web 聊天与标题请求均省略未启用/空值采样参数。配置格式转
 `GET /api/admin/models/metadata` 额外返回 `models` 能力映射，原 `metadata` 倍率映射保持兼容。普通用户的 `GET /api/models/metadata?modelId=...&cloud=1` 返回该云端模型优先级最高的启用上游的有效能力；不传 cloud=1 时只按 catalog 解析，避免影响自定义 BYOK Provider。多上游按 priority、createdAt、_id 升序选择一份能力配置，不逐字段跨上游拼接。
 
 `/v1/models` 在原有倍率字段外返回 `display_name`、`input_modalities`、`reasoning`、`reasoning_efforts`、`context_window`、`max_output_tokens`、`supports_temperature`、`supports_top_p`、`supports_penalties`。Web 的内置模型标签和 reasoning 下拉框使用有效能力；聊天及标题请求省略显式标记为不支持的采样参数，reasoning=false 时省略 reasoning_effort。
+
+Catalog 当前来源为 `https://pi.dev/api/models`，使用其按供应商嵌套的 JSON。推理档位从 `thinkingLevelMap` 解析：null 排除档位，缺省标准档位按原名处理，xhigh/max 仅在显式配置时提供，映射值去重后用于 reasoning_efforts。`compat.supportsTemperature` 用于 temperature 能力。快照带 sourceUrl；旧来源或未标记来源的快照不参与回退，以免重新混入 omp 数据。

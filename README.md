@@ -13,7 +13,7 @@
 - User center (`/console/account`): nickname, avatar upload (the same blob the Messenger app reads), and e-mail rebinding
 - MongoDB-backed versioned entity synchronization with per-user monotonic watermarks and soft-delete tombstones
 - Card-key (卡密) plan system: admin-defined plans, batch card issuance, user redemption with quota and validity extension
-- Per-model rate billing consumed by the built-in AI API: four token legs (input / cache read / cache write / output), each upstream's own `/v1/models` rates take precedence with a [bundled pi-catalog pricing fallback](https://cdn.jsdelivr.net/npm/@oh-my-pi/pi-catalog/src/models.json) fetched from jsDelivr, plus long-context tiers, UTC peak/off-peak schedules, per-model and per-provider overall multipliers, and an admin-selectable 1x base model
+- Per-model rate billing consumed by the built-in AI API: four token legs (input / cache read / cache write / output), each upstream's own `/v1/models` rates take precedence with a [pi.dev catalog pricing fallback](https://pi.dev/api/models) fetched from pi.dev, plus long-context tiers, UTC peak/off-peak schedules, per-model and per-provider overall multipliers, and an admin-selectable 1x base model
 - OpenAI-compatible AI API (`/v1/models`, `/v1/chat/completions`) relaying to admin-managed upstream model services with priority failover
 - Private S3-compatible object storage for avatars
 - Authenticated public Agent Market with publish, update, import, and unpublish workflows
@@ -273,10 +273,14 @@ Existing `runtime_logs` database records are neither queried nor migrated. This
 change leaves the old collection untouched; it can be removed manually after
 any required archival. Usage/billing and authentication records remain in MongoDB.
 
-Messenger Web also reads model capabilities from the same fork catalog: context
+Messenger Web also reads model capabilities from the same pi.dev catalog: context
 window, output limit, input modalities, reasoning support and available efforts.
 Agent editing and conversation overrides offer model-specific reasoning-effort
 dropdowns, with model-default / follow-Agent options. Unknown saved values remain
 intact. The authenticated `/api/models/metadata?modelId=...` endpoint shares the
 pricing catalog cache and persisted snapshot; no provider keys are sent to the
 catalog source.
+
+The catalog snapshot records its source URL. After switching to pi.dev, snapshots
+from the former source or without a source tag are ignored until a successful
+pi.dev fetch creates the new snapshot.
