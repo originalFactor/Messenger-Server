@@ -1718,3 +1718,5 @@ Web 聊天与标题请求均省略未启用/空值采样参数。配置格式转
 `/v1/models` 在原有倍率字段外返回 `display_name`、`input_modalities`、`reasoning`、`reasoning_efforts`、`context_window`、`max_output_tokens`、`supports_temperature`、`supports_top_p`、`supports_penalties`。Web 的内置模型标签和 reasoning 下拉框使用有效能力；聊天及标题请求省略显式标记为不支持的采样参数，reasoning=false 时省略 reasoning_effort。
 
 Catalog 当前来源为 `https://pi.dev/api/models`，使用其按供应商嵌套的 JSON。推理档位从 `thinkingLevelMap` 解析：null 排除档位，缺省标准档位按原名处理，xhigh/max 仅在显式配置时提供，映射值去重后用于 reasoning_efforts。`compat.supportsTemperature` 用于 temperature 能力。快照带 sourceUrl；旧来源或未标记来源的快照不参与回退，以免重新混入 omp 数据。
+
+模型显示名回退：Manual 与 catalog 均无非空显示名时，对模型 ID 应用去除 `/` 前缀、连字符转空格、每词首字母大写的规则。完整模型列表内的有效显示名重名（忽略大小写）时，所有同名项同样回退到各自规范化后的模型 ID。该派生名称不写回配置，且搜索/筛选不改变重名判定；上游列表、模型广场、`/v1/models` 和云端 metadata 查询使用同一规则。

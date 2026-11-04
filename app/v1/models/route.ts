@@ -20,8 +20,7 @@ import { getCatalogRates } from "@/lib/pi-catalog";
 import { resolveBaseContext, resolveModelCard } from "@/lib/model-rates";
 import { getModelRateSettings, listEnabledUpstreams } from "@/lib/storage";
 
-import { resolveModelCapabilities } from "@/lib/model-capabilities";
-import type { CatalogModelMetadata } from "@/lib/pi-catalog";
+import { resolveUpstreamCapabilities } from "@/lib/model-capabilities";
 
 export const runtime = "nodejs";
 
@@ -61,10 +60,9 @@ export async function GET(request: Request) {
     score: number;
   }
   const collected = new Map<string, Aggregated>();
-  const capabilities = new Map<string, CatalogModelMetadata>();
+  const capabilities = resolveUpstreamCapabilities(upstreams, defaults.models);
   for (const upstream of upstreams) {
     for (const modelId of upstream.models) {
-      if (!capabilities.has(modelId)) capabilities.set(modelId, resolveModelCapabilities(modelId, defaults.models, upstream.modelMeta?.[modelId]));
       const card = resolveModelCard(upstream, modelId, defaults.rates, base);
       const score = card.input + card.output;
       const existing = collected.get(modelId);

@@ -25,7 +25,7 @@
  */
 
 import type { CatalogModelMetadata } from "@/lib/pi-catalog";
-import { resolveModelCapabilities } from "@/lib/model-capabilities";
+import { resolveUpstreamCapabilities } from "@/lib/model-capabilities";
 import { getCatalogRates } from "@/lib/pi-catalog";
 import { type BaseModelContext, resolveBaseContext, resolveModelCard } from "@/lib/model-rates";
 import { getModelRateSettings, listEnabledUpstreams } from "@/lib/storage";
@@ -57,7 +57,7 @@ export async function getModelPlaza(): Promise<PlazaModel[]> {
     getModelRateSettings(),
   ]);
   const base: BaseModelContext | null = resolveBaseContext(settings.baseModelId, defaults.rates, upstreams);
-  const capabilities = new Map<string, CatalogModelMetadata>();
+  const capabilities = resolveUpstreamCapabilities(upstreams, defaults.models);
   const collected = new Map<
     string,
     {
@@ -72,7 +72,6 @@ export async function getModelPlaza(): Promise<PlazaModel[]> {
   for (const upstream of upstreams) {
     for (const modelId of upstream.models) {
       // 与 /v1 代理计费同一份解析：逐字段覆盖 + modelRate × providerRate。
-      if (!capabilities.has(modelId)) capabilities.set(modelId, resolveModelCapabilities(modelId, defaults.models, upstream.modelMeta?.[modelId]));
       const card = resolveModelCard(upstream, modelId, defaults.rates, base);
       const entry = collected.get(modelId) ?? {
         inputs: [],

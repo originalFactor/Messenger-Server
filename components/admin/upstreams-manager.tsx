@@ -69,7 +69,7 @@ import { formatPeakWindows, parsePeakWindows } from "@/lib/pricing";
 import { catalogModelDefault, rankCatalogModels } from "@/lib/model-rates";
 import type { UpstreamDoc, UpstreamModelMeta, UpstreamModelPrice } from "@/lib/types";
 import type { CatalogMetadataMap } from "@/lib/pi-catalog";
-import { resolveModelCapabilities } from "@/lib/model-capabilities";
+import { resolveModelCapabilities, withModelDisplayNames } from "@/lib/model-capabilities";
 import { BaseModelPicker } from "@/components/admin/base-model-picker";
 
 type UpstreamApiFormatValue = "auto" | "chat" | "responses" | "messages" | "interactions";
@@ -1574,10 +1574,10 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
    */
   const tableModelIds = [...new Set([...discoveredModels, ...selectedModels, ...disabledModels])];
   const sortedDiscovered = [...tableModelIds].sort((a, b) => a.localeCompare(b));
-  const rowFacts = new Map(sortedDiscovered.map((modelId) => [modelId, {
+  const rowFacts = withModelDisplayNames(new Map(sortedDiscovered.map((modelId) => [modelId, {
     displayName: rowDisplayName(modelId),
     unconfigured: rowUnconfigured(modelId),
-  }] as const));
+  }] as const)));
   const checkedSet = new Set(checkedModels);
   const searchTerms = modelSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const visibleModelIds = sortedDiscovered.filter((modelId) => {
