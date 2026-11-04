@@ -1066,18 +1066,20 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
         )}
       </main>
       <Dialog open={managementOpen} onOpenChange={setManagementOpen}>
-        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-5xl">
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col sm:max-w-5xl">
           <DialogHeader>
             <DialogTitle>Messenger 配置</DialogTitle>
             <DialogDescription>管理 Agent、Provider 与项目，保存后即可在聊天中使用。</DialogDescription>
           </DialogHeader>
-          <ConfigurationManagement
-            initialAgents={agents}
-            initialProviders={providers.filter((item) => item._id !== "builtin-messenger-cloud-ai")}
-            initialProjects={projects}
-            builtinModels={builtinModels}
-            onChange={updateConfiguration}
-          />
+          <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
+            <ConfigurationManagement
+              initialAgents={agents}
+              initialProviders={providers.filter((item) => item._id !== "builtin-messenger-cloud-ai")}
+              initialProjects={projects}
+              builtinModels={builtinModels}
+              onChange={updateConfiguration}
+            />
+          </ScrollArea>
         </DialogContent>
       </Dialog>
     </div>
