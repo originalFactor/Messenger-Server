@@ -741,6 +741,7 @@ SMTP_HOST、SMTP_USER、SMTP_PASSWORD 任一未配置时整站不出信：注册
   "modelMeta": {                              // 按上游自定义的模型元数据（按模型粒度）
     "gpt-4o": {                              // override 开启时以下四项生效，缺失腿回退上游报价 → pi-catalog
       "override": true,
+      "catalogModelId": "openai/gpt-4o",       // 可选：手选 pi-catalog 完整键，与 override 无关；null/省略 = 自动匹配
       "inputRate": 0.25, "cacheReadRate": 0.125, "cacheWriteRate": 0.25, "outputRate": 1.0,
       "multiplier": 2,
       "tiers": [                             // 可选：长上下文阶梯（整份自定义；未写的腿沿用基础档）
@@ -767,6 +768,8 @@ SMTP_HOST、SMTP_USER、SMTP_PASSWORD 任一未配置时整站不出信：注册
 ```
 
 实际倍率 = `tokenTypeCard ÷ baseCard × modelRate × providerRate`，按四条腿（输入 / 缓存读取 / 缓存写入 / 输出）分别计算：`tokenTypeCard` 即该模型生效的四腿倍率（override 开启用自定义值、缺失腿回退该上游的 `/v1/models` 自报报价 → pi-catalog，关闭直接用报价 → 目录，无数据默认 1x，显式 0 = 不计费）；`modelRate` 为 `modelMeta[modelId].multiplier`（模型整体倍率，与 override 开关无关 —— 未覆盖的模型也可只放大倍率）；`providerRate` 为上游 `multiplier`。两者均缺省 = 1，显式 0 = 对应层级不计费。
+
+`modelMeta[modelId].catalogModelId` 指定该上游模型使用的 pi-catalog 完整键（最多 500 字符）。目录兜底的四腿倍率、缓存折扣、阶梯与峰谷都读取这个目标；自定义覆盖与上游报价仍优先，转发时仍使用原始模型 ID。未设置或为 `null` 时自动匹配（忽略大小写，两侧可去供应商前缀和推理尾缀，支持 OpenRouter/Bedrock 命名）。手选目标在目录中消失时视为目录数据不可用，不自动映射到另一个模型；控制台保留目标并提示重新选择。编辑面板支持按 ID/供应商搜索，结果按与当前模型的匹配度排序，可恢复自动匹配；更改在保存上游后持久化。
 
 长上下文阶梯（`tiers`）与峰谷（`timeBased`）是结构配置，整份取用（自定义 → 上游 → 目录），不与另一来源逐项混拼：
 

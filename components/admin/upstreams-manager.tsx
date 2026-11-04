@@ -55,8 +55,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatPeakWindows, parsePeakWindows } from "@/lib/pricing";
-import { matchModelDefault } from "@/lib/model-rates";
+import { catalogModelDefault, rankCatalogModels } from "@/lib/model-rates";
 import type { UpstreamDoc, UpstreamModelMeta, UpstreamModelPrice } from "@/lib/types";
 import { BaseModelPicker } from "@/components/admin/base-model-picker";
 
@@ -97,6 +98,8 @@ type CatalogMeta = Record<string, UpstreamModelMeta>;
 type PriceMap = Record<string, UpstreamModelPrice>;
 /** 草稿只记录用户动过的字段；未触碰字段缺省，由生效值解析兜底。 */
 interface MetaDraft {
+  /** 空串 = 恢复自动匹配，undefined = 未修改。 */
+  catalogModelId?: string;
   inputRate?: string;
   cacheReadRate?: string;
   cacheWriteRate?: string;
@@ -237,6 +240,8 @@ function metaScheduleToDraft(schedule: UpstreamModelMeta["timeBased"] | undefine
  */
 function ModelEditor({
   modelId,
+  catalogModelId,
+  catalog,
   open,
   override,
   rates,
@@ -251,6 +256,8 @@ function ModelEditor({
   onClose,
 }: {
   modelId: string;
+  catalogModelId: string;
+  catalog: CatalogMeta;
   open: boolean;
   override: boolean;
   rates: { inputRate: string; cacheReadRate: string; cacheWriteRate: string; outputRate: string };
@@ -265,6 +272,13 @@ function ModelEditor({
   onOverrideChange: (override: boolean) => void;
   onClose: () => void;
 }) {
+  const [choosingCatalog, setChoosingCatalog] = useState(false);
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogLimit, setCatalogLimit] = useState(50);
+  const catalogResults = useMemo(
+    () => choosingCatalog ? rankCatalogModels(modelId, Object.keys(catalog), catalogSearch) : [],
+    [choosingCatalog, modelId, catalog, catalogSearch],
+  );
   const setTier = (index: number, patch: Partial<TierDraft>) =>
     onChange({ tiers: tiers.map((tier, position) => (position === index ? { ...tier, ...patch } : tier)) });
   const inheritedTierText = (inheritedTiers ?? [])
@@ -283,6 +297,74 @@ function ModelEditor({
         </DialogHeader>
 
         <div className="grid gap-4">
+          <div className="grid min-w-0 gap-2 rounded-lg border p-3">
+            <Label className="text-xs">pi-catalog 目标模型</Label>
+            <p className="break-all font-mono text-xs">
+              {catalogModelId || "自动匹配"}
+            </p>
+            {catalogModelId && !Object.hasOwn(catalog, catalogModelId) ? (
+              <p className="text-xs text-destructive">当前目录中未找到此目标，请更新元数据或重新选择。</p>
+            ) : null}
+            <p className="text-[10px] text-muted-foreground">
+              用于默认倍率、长上下文阶梯和峰谷配置；自定义覆盖和上游报价仍优先。修改后需保存上游。
+            </p>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setChoosingCatalog((value) => !value)}>
+                {choosingCatalog ? "收起选择" : "选择目标模型"}
+              </Button>
+              {catalogModelId ? (
+                <Button type="button" variant="ghost" size="sm" onClick={() => onChange({ catalogModelId: "" })}>
+                  恢复自动匹配
+                </Button>
+              ) : null}
+            </div>
+            {choosingCatalog ? (
+              <div className="grid min-w-0 gap-2">
+                <Input
+                  aria-label="搜索 pi-catalog 模型"
+                  placeholder="搜索模型 ID 或供应商…"
+                  value={catalogSearch}
+                  onChange={(event) => {
+                    setCatalogSearch(event.target.value);
+                    setCatalogLimit(50);
+                  }}
+                />
+                <p className="text-[10px] text-muted-foreground" aria-live="polite">
+                  {catalogResults.length} 个结果，按与当前模型的匹配度排序
+                </p>
+                <ScrollArea className="h-52 rounded-md border [&_[data-slot=scroll-area-viewport]>div]:!block">
+                  <div className="grid min-w-0 gap-1 p-1">
+                    {catalogResults.slice(0, catalogLimit).map((id) => (
+                      <Button
+                        key={id}
+                        type="button"
+                        variant={id === catalogModelId ? "secondary" : "ghost"}
+                        className="h-auto min-h-8 w-full min-w-0 justify-start py-2 text-left font-mono text-xs"
+                        aria-pressed={id === catalogModelId}
+                        onClick={() => {
+                          onChange({ catalogModelId: id });
+                          setChoosingCatalog(false);
+                        }}
+                      >
+                        <span className="break-all whitespace-normal">{id}</span>
+                      </Button>
+                    ))}
+                    {catalogResults.length === 0 ? (
+                      <p className="p-3 text-xs text-muted-foreground">
+                        {Object.keys(catalog).length === 0 ? "目录尚未加载，请先更新元数据。" : "没有找到匹配的模型。"}
+                      </p>
+                    ) : null}
+                    {catalogResults.length > catalogLimit ? (
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setCatalogLimit((limit) => limit + 50)}>
+                        显示更多
+                      </Button>
+                    ) : null}
+                  </div>
+                </ScrollArea>
+              </div>
+            ) : null}
+          </div>
+
           <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
             <div className="min-w-0">
               <Label htmlFor={`model-override-${modelId}`} className="text-xs">
@@ -785,7 +867,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     return overrideDrafts[modelId] ?? editingModelMeta[modelId]?.override ?? false;
   }
 
-  /** 打开「覆盖」时清掉该行草稿，输入框按当前生效值重新显示。 */
+  /** 打开覆盖时重置倍率草稿，保留独立的目录目标选择。 */
   function setRowOverride(modelId: string, override: boolean) {
     setOverrideDrafts((drafts) => ({ ...drafts, [modelId]: override }));
     if (override) {
@@ -794,7 +876,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
           return drafts;
         }
         const next = { ...drafts };
-        delete next[modelId];
+        next[modelId] = { catalogModelId: drafts[modelId].catalogModelId };
         return next;
       });
     }
@@ -807,6 +889,10 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       return draft;
     }
     return multiplierDisplay(editingModelMeta[modelId]?.multiplier);
+  }
+
+  function rowCatalogModelId(modelId: string): string {
+    return metaDrafts[modelId]?.catalogModelId ?? editingModelMeta[modelId]?.catalogModelId ?? "";
   }
 
   /**
@@ -826,7 +912,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     timeBased?: UpstreamModelMeta["timeBased"];
   } {
     const price = modelPrices[modelId];
-    const catalog = matchModelDefault(modelId, catalogMeta);
+    const catalog = catalogModelDefault(modelId, catalogMeta, rowCatalogModelId(modelId));
     // 上游报价的 0 表示「未返回」（回退目录）；目录里的 0 是真实的「免费」。
     const returned = (value: number | null | undefined): number | undefined =>
       typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
@@ -995,8 +1081,10 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
         continue;
       }
       if (!rowOverride(modelId)) {
-        // 覆盖关闭：只保留整体倍率草稿（若有），并关闭覆盖开关。
+        // 覆盖关闭：保留目录目标与整体倍率，并关闭覆盖开关。
         const entry: UpstreamModelMeta = { override: false };
+        const catalogModelId = rowCatalogModelId(modelId);
+        if (catalogModelId) entry.catalogModelId = catalogModelId;
         if (draft?.multiplier !== undefined) {
           entry.multiplier = parseMultiplier(draft.multiplier);
         } else if (editingModelMeta[modelId]?.multiplier !== undefined) {
@@ -1008,6 +1096,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       const resolved = resolvedMeta(modelId);
       const entry: UpstreamModelMeta = {
         override: true,
+        ...(rowCatalogModelId(modelId) ? { catalogModelId: rowCatalogModelId(modelId) } : {}),
         cacheReadRate: resolved.cacheReadRate,
         cacheWriteRate: resolved.cacheWriteRate,
         inputRate: resolved.inputRate,
@@ -1107,7 +1196,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     // 与服务端解析同一来源链：上游 /v1/models 报价 > pi-catalog > 1x。
     const rateOf = (modelId: string): { inputRate: number; cacheReadRate: number; outputRate: number } => {
       const price = upstream.modelPrices?.[modelId];
-      const catalog = matchModelDefault(modelId, catalogMeta);
+      const catalog = catalogModelDefault(modelId, catalogMeta, upstream.modelMeta?.[modelId]?.catalogModelId);
       const priceInput = price?.inputRate && price.inputRate > 0 ? price.inputRate : undefined;
       const priceCache = price?.cacheReadRate && price.cacheReadRate > 0 ? price.cacheReadRate : undefined;
       const priceOutput = price?.outputRate && price.outputRate > 0 ? price.outputRate : undefined;
@@ -1517,7 +1606,10 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
 
       {editingModelId ? (
         <ModelEditor
+          key={editingModelId}
           modelId={editingModelId}
+          catalogModelId={rowCatalogModelId(editingModelId)}
+          catalog={catalogMeta}
           open
           override={rowOverride(editingModelId)}
           rates={rateDraftOf(editingModelId)}

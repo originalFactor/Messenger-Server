@@ -136,6 +136,47 @@ export function matchModelDefault<T>(modelId: string, defaults: Readonly<Record<
   return undefined;
 }
 
+/** 手选目录键精确取值；失效时不偷偷改配另一个模型。 */
+export function catalogModelDefault<T>(
+  modelId: string,
+  defaults: Readonly<Record<string, T>>,
+  catalogModelId?: string | null,
+): T | undefined {
+  if (catalogModelId) {
+    return Object.hasOwn(defaults, catalogModelId) ? defaults[catalogModelId] : undefined;
+  }
+  return matchModelDefault(modelId, defaults);
+}
+
+/** 供目录选择器排序：完整 ID、规范化相同、名称相似依次优先。 */
+export function rankCatalogModels(modelId: string, catalogIds: readonly string[], search = ""): string[] {
+  const source = modelDefaultCandidates(modelId).map((id) => id.toLowerCase());
+  const terms = search.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const grams = (id: string): Set<string> => {
+    const text = id.replace(/[^a-z0-9]/g, "");
+    return new Set(Array.from({ length: Math.max(0, text.length - 1) }, (_, i) => text.slice(i, i + 2)));
+  };
+  const sourceGrams = source.map(grams);
+  return catalogIds
+    .filter((id) => terms.every((term) => id.toLowerCase().includes(term)))
+    .map((id) => {
+      const targets = modelDefaultCandidates(id).map((candidate) => candidate.toLowerCase());
+      let score = 0;
+      for (const [i, target] of targets.entries()) {
+        const targetGrams = grams(target);
+        for (const [j, original] of source.entries()) {
+          const exact = target === original;
+          const overlap = [...targetGrams].filter((gram) => sourceGrams[j].has(gram)).length;
+          const similarity = 2 * overlap / Math.max(1, targetGrams.size + sourceGrams[j].size);
+          score = Math.max(score, exact ? 2 - (i + j) * 0.001 : similarity);
+        }
+      }
+      return { id, score };
+    })
+    .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
+    .map(({ id }) => id);
+}
+
 /** 逐腿有效化：缺省 / 非有限值 / 0 都视为「未返回」，回退下一级来源。 */
 function upstreamRate(value: number | null | undefined): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
@@ -262,7 +303,7 @@ export function currentStoredCard(
   defaults: CatalogRateMap,
   upstreamPrice?: UpstreamModelPrice | null,
 ): RateCard {
-  const catalogCard = matchModelDefault(model, defaults);
+  const catalogCard = catalogModelDefault(model, defaults, stored?.catalogModelId);
   const priceCard = upstreamPrice ?? undefined;
   const readDiscount = cacheDiscountRatio(catalogCard, priceCard, "cacheRead");
   const writeDiscount = cacheDiscountRatio(catalogCard, priceCard, "cacheWrite");
@@ -427,6 +468,9 @@ export function resolveBaseContext(
     return { modelId: baseModelId };
   }
   const resolvable = upstreams.some((upstream) => {
+    if (catalogModelDefault(baseModelId, defaults, upstream.modelMeta?.[baseModelId]?.catalogModelId) !== undefined) {
+      return true;
+    }
     const price = upstream.modelPrices?.[baseModelId];
     if (
       price !== undefined

@@ -1888,6 +1888,9 @@ function normalizeUpstreamModelMeta(
     const id = modelId.trim();
     if (!id || !meta) continue;
     const entry: UpstreamModelMeta = {};
+    if (typeof meta.catalogModelId === 'string' && meta.catalogModelId.trim()) {
+      entry.catalogModelId = meta.catalogModelId.trim();
+    }
     if (typeof meta.override === 'boolean') {
       entry.override = meta.override;
     }

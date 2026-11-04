@@ -143,6 +143,8 @@ export interface RedemptionDoc {
 }
 
 export interface UpstreamModelMeta {
+  /** 手选的 pi-catalog 完整键；缺省自动匹配，与覆盖开关无关。 */
+  catalogModelId?: string | null;
   /** 覆盖开关：开启时本条自定义元数据生效，关闭时使用上游报价 → pi-catalog 元数据。 */
   override?: boolean;
   /** 缓存读取倍率，0 = 不计费；缺省按上游报价 → pi-catalog（无数据按输入价 × 折扣）。 */

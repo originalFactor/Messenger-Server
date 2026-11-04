@@ -307,6 +307,7 @@ export const upstreamInputSchema = z.object({
       z.string().max(200),
       z
         .object({
+          catalogModelId: z.string().trim().min(1).max(500).nullable().optional(),
           override: z.boolean().optional(),
           cacheReadRate: rateInputSchema,
           cacheWriteRate: rateInputSchema,
