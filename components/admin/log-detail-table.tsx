@@ -82,7 +82,7 @@ export interface LogRowView {
   /** HTTP 状态码；非 HTTP 来源为 null。 */
   status: number | null;
   /** 预格式化的 `details` JSON。 */
-  detailsText: string;
+  detailsText: string | null;
 }
 
 /**
@@ -102,7 +102,7 @@ export function LogDetailTable({ rows }: { rows: LogRowView[] }) {
   async function copyDetails(log: LogRowView) {
     try {
       await navigator.clipboard.writeText(
-        `${log.timeLabel} [${LEVEL_LABEL[log.level]}/${SOURCE_LABEL[log.source]}] ${log.message}\n\n${log.detailsText}`,
+        `${log.timeLabel} [${LEVEL_LABEL[log.level]}/${SOURCE_LABEL[log.source]}] ${log.message}${log.detailsText === null ? "" : `\n\n${log.detailsText}`}`,
       );
       toast.success("日志详情已复制");
     } catch {
@@ -168,27 +168,41 @@ export function LogDetailTable({ rows }: { rows: LogRowView[] }) {
               </DialogHeader>
 
               <dl className="grid gap-2 text-sm sm:grid-cols-[6rem_1fr]">
-                <dt className="text-muted-foreground">方法</dt>
-                <dd className="font-mono text-xs">{opened.method ?? "—"}</dd>
-                <dt className="text-muted-foreground">路径</dt>
-                <dd className="break-all font-mono text-xs">{opened.path ?? "—"}</dd>
-                <dt className="text-muted-foreground">状态码</dt>
-                <dd className="font-mono text-xs tabular-nums">{opened.status ?? "—"}</dd>
+                {opened.method ? (
+                  <>
+                    <dt className="text-muted-foreground">方法</dt>
+                    <dd className="font-mono text-xs">{opened.method}</dd>
+                  </>
+                ) : null}
+                {opened.path ? (
+                  <>
+                    <dt className="text-muted-foreground">路径</dt>
+                    <dd className="break-all font-mono text-xs">{opened.path}</dd>
+                  </>
+                ) : null}
+                {opened.status != null ? (
+                  <>
+                    <dt className="text-muted-foreground">状态码</dt>
+                    <dd className="font-mono text-xs tabular-nums">{opened.status}</dd>
+                  </>
+                ) : null}
                 <dt className="text-muted-foreground">记录 ID</dt>
                 <dd className="break-all font-mono text-xs">{opened.id}</dd>
               </dl>
 
-              <div className="grid gap-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm text-muted-foreground">原始上下文</span>
-                  <Button variant="outline" size="sm" onClick={() => copyDetails(opened)}>
-                    复制
-                  </Button>
+              {opened.detailsText !== null ? (
+                <div className="grid gap-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm text-muted-foreground">原始上下文</span>
+                    <Button variant="outline" size="sm" onClick={() => copyDetails(opened)}>
+                      复制
+                    </Button>
+                  </div>
+                  <pre className="max-h-80 overflow-auto rounded-lg bg-muted/50 p-3 font-mono text-xs whitespace-pre-wrap break-words">
+                    {opened.detailsText}
+                  </pre>
                 </div>
-                <pre className="max-h-80 overflow-auto rounded-lg bg-muted/50 p-3 font-mono text-xs whitespace-pre-wrap break-words">
-                  {opened.detailsText}
-                </pre>
-              </div>
+              ) : null}
 
               <DialogFooter>
                 <DialogClose asChild>

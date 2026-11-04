@@ -24,12 +24,12 @@ import type { RuntimeLogDoc, RuntimeLogLevel, RuntimeLogSource } from "@/lib/typ
 
 /**
  * `details` 是自由结构（错误对象、上下文、任意值），这里统一折成缩进 JSON。
- * 空值渲染成 `—`，非 JSON 可序列化的兜底为 `String(value)`。字符串值先去掉
+ * 空值返回 null，详情窗隐藏对应区域，非 JSON 可序列化的兜底为 `String(value)`。字符串值先去掉
  * 控制台捕获留下的 SGR 转义，否则模态窗里只剩一串 `\u001b[36m` 噪声。
  */
-function formatLogDetails(details: unknown): string {
-  if (details === null || details === undefined) {
-    return "—";
+function formatLogDetails(details: unknown): string | null {
+  if (details === null || details === undefined || (typeof details === "string" && !stripAnsi(details).trim())) {
+    return null;
   }
   try {
     return JSON.stringify(
@@ -130,7 +130,7 @@ export function LogsTable({
         <CardTitle className="text-base">系统运行日志</CardTitle>
         <CardDescription>
           每页 {pageSize} 条，按时间倒序；共 {total} 条 / {totalPages} 页。级别取日志严重度，来源取触发模块；
-          点击任意一行查看方法、路径、状态码与原始上下文。
+          点击任意一行查看详情；请求信息与原始上下文仅在有数据时显示。
         </CardDescription>
       </CardHeader>
       <CardContent>
