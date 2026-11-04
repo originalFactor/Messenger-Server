@@ -7,7 +7,7 @@
  * you may not use this file except in compliance with the License.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Bot, Check, ChevronRight, FolderKanban, Plus, Save, Server, Trash2, WandSparkles } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -39,6 +39,7 @@ type Props = {
   initialProviders: ProviderDoc[];
   initialProjects: ProjectDoc[];
   builtinModels: PlazaModel[];
+  onChange: (configuration: { agents: AgentDoc[]; providers: ProviderDoc[]; projects: ProjectDoc[] }) => void;
 };
 
 type Tab = "agents" | "providers" | "projects";
@@ -202,11 +203,15 @@ function DeleteButton({ onConfirm }: { onConfirm: () => void }) {
   );
 }
 
-export function ConsoleManagement({ initialAgents, initialProviders, initialProjects, builtinModels }: Props) {
+export function ConfigurationManagement({ initialAgents, initialProviders, initialProjects, builtinModels, onChange }: Props) {
   const [tab, setTab] = useState<Tab>("agents");
   const [agents, setAgents] = useState(initialAgents);
   const [providers, setProviders] = useState(initialProviders);
   const [projects, setProjects] = useState(initialProjects);
+
+  useEffect(() => {
+    onChange({ agents, providers, projects });
+  }, [agents, providers, projects, onChange]);
   const builtinProvider = useMemo<ProviderDoc>(() => ({
     _id: BUILTIN_PROVIDER_ID,
     userId: "",

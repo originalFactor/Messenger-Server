@@ -7,7 +7,7 @@
  * you may not use this file except in compliance with the License.
  */
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -18,6 +18,9 @@ import {
   ChevronRight,
   Folder,
   LoaderCircle,
+  LayoutDashboard,
+  SlidersHorizontal,
+  X,
   MessageSquarePlus,
   PanelLeft,
   Plus,
@@ -43,6 +46,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { ConfigurationManagement } from "@/components/messenger/configuration-management";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import type { PlazaModel } from "@/lib/model-plaza";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -67,6 +73,8 @@ import {
 import { useRemoteDevice, type RemoteToolResult } from "@/components/messenger/remote";
 
 type Props = {
+  builtinModels: PlazaModel[];
+  initialManagementOpen: boolean;
   initialAgents: AgentDoc[];
   initialConversations: ConversationDoc[];
   initialProviders: ProviderDoc[];
@@ -473,11 +481,18 @@ function relativeTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
 }
 
-export function MessengerApp({ initialAgents, initialConversations, initialProviders, initialProjects, userName, userAvatarUrl }: Props) {
-  const [agents] = useState(initialAgents);
-  const [providers] = useState(initialProviders);
-  const [projects] = useState(initialProjects);
+export function MessengerApp({ builtinModels, initialManagementOpen, initialAgents, initialConversations, initialProviders, initialProjects, userName, userAvatarUrl }: Props) {
+  const [agents, setAgents] = useState(initialAgents);
+  const [providers, setProviders] = useState(initialProviders);
+  const [projects, setProjects] = useState(initialProjects);
+  const [managementOpen, setManagementOpen] = useState(initialManagementOpen);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const updateConfiguration = useCallback((configuration: { agents: AgentDoc[]; providers: ProviderDoc[]; projects: ProjectDoc[] }) => {
+    setAgents(configuration.agents);
+    setProviders([initialProviders[0], ...configuration.providers]);
+    setProjects(configuration.projects);
+    setActiveProjectId((current) => current && !configuration.projects.some((item) => item._id === current) ? null : current);
+  }, [initialProviders]);
   const remote = useRemoteDevice();
   const abortRef = useRef<AbortController | null>(null);
   const [conversations, setConversations] = useState(initialConversations);
@@ -597,7 +612,7 @@ export function MessengerApp({ initialAgents, initialConversations, initialProvi
 
   function startConversation(chosen: AgentDoc) {
     if (!providers[0]) {
-      toast.error("请先在手机端配置 Agent 和 Provider。");
+      toast.error("请先在左下角配置管理中配置 Agent 和 Provider。");
       return;
     }
     const selectedProvider = providers.find((item) => item.models.some((model) => model.isEnabled && model.modelId === chosen.defaultModelId))
@@ -823,42 +838,19 @@ export function MessengerApp({ initialAgents, initialConversations, initialProvi
     }
   }
 
-  if (!defaultAgent || providers.length === 0) {
-    return (
-      <Empty className="min-h-[calc(100svh-3.5rem)] rounded-none">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <Sparkles />
-          </EmptyMedia>
-          <EmptyTitle>准备你的第一个 AI 对话</EmptyTitle>
-          <EmptyDescription>
-            Web Messenger 使用你在手机端同步的 Agent、Provider 和模型配置。请先完成配置，再回到这里开始聊天。
-          </EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent className="flex-row justify-center">
-          <Button asChild>
-            <Link href="/console/manage">前往配置管理</Link>
-          </Button>
-          <Button asChild variant="outline">
-            <Link href="/console/account">打开用户中心</Link>
-          </Button>
-        </EmptyContent>
-      </Empty>
-    );
-  }
-
   const groupedMessages = selected ? groupMessages(selected.messages) : [];
 
   return (
-    <div className="flex h-[calc(100svh-3.5rem)] min-h-0 w-full overflow-hidden bg-background">
+    <div className="relative flex h-dvh min-h-0 w-full overflow-hidden bg-background">
       <aside
         className={cn(
           "shrink-0 overflow-hidden border-r bg-sidebar text-sidebar-foreground transition-[width] duration-300",
-          sidebarOpen ? "w-72 max-md:absolute max-md:inset-y-14 max-md:left-0 max-md:z-10 max-md:shadow-lg" : "w-0 border-r-0",
+          sidebarOpen ? "w-72 max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-10 max-md:shadow-lg" : "w-0 border-r-0",
         )}
       >
         <div className="flex h-full w-72 flex-col">
           <div className="flex items-center justify-between gap-2 p-3">
+            <Button className="md:hidden" variant="ghost" size="icon-sm" onClick={() => setSidebarOpen(false)} aria-label="关闭会话栏"><X /></Button>
             {activeProject ? (
               <div className="flex min-w-0 items-center gap-1">
                 <Button size="icon-sm" variant="ghost" onClick={leaveProject} aria-label="返回全部对话">
@@ -935,6 +927,18 @@ export function MessengerApp({ initialAgents, initialConversations, initialProvi
               ? `${filteredConversations.length} 个会话`
               : `${conversations.length} 个会话 · ${projects.length} 个项目 · ${providers.length} 个 Provider`}
           </p>
+          <div className="grid gap-1 border-t p-2">
+            <Button variant="ghost" className="justify-start" onClick={() => setManagementOpen(true)} disabled={isSending}>
+              <SlidersHorizontal /> 配置管理
+            </Button>
+            <Button asChild variant="ghost" className="justify-start">
+              <Link href="/console"><LayoutDashboard /> 控制台</Link>
+            </Button>
+            <Link href="/console/account" className="flex min-w-0 items-center gap-2 rounded-md p-2 text-sm hover:bg-sidebar-accent">
+              <UserAvatar src={userAvatarUrl} name={userName} />
+              <span className="truncate">{userName}</span>
+            </Link>
+          </div>
         </div>
       </aside>
 
@@ -965,7 +969,25 @@ export function MessengerApp({ initialAgents, initialConversations, initialProvi
           </div>
         </header>
 
-        {!selected ? (
+        {!defaultAgent || providers.length === 0 ? (
+          <Empty className="flex-1 rounded-none">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Sparkles />
+              </EmptyMedia>
+              <EmptyTitle>准备你的第一个 AI 对话</EmptyTitle>
+              <EmptyDescription>
+                在配置管理中设置 Agent、Provider 和模型，即可开始聊天；配置会自动同步到其他设备。
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent className="flex-row justify-center">
+              <Button onClick={() => setManagementOpen(true)}>前往配置管理</Button>
+              <Button asChild variant="outline">
+                <Link href="/console/account">打开用户中心</Link>
+              </Button>
+            </EmptyContent>
+          </Empty>
+        ) : !selected ? (
           <Empty>
             <EmptyHeader>
               <EmptyMedia variant="icon">
@@ -1043,6 +1065,21 @@ export function MessengerApp({ initialAgents, initialConversations, initialProvi
           </>
         )}
       </main>
+      <Dialog open={managementOpen} onOpenChange={setManagementOpen}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>Messenger 配置</DialogTitle>
+            <DialogDescription>管理 Agent、Provider 与项目，保存后即可在聊天中使用。</DialogDescription>
+          </DialogHeader>
+          <ConfigurationManagement
+            initialAgents={agents}
+            initialProviders={providers.filter((item) => item._id !== "builtin-messenger-cloud-ai")}
+            initialProjects={projects}
+            builtinModels={builtinModels}
+            onChange={updateConfiguration}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

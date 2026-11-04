@@ -5,6 +5,7 @@
 ## Features
 
 - Official website homepage with public plan/pricing display and web login/registration
+- Standalone web Messenger (`/messenger`) with full-viewport chat and Agent/Provider/Project configuration in a dialog opened from the bottom-left sidebar; legacy `/console/messenger` and `/console/manage` links redirect to the new surface
 - Shared web console (`/console`) for users and administrators; the first registered user is automatically promoted to admin
 - Web UI built with Tailwind CSS v4 + shadcn/ui (radix base, nova preset) and Geist fonts
 - Email/password accounts with JWT cookie sessions backed by a server-side `user_sessions` collection (30-day expiry, multi-device); each session doubles as a sync-progress ledger that lets the server purge entity tombstones no client still needs

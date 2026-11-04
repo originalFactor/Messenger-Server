@@ -215,7 +215,7 @@ interface SessionClaims {
 | PUT | `/api/market/agents/{id}/avatar` | 用户（仅所有者） | 上传/替换市场头像 |
 | DELETE | `/api/market/agents/{id}/avatar` | 用户（仅所有者） | 删除市场头像 |
 
-> 网页端：`/` 为官网首页，`/login`、`/register` 为登录注册页，`/forgot-password`、`/reset-password`、`/verify-email` 为邮件流程落地页，`/console` 为用户与管理员共用的控制台（管理员侧边栏多出「管理功能区」）。`/console/account` 是用户中心：头像（走 `/api/avatars/user`，与 Messenger App 共用同一份 Blob）、昵称（`PUT /api/auth/profile`）与登录邮箱改绑（`/api/auth/change-email` 两步流程）。
+> 网页端：`/` 为官网首页，`/login`、`/register` 为登录注册页，`/forgot-password`、`/reset-password`、`/verify-email` 为邮件流程落地页，`/console` 为用户与管理员共用的控制台（管理员侧边栏多出「管理功能区」）。`/messenger` 是独立的全屏聊天页，不使用控制台布局；左下角「配置管理」打开 Agent、Provider 与 Project 配置面板，保存后立即更新聊天配置。旧 `/console/messenger` 跳转到 `/messenger`，旧 `/console/manage` 跳转到 `/messenger?settings=1`。`/console/account` 是用户中心：头像（走 `/api/avatars/user`，与 Messenger App 共用同一份 Blob）、昵称（`PUT /api/auth/profile`）与登录邮箱改绑（`/api/auth/change-email` 两步流程）。
 
 ---
 

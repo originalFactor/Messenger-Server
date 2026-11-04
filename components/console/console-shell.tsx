@@ -28,7 +28,6 @@ import {
   LayoutDashboard,
   LogOut,
   MessageCircle,
-  SlidersHorizontal,
   ScrollText,
   Server,
   UserRound,
@@ -115,18 +114,10 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={isActive("/console/messenger")}>
-                  <Link href="/console/messenger">
+                <SidebarMenuButton asChild isActive={isActive("/messenger")}>
+                  <Link href="/messenger">
                     <MessageCircle />
                     <span>Messenger</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={isActive("/console/manage")}>
-                  <Link href="/console/manage">
-                    <SlidersHorizontal />
-                    <span>配置管理</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -243,7 +234,7 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
           <Separator orientation="vertical" className="mr-1 data-[orientation=vertical]:h-4" />
           <span className="text-sm text-muted-foreground">控制台</span>
         </header>
-        <div className={pathname.startsWith("/console/messenger") ? "w-full min-w-0 flex-1 overflow-hidden p-0" : "mx-auto w-full max-w-5xl min-w-0 flex-1 p-4 sm:p-6"}>{children}</div>
+        <div className="mx-auto w-full max-w-5xl min-w-0 flex-1 p-4 sm:p-6">{children}</div>
       </SidebarInset>
     </SidebarProvider>
   );
