@@ -17,9 +17,7 @@
 import Link from "next/link";
 import { BackButton } from "@/components/back-button";
 import { ModelPlazaGrid } from "@/components/model-plaza-grid";
-import { DEFAULT_BASELINE_MODEL } from "@/lib/model-metadata";
 import { getModelPlaza, type PlazaModel } from "@/lib/model-plaza";
-import { getModelRateSettings } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 export const metadata = {
@@ -28,24 +26,22 @@ export const metadata = {
 
 interface PlazaPageData {
   models: PlazaModel[];
-  baseModelId: string | null;
   failed: boolean;
 }
 
 /** 数据装配放在组件外的普通函数里，避免在渲染期间直接调用 Date.now()。 */
 async function loadPlaza(): Promise<PlazaPageData> {
   try {
-    const [models, settings] = await Promise.all([getModelPlaza(), getModelRateSettings()]);
-    return { models, baseModelId: settings.baseModelId, failed: false };
+    const models = await getModelPlaza();
+    return { models, failed: false };
   } catch (error) {
     console.error("Unable to load the model plaza.", error);
-    return { models: [], baseModelId: null, failed: true };
+    return { models: [], failed: true };
   }
 }
 
 export default async function ModelPlazaPage() {
-  const { models, baseModelId, failed } = await loadPlaza();
-  const baselineModel = baseModelId ?? DEFAULT_BASELINE_MODEL;
+  const { models, failed } = await loadPlaza();
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -64,8 +60,7 @@ export default async function ModelPlazaPage() {
         <div className="mb-8">
           <h1 className="text-2xl font-semibold tracking-tight">模型广场</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            这里是当前可用的全部模型及其价格。以 <span className="font-medium text-foreground">{baselineModel}</span>{" "}
-            为基准（记为 1.0），其他模型的数字越大表示越贵；输入、输出和缓存读取分别计价。
+            这里是当前可用的全部模型及其价格。输入、输出和缓存读取分别计价。
             同一模型若由多个来源提供且价格不同，显示为区间，按实际服务的来源结算。
           </p>
         </div>
