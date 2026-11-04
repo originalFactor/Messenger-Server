@@ -86,19 +86,26 @@ export function normalizeMultiplier(value: number | null | undefined): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 1;
 }
 
-/** 默认目录匹配：完整 ID 优先，再去单个推理尾缀、单个 : 或 / 前缀、两者。 */
+/** 默认目录匹配忽略大小写：完整 ID 优先，再去尾缀、前缀、两者。 */
 export function matchModelDefault<T>(modelId: string, defaults: Readonly<Record<string, T>>): T | undefined {
-  const withoutTail = modelId.replace(/-(thinking|high|low|medium)$/, "");
+  const withoutTail = modelId.replace(/-(thinking|high|low|medium)$/i, "");
   const withoutPrefix = modelId.replace(/^[^:/]+[:/](?=.)/, "");
   const candidates = [
     modelId,
     withoutTail,
     withoutPrefix,
-    withoutPrefix.replace(/-(thinking|high|low|medium)$/, ""),
+    withoutPrefix.replace(/-(thinking|high|low|medium)$/i, ""),
   ];
+  let keys: string[] | undefined;
   for (const candidate of candidates) {
     if (Object.hasOwn(defaults, candidate) && defaults[candidate] !== undefined) {
       return defaults[candidate];
+    }
+    keys ??= Object.keys(defaults);
+    const folded = candidate.toLowerCase();
+    const key = keys.find((key) => key.toLowerCase() === folded && defaults[key] !== undefined);
+    if (key !== undefined) {
+      return defaults[key];
     }
   }
   return undefined;
