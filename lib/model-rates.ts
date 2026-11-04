@@ -86,16 +86,33 @@ export function normalizeMultiplier(value: number | null | undefined): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 1;
 }
 
-/** 默认目录匹配忽略大小写：完整 ID 优先，再去尾缀、前缀、两者。 */
-export function matchModelDefault<T>(modelId: string, defaults: Readonly<Record<string, T>>): T | undefined {
+/** 保留具体版本和价格变体，只移除命名包装及推理档位。 */
+function modelDefaultCandidates(modelId: string): string[] {
   const withoutTail = modelId.replace(/-(thinking|high|low|medium)$/i, "");
-  const withoutPrefix = modelId.replace(/^[^:/]+[:/](?=.)/, "");
-  const candidates = [
+  // Bedrock 的 :0 是版本标记，不能被误当作 prefix:model 的分隔符。
+  const withoutPrefix = modelId.replace(/^(?:[^:/]+\/|[^:/]+:(?!(?:\d+|free|extended|nitro|online)$))(?=.)/i, "");
+  const candidates = new Set([
     modelId,
     withoutTail,
     withoutPrefix,
     withoutPrefix.replace(/-(thinking|high|low|medium)$/i, ""),
-  ];
+  ]);
+  for (const candidate of candidates) {
+    // 目录键可能叠加 catalog-provider/model-provider/model 两层前缀。
+    const unwrapped = candidate.replace(/^(?:[^:/]+\/|[^:/]+:(?!(?:\d+|free|extended|nitro|online)$))(?=.)/i, "");
+    candidates.add(unwrapped);
+    const bedrock = unwrapped.match(/^(?:(?:us|eu|apac|global)\.)?(?:amazon|anthropic|cohere|deepseek|meta|mistral|nvidia|openai|qwen|writer|ai21)\.(.+)$/i);
+    if (bedrock) {
+      candidates.add(bedrock[1]);
+      candidates.add(bedrock[1].replace(/-v\d+(?::\d+)?$/i, ""));
+    }
+  }
+  return [...candidates];
+}
+
+/** 两侧均去命名包装；完整 ID 优先，所有候选忽略大小写。 */
+export function matchModelDefault<T>(modelId: string, defaults: Readonly<Record<string, T>>): T | undefined {
+  const candidates = modelDefaultCandidates(modelId);
   let keys: string[] | undefined;
   for (const candidate of candidates) {
     if (Object.hasOwn(defaults, candidate) && defaults[candidate] !== undefined) {
@@ -105,6 +122,14 @@ export function matchModelDefault<T>(modelId: string, defaults: Readonly<Record<
     const folded = candidate.toLowerCase();
     const key = keys.find((key) => key.toLowerCase() === folded && defaults[key] !== undefined);
     if (key !== undefined) {
+      return defaults[key];
+    }
+  }
+  // 先穷尽原始目录键，再尝试目录一侧的别名，避免别名盖过独立变体的报价。
+  const foldedCandidates = new Set(candidates.map((candidate) => candidate.toLowerCase()));
+  for (const key of keys ?? Object.keys(defaults)) {
+    if (defaults[key] !== undefined
+      && modelDefaultCandidates(key).some((candidate) => foldedCandidates.has(candidate.toLowerCase()))) {
       return defaults[key];
     }
   }
