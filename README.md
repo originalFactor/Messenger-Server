@@ -13,7 +13,7 @@
 - User center (`/console/account`): nickname, avatar upload (the same blob the Messenger app reads), and e-mail rebinding
 - MongoDB-backed versioned entity synchronization with per-user monotonic watermarks and soft-delete tombstones
 - Card-key (卡密) plan system: admin-defined plans, batch card issuance, user redemption with quota and validity extension
-- Per-model rate billing consumed by the built-in AI API: four token legs (input / cache read / cache write / output), each upstream's own `/v1/models` rates take precedence with a generated pi-catalog fallback, plus long-context tiers, UTC peak/off-peak schedules, per-model and per-provider overall multipliers, and an admin-selectable 1x base model
+- Per-model rate billing consumed by the built-in AI API: four token legs (input / cache read / cache write / output), each upstream's own `/v1/models` rates take precedence with a [bundled pi-catalog pricing fallback](https://cdn.jsdelivr.net/npm/@oh-my-pi/pi-catalog/src/models.json) fetched from jsDelivr, plus long-context tiers, UTC peak/off-peak schedules, per-model and per-provider overall multipliers, and an admin-selectable 1x base model
 - OpenAI-compatible AI API (`/v1/models`, `/v1/chat/completions`) relaying to admin-managed upstream model services with priority failover
 - Private S3-compatible object storage for avatars
 - Authenticated public Agent Market with publish, update, import, and unpublish workflows

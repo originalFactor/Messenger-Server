@@ -20,9 +20,9 @@ import { createLogger } from "@/lib/runtime-logs";
 import type { LongContextTier, PeakWindow, RateCard, TimeBasedPricing } from "@/lib/pricing";
 
 /**
- * pi-catalog 公开模型价目表（https://pi.dev/api/models）：
- * 按供应商嵌套，条目带 cost（每百万 token 的美元价格：input / output /
- * cacheRead / cacheWrite，可带长上下文阶梯 `tiers` 与峰谷配置
+ * pi-catalog 公开模型价目表（https://cdn.jsdelivr.net/npm/@oh-my-pi/pi-catalog/src/models.json）：
+ * 压缩 v1 目录解码后按供应商嵌套，条目带 cost（每百万 token 的美元价格：input / output /
+ * cacheRead / cacheWrite，可带长上下文价格 `longContext` 与峰谷配置
  * `timeBased`），用于在上游 `/v1/models` 没有报价时提供默认倍率 ——
  * 基准为 deepseek/deepseek-flash 的输出价格（其输出倍率恰为 1.0），所有
  * 倍率（含该模型自身的输入倍率）都以该基准输出价为分母折算，单位在比值
@@ -41,7 +41,7 @@ import type { LongContextTier, PeakWindow, RateCard, TimeBasedPricing } from "@/
  * 时回退内存缓存，冷实例再回退数据库快照，永不抛出。
  */
 
-const API_URL = "https://pi.dev/api/models";
+const API_URL = "https://cdn.jsdelivr.net/npm/@oh-my-pi/pi-catalog/src/models.json";
 const CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
 const CATALOG_TIMEOUT_MS = 10_000;
 
@@ -75,8 +75,8 @@ const CANONICAL_PROVIDERS: Record<string, true> = {
 
 /**
  * pi-catalog 的 `cost` 是驼峰命名（cacheRead / cacheWrite），与 models.dev
- * 的 snake_case 不同；`tiers` 是长上下文阶梯（`inputTokensAbove` 起整次
- * 请求按该档计价），`timeBased` 是峰谷配置（与 omp 的 TimeBasedCost 同形）。
+ * 的 snake_case 不同；`longContext` 转为内部长上下文阶梯（兼容旧 `tiers`），
+ * `timeBased` 携带 UTC 峰谷配置。
  */
 const catalogTierSchema = z.object({
   inputTokensAbove: z.number(),
@@ -105,12 +105,90 @@ const catalogModelSchema = z.object({
       cacheRead: z.number(),
       cacheWrite: z.number(),
       tiers: z.array(catalogTierSchema).optional(),
+      longContext: z.object({
+        inputThreshold: z.number().positive(),
+        inputThresholdInclusive: z.boolean().optional(),
+        input: z.number().nonnegative().optional(),
+        output: z.number().nonnegative().optional(),
+        cacheRead: z.number().nonnegative().optional(),
+        cacheWrite: z.number().nonnegative().optional(),
+      }).optional(),
       timeBased: catalogTimeBasedSchema.optional(),
     })
     .partial()
     .passthrough()
     .optional(),
 });
+
+/** Compact v1 wire format documented by the catalog's model-catalog-format.ts. */
+const encodedValueSchema = z.union([
+  z.string(), z.number(), z.boolean(), z.null(), z.tuple([z.number().int().min(-1)]),
+]);
+const compactCatalogSchema = z.object({
+  version: z.literal(1),
+  keys: z.array(z.string()),
+  booleanShapes: z.array(z.array(z.number().int().nonnegative())),
+  nodes: z.array(z.union([
+    z.tuple([z.literal(0), z.array(encodedValueSchema), z.number().int().nonnegative(), z.array(z.number())]),
+    z.tuple([z.literal(1), z.array(encodedValueSchema)]),
+  ])),
+  providers: z.array(z.tuple([
+    z.string(), encodedValueSchema,
+    z.array(z.tuple([z.string(), encodedValueSchema]).rest(z.unknown())),
+  ])),
+});
+
+/** Decode model data only; API compatibility deltas are unrelated to pricing. */
+function decodeCatalog(payload: unknown): Record<string, Record<string, unknown>> {
+  const data = compactCatalogSchema.parse(payload);
+  const decoded = new Map<number, unknown>();
+  const visiting = new Set<number>();
+  const keyAt = (id: unknown): string => {
+    if (typeof id !== "number" || !Number.isInteger(id) || data.keys[id] === undefined) {
+      throw new Error("Invalid catalog property reference");
+    }
+    return data.keys[id];
+  };
+  const decode = (value: z.infer<typeof encodedValueSchema>): unknown => {
+    if (!Array.isArray(value)) return value;
+    const id = value[0];
+    if (id === -1) return undefined;
+    if (decoded.has(id)) return decoded.get(id);
+    const node = data.nodes[id];
+    if (!node || visiting.has(id)) throw new Error("Invalid catalog node reference");
+    visiting.add(id);
+    let result: unknown;
+    if (node[0] === 1) {
+      result = node[1].map(decode);
+    } else {
+      const fields: Record<string, unknown> = Object.create(null);
+      if (node[1].length % 2) throw new Error("Invalid catalog object properties");
+      for (let i = 0; i < node[1].length; i += 2) {
+        fields[keyAt(node[1][i])] = decode(node[1][i + 1]);
+      }
+      const shape = data.booleanShapes[node[2]];
+      if (!shape) throw new Error("Invalid catalog boolean shape");
+      shape.forEach((key, bit) => {
+        fields[keyAt(key)] = ((node[3][bit >>> 5] >>> (bit % 32)) & 1) === 1;
+      });
+      result = fields;
+    }
+    visiting.delete(id);
+    decoded.set(id, result);
+    return result;
+  };
+  const providers: Record<string, Record<string, unknown>> = Object.create(null);
+  const objectSchema = z.record(z.string(), z.unknown());
+  for (const [provider, constants, rows] of data.providers) {
+    const defaults = objectSchema.parse(decode(constants));
+    const models: Record<string, unknown> = Object.create(null);
+    for (const [id, model] of rows) {
+      models[id] = { ...defaults, ...objectSchema.parse(decode(model)) };
+    }
+    providers[provider] = models;
+  }
+  return providers;
+}
 
 /** 一份目录条目归一化后的价目卡（基础四腿 + 长上下文阶梯 + 峰谷）。 */
 export type CatalogCard = RateCard;
@@ -201,6 +279,7 @@ async function fetchCatalog(): Promise<CatalogCache> {
     signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS),
   })
     .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`pi catalog ${response.status}`))))
+    .then(decodeCatalog)
     .catch(() => null);
 
   // —— 默认倍率：来自 pi-catalog 的 cost，以基准模型的输出价格归一化 ——
@@ -236,13 +315,22 @@ async function fetchCatalog(): Promise<CatalogCache> {
           ? cost.cacheWrite
           : cacheRead;
         const base = { input, output, cacheRead, cacheWrite };
+        // The bundled catalog uses a single longContext card; the app uses tiers.
+        const tiers: LongContextTier[] | undefined = cost.longContext
+          ? [{
+              ...base,
+              ...cost.longContext,
+              inputThreshold: cost.longContext.inputThreshold,
+            }]
+          : normalizeTiers(cost.tiers, base);
+        const timeBased = normalizeTimeBased(cost.timeBased);
         entries.push({
           provider: providerName,
           modelId,
           card: {
             ...base,
-            ...(normalizeTiers(cost.tiers, base) ? { tiers: normalizeTiers(cost.tiers, base) } : {}),
-            ...(normalizeTimeBased(cost.timeBased) ? { timeBased: normalizeTimeBased(cost.timeBased) } : {}),
+            ...(tiers ? { tiers } : {}),
+            ...(timeBased ? { timeBased } : {}),
           },
           canonical: CANONICAL_PROVIDERS[providerName] === true,
         });
@@ -279,6 +367,7 @@ async function fetchCatalog(): Promise<CatalogCache> {
     }
     if (baseline) {
       const denominator = baseline.card[BASELINE_RATE];
+      const aliases = new Map<string, CostEntry>();
       for (const entry of entries) {
         // 输入、输出、缓存读取、缓存写入倍率统一以基准模型输出价格为分母：
         // deepseek/flash 的输出倍率恰为 1.0，其余腿按该价格折算。长上下文
@@ -303,12 +392,16 @@ async function fetchCatalog(): Promise<CatalogCache> {
           ...(entry.card.timeBased ? { timeBased: entry.card.timeBased } : {}),
         };
         rates[`${entry.provider}/${entry.modelId}`] = rate;
-        const existing = rates[entry.modelId];
-        if (!existing) {
-          rates[entry.modelId] = rate;
-        } else if (entry.canonical || rate.input < existing.input) {
-          // 裸 ID 别名：一线供应商覆盖任意报价，非一线之间取更便宜的。
-          rates[entry.modelId] = rate;
+        const existing = aliases.get(entry.modelId);
+        if (!existing || (!existing.canonical && (entry.canonical || entry.card.input < existing.card.input))) {
+          aliases.set(entry.modelId, entry);
+        }
+      }
+      // Provider-qualified keys must not be overwritten by aggregator model IDs
+      // such as "deepseek/deepseek-v4-flash" when constructing bare aliases.
+      for (const [modelId, entry] of aliases) {
+        if (!Object.hasOwn(rates, modelId)) {
+          rates[modelId] = rates[`${entry.provider}/${entry.modelId}`];
         }
       }
     }
@@ -320,7 +413,7 @@ async function fetchCatalog(): Promise<CatalogCache> {
 /**
  * pi-catalog 的进程内缓存 + MongoDB 持久化兜底。
  *
- * 只放进程内缓存在 serverless 上不够：冷启动遇到 pi.dev 不可达时
+ * 只放进程内缓存在 serverless 上不够：冷启动遇到 jsDelivr 不可达时
  * `rates` 为空，没有上游报价的模型都会按 1x 计费（模型间相对价格全丢）。
  * 因此每次成功拉取都写一份快照，冷启动/故障时用最后一份好数据。
  */
@@ -383,7 +476,7 @@ export async function getCatalogRates(forceRefresh = false): Promise<CatalogCach
   }
   inflight = fetchCatalog()
     .then(async (data) => {
-      // pi.dev 完全不可达时不缓存空结果，避免一次瞬时故障把 24h 缓存
+      // jsDelivr 完全不可达时不缓存空结果，避免一次瞬时故障把 24h 缓存
       // 投毒成全空（显示不计费 1x）；下次请求会重试。
       if (Object.keys(data.rates).length === 0) {
         throw new Error("pi-catalog returned no metadata");

@@ -705,7 +705,7 @@ SMTP_HOST、SMTP_USER、SMTP_PASSWORD 任一未配置时整站不出信：注册
 
 ### GET /api/admin/models/metadata
 
-返回 pi-catalog（`https://pi.dev/api/models`）按供应商压平合并后的模型倍率元数据，实例内存缓存 24 小时；pi.dev 不可用时返回空映射。
+返回 pi-catalog（`https://cdn.jsdelivr.net/npm/@oh-my-pi/pi-catalog/src/models.json`）压缩 v1 目录解码并按供应商压平合并后的模型倍率元数据，实例内存缓存 24 小时；源不可用或载荷无效时回退内存缓存，再回退 MongoDB 快照；全部不可用时返回空映射。
 
 - 输入 / 缓存读取 / 缓存写入 / 输出四条腿都以 `deepseek/deepseek-flash` 的输出价格为基准归一化（基准恰为 1.0）；`cost.cacheRead` 缺失时按该模型的输入价折算，`cost.cacheWrite` 缺失时按 `cacheRead` 折算。
 - 长上下文阶梯（`tiers`）与峰谷（`timeBased`）按目录原样下传，阶梯价格同分母折算；峰谷系数是无量纲比值，原样保留。
@@ -793,7 +793,7 @@ SMTP_HOST、SMTP_USER、SMTP_PASSWORD 任一未配置时整站不出信：注册
 
 ### GET /api/admin/models/metadata
 
-返回 pi-catalog（`https://pi.dev/api/models`）按供应商压平合并后的倍率映射，实例内存缓存 24 小时；pi.dev 不可用时返回空映射。完整 `vendor/model` 键与 `/` 后的裸 ID 均可命中。
+返回 pi-catalog（`https://cdn.jsdelivr.net/npm/@oh-my-pi/pi-catalog/src/models.json`）压缩 v1 目录解码并按供应商压平合并后的倍率映射，实例内存缓存 24 小时；源不可用或载荷无效时回退内存缓存，再回退 MongoDB 快照；全部不可用时返回空映射。完整 `vendor/model` 键与裸模型 ID 均可命中；完整键优先保留对应供应商报价，裸 ID 优先官方供应商。`longContext` 转换为内部 `tiers`，保留阈值的包含关系及四腿价格。
 
 - 上游 `/v1/models` 自报的报价按上游存放（`upstreams.modelPrices`），解析时优先于本目录；只有上游没返回（或返回 0）的字段才回退到这里。
 
