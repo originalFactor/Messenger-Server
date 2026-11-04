@@ -9,17 +9,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ReasoningEffortSelect } from "@/components/messenger/reasoning-effort-select";
 import { resolveTools } from "@/components/messenger/chat-wire";
 import type { ConversationDoc, ProviderDoc } from "@/lib/types";
 
 type Props = {
   conversation: ConversationDoc;
   providers: ProviderDoc[];
+  agentModelId: string | null;
   onClose: () => void;
   onSave: (conversation: ConversationDoc) => Promise<void>;
 };
 
-export function ConversationSettings({ conversation, providers, onClose, onSave }: Props) {
+export function ConversationSettings({ conversation, providers, agentModelId, onClose, onSave }: Props) {
   const [model, setModel] = useState(conversation.overrideModelId ?? "");
   const [temperature, setTemperature] = useState(conversation.overrideTemperature?.toString() ?? "");
   const [topP, setTopP] = useState(conversation.overrideTopP?.toString() ?? "");
@@ -70,13 +72,16 @@ export function ConversationSettings({ conversation, providers, onClose, onSave 
               { id: "temperature", label: "Temperature", value: temperature, set: setTemperature, step: "0.1" },
               { id: "top-p", label: "Top P (top_p)", value: topP, set: setTopP, step: "0.05" },
               { id: "max-tokens", label: "Max tokens (max_tokens)", value: maxTokens, set: setMaxTokens, step: "1" },
-              { id: "reasoning", label: "Reasoning effort", value: reasoning, set: setReasoning, step: undefined },
             ].map((field) => (
               <div key={field.id} className="grid gap-2">
                 <Label htmlFor={`conversation-${field.id}`}>{field.label}</Label>
-                <Input id={`conversation-${field.id}`} type={field.step ? "number" : "text"} step={field.step} value={field.value} onChange={(event) => field.set(event.target.value)} placeholder={field.step ? "跟随 Agent" : "跟随 Agent / low / medium / high"} />
+                <Input id={`conversation-${field.id}`} type="number" step={field.step} value={field.value} onChange={(event) => field.set(event.target.value)} placeholder="跟随 Agent" />
               </div>
             ))}
+            <div className="grid gap-2">
+              <Label htmlFor="conversation-reasoning">Reasoning effort</Label>
+              <ReasoningEffortSelect id="conversation-reasoning" modelId={model || agentModelId} value={reasoning} onChange={setReasoning} disabled={saving} defaultLabel="跟随 Agent" />
+            </div>
             <div className="grid gap-2">
               <Label htmlFor="conversation-tools">工具</Label>
               <Select value={toolsEnabled === null ? "follow" : toolsEnabled ? "on" : "off"} onValueChange={(value) => setToolsEnabled(value === "follow" ? null : value === "on")}>

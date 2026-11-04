@@ -33,8 +33,8 @@ import type { LongContextTier, PeakWindow, RateCard, TimeBasedPricing } from "@/
  * 长上下文阶梯与峰谷配置跟随同一条来源链（各自整体取用，不与另一侧逐项
  * 混拼，否则阈值/时段会和价格错配）。
  *
- * 上下文窗口不由服务端下发（客户端自行推导）。条目缺 cacheRead 时按该
- * 模型的输入价折算（不收缓存折扣的供应商即如此）；缺 cacheWrite 时按
+ * 模型能力供 Messenger Web 的 metadata 查询使用；Android/Desktop 自行推导。
+ * 条目缺 cacheRead 时按该模型的输入价折算（不收缓存折扣的供应商即如此）；缺 cacheWrite 时按
  * cacheRead 折算。
  *
  * 载荷在实例内存中缓存 24 小时，并每次成功拉取后落库一份快照；拉取失败
@@ -195,9 +195,63 @@ export type CatalogCard = RateCard;
 
 export type CatalogRateMap = Record<string, CatalogCard>;
 
+/** Public model capabilities used by Messenger Web, independently of model pricing. */
+export interface CatalogModelMetadata {
+  contextWindow: number | null;
+  maxOutputTokens: number | null;
+  inputModalities: string[];
+  reasoning: boolean | null;
+  reasoningEfforts: string[];
+  defaultReasoningEffort: string | null;
+}
+export type CatalogMetadataMap = Record<string, CatalogModelMetadata>;
+
+const modelMetadataSchema = z.object({
+  contextWindow: z.number().positive().nullish(),
+  maxTokens: z.number().positive().nullish(),
+  input: z.array(z.string()).optional(),
+  reasoning: z.boolean().optional(),
+  thinking: z.object({
+    efforts: z.array(z.string().min(1)),
+    defaultLevel: z.string().optional(),
+  }).optional(),
+});
+
+function extractModelMetadata(providers: Record<string, Record<string, unknown>>): CatalogMetadataMap {
+  const metadata: CatalogMetadataMap = Object.create(null);
+  const aliases = new Map<string, { provider: string; metadata: CatalogModelMetadata }>();
+  for (const [provider, models] of Object.entries(providers)) {
+    for (const [id, raw] of Object.entries(models)) {
+      const parsed = modelMetadataSchema.safeParse(raw);
+      if (!parsed.success) continue;
+      const model = parsed.data;
+      const efforts = [...new Set(model.thinking?.efforts ?? [])];
+      const value: CatalogModelMetadata = {
+        contextWindow: model.contextWindow ?? null,
+        maxOutputTokens: model.maxTokens ?? null,
+        inputModalities: model.input ?? [],
+        reasoning: model.reasoning ?? null,
+        reasoningEfforts: efforts,
+        defaultReasoningEffort: model.thinking?.defaultLevel && efforts.includes(model.thinking.defaultLevel)
+          ? model.thinking.defaultLevel : null,
+      };
+      metadata[`${provider}/${id}`] = value;
+      const existing = aliases.get(id);
+      if (!existing || (!CANONICAL_PROVIDERS[existing.provider] && CANONICAL_PROVIDERS[provider])) {
+        aliases.set(id, { provider, metadata: value });
+      }
+    }
+  }
+  for (const [id, entry] of aliases) {
+    if (!Object.hasOwn(metadata, id)) metadata[id] = entry.metadata;
+  }
+  return metadata;
+}
+
 interface CatalogCache {
   fetchedAt: number;
   rates: CatalogRateMap;
+  models: CatalogMetadataMap;
   /** True when the data came from a stale snapshot or an empty-rate fallback. */
   degraded: boolean;
 }
@@ -407,7 +461,7 @@ async function fetchCatalog(): Promise<CatalogCache> {
     }
   }
 
-  return { fetchedAt: Date.now(), rates, degraded: false };
+  return { fetchedAt: Date.now(), rates, models: payload ? extractModelMetadata(payload) : {}, degraded: false };
 }
 
 /**
@@ -421,6 +475,7 @@ interface CatalogSnapshotDoc {
   _id: string;
   fetchedAt: number;
   rates: CatalogRateMap;
+  models?: CatalogMetadataMap;
 }
 
 const SNAPSHOT_ID = "pi_catalog";
@@ -446,7 +501,7 @@ async function readSnapshot(): Promise<CatalogCache | null> {
         ...(rate.timeBased ? { timeBased: rate.timeBased } : {}),
       };
     }
-    return { fetchedAt: doc.fetchedAt, rates, degraded: true };
+    return { fetchedAt: doc.fetchedAt, rates, models: doc.models ?? {}, degraded: true };
   } catch {
     return null;
   }
@@ -457,7 +512,7 @@ async function writeSnapshot(snapshot: CatalogCache): Promise<void> {
     const db = await getDb();
     await db.collection<CatalogSnapshotDoc>("model_metadata").updateOne(
       { _id: SNAPSHOT_ID },
-      { $set: { fetchedAt: snapshot.fetchedAt, rates: snapshot.rates } },
+      { $set: { fetchedAt: snapshot.fetchedAt, rates: snapshot.rates, models: snapshot.models } },
       { upsert: true },
     );
   } catch {
@@ -498,7 +553,7 @@ export async function getCatalogRates(forceRefresh = false): Promise<CatalogCach
         return snapshot;
       }
       catalogLog.error("pi-catalog metadata is unavailable; rate resolution is degraded to 1x.");
-      return { fetchedAt: 0, rates: {} as CatalogRateMap, degraded: true };
+      return { fetchedAt: 0, rates: {} as CatalogRateMap, models: {}, degraded: true };
     })
     .finally(() => {
       inflight = null;

@@ -1078,7 +1078,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
         )}
       </main>
       {conversationSettingsOpen && selected ? (
-        <ConversationSettings key={selected._id} conversation={selected} providers={providers} onClose={() => setConversationSettingsOpen(false)} onSave={async (next) => {
+        <ConversationSettings key={selected._id} conversation={selected} providers={providers} agentModelId={agent?.defaultModelId ?? provider?.models.find((model) => model.isEnabled)?.modelId ?? null} onClose={() => setConversationSettingsOpen(false)} onSave={async (next) => {
           await saveConversation(next);
           updateConversation(next);
         }} />

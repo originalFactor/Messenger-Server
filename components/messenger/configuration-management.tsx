@@ -33,6 +33,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgentDoc, ModelEmbed, ProjectDoc, ProviderDoc } from "@/lib/types";
+import { ReasoningEffortSelect } from "@/components/messenger/reasoning-effort-select";
 import type { PlazaModel } from "@/lib/model-plaza";
 
 type Props = {
@@ -249,6 +250,9 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
   const selectedAgentProvider = allProviders.find((item) => item._id === agent?.selectedProviderId);
   const selectedAgentModels = selectedAgentProvider?.models.filter((model) => model.isEnabled) ?? [];
   const canFollowDefaults = agent?.role !== "default";
+  const defaultAgent = agents.find((item) => item.isDefault);
+  const effectiveAgentModel = canFollowDefaults && agent?.followDefaultModel
+    ? defaultAgent?.defaultModelId : agent?.defaultModelId;
 
   const activeItems = tab === "agents" ? agents : tab === "providers" ? providers : projects;
   const visibleItems = activeItems.filter((item) => {
@@ -536,7 +540,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
                   <div className="grid gap-2"><Label htmlFor="agent-temperature">Temperature</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultTemperature" label="跟随默认" checked={agent.followDefaultTemperature} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTemperature: checked })} /> : null}<Input id="agent-temperature" type="number" step="0.1" value={agent.temperature} disabled={agent.followDefaultTemperature && canFollowDefaults} onChange={(event) => setAgent({ ...agent, temperature: event.target.value })} /></div>
                   <div className="grid gap-2"><Label htmlFor="agent-topP">Top P (top_p)</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultTopP" label="跟随默认" checked={agent.followDefaultTopP} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTopP: checked })} /> : null}<Input id="agent-topP" type="number" step="0.05" value={agent.topP} disabled={agent.followDefaultTopP && canFollowDefaults} onChange={(event) => setAgent({ ...agent, topP: event.target.value })} /></div>
                   <div className="grid gap-2"><Label htmlFor="agent-maxTokens">Max tokens (max_tokens)</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultMaxTokens" label="跟随默认" checked={agent.followDefaultMaxTokens} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultMaxTokens: checked })} /> : null}<Input id="agent-maxTokens" type="number" value={agent.maxTokens} disabled={agent.followDefaultMaxTokens && canFollowDefaults} onChange={(event) => setAgent({ ...agent, maxTokens: event.target.value })} placeholder="自动" /></div>
-                  <div className="grid gap-2"><Label htmlFor="agent-reasoningEffort">Reasoning effort</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultReasoningEffort" label="跟随默认" checked={agent.followDefaultReasoningEffort} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultReasoningEffort: checked })} /> : null}<Input id="agent-reasoningEffort" value={agent.reasoningEffort} disabled={agent.followDefaultReasoningEffort && canFollowDefaults} onChange={(event) => setAgent({ ...agent, reasoningEffort: event.target.value })} placeholder="default / low / high" /></div>
+                  <div className="grid gap-2"><Label htmlFor="agent-reasoningEffort">Reasoning effort</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultReasoningEffort" label="跟随默认" checked={agent.followDefaultReasoningEffort} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultReasoningEffort: checked })} /> : null}<ReasoningEffortSelect id="agent-reasoningEffort" modelId={effectiveAgentModel} value={canFollowDefaults && agent.followDefaultReasoningEffort ? defaultAgent?.reasoningEffort ?? "" : agent.reasoningEffort} disabled={saving || (agent.followDefaultReasoningEffort && canFollowDefaults)} onChange={(value) => setAgent({ ...agent, reasoningEffort: value })} /></div>
                 </div>
                 <p className="text-xs text-muted-foreground">默认 Agent 作为角色单独存在；当前默认 Agent 不能直接取消，请在其他 Agent 上选择“默认 Agent”完成转移。</p>
                 <div className="flex flex-wrap justify-between gap-2"><DeleteButton onConfirm={() => void removeCurrent()} /><Button onClick={() => void saveAgent()} disabled={saving}><Save /> {saving ? "保存中..." : "保存 Agent"}</Button></div>

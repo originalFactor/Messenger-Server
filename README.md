@@ -272,3 +272,11 @@ files, so very large date ranges cost more I/O.
 Existing `runtime_logs` database records are neither queried nor migrated. This
 change leaves the old collection untouched; it can be removed manually after
 any required archival. Usage/billing and authentication records remain in MongoDB.
+
+Messenger Web also reads model capabilities from the same fork catalog: context
+window, output limit, input modalities, reasoning support and available efforts.
+Agent editing and conversation overrides offer model-specific reasoning-effort
+dropdowns, with model-default / follow-Agent options. Unknown saved values remain
+intact. The authenticated `/api/models/metadata?modelId=...` endpoint shares the
+pricing catalog cache and persisted snapshot; no provider keys are sent to the
+catalog source.

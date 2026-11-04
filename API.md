@@ -703,6 +703,28 @@ SMTP_HOST、SMTP_USER、SMTP_PASSWORD 任一未配置时整站不出信：注册
 - `PATCH`：仅未用卡可停用，请求体 `{ "status": "disabled" }`。
 - `DELETE`：仅未用/停用卡可删除；已兑换卡保留作对账凭据。
 
+### GET /api/models/metadata?modelId={modelId}
+
+Messenger Web 的模型能力查询，需有效用户会话（普通用户可用）；未登录返回 `401`，空或超过 512 字符的模型 ID 返回 `400`。
+
+从 fork catalog 解码出的模型能力中匹配完整/裸 ID 及已有的前后缀别名，响应：
+
+```json
+{
+  "metadata": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 384000,
+    "inputModalities": ["text", "image"],
+    "reasoning": true,
+    "reasoningEfforts": ["low", "high", "max"],
+    "defaultReasoningEffort": null
+  },
+  "degraded": false
+}
+```
+
+未命中时 `metadata=null`。模型能力与 pricing 共用 24 小时缓存及持久化快照；旧快照缺少能力时不猜测推理档位。返回值不含 Provider 凭据，也不要求管理权限。Agent 编辑和对话 override 下拉框使用 `reasoningEfforts`；空值分别表示模型默认 / 跟随 Agent。已有但未列出的档位保留；查询不改写同步实体。Android/Desktop 的本地 metadata 来源不受影响。
+
 ### GET /api/admin/models/metadata
 
 返回 pi-catalog（`https://cdn.jsdelivr.net/npm/@oh-my-pi/pi-catalog/src/models.json`）压缩 v1 目录解码并按供应商压平合并后的模型倍率元数据，实例内存缓存 24 小时；源不可用或载荷无效时回退内存缓存，再回退 MongoDB 快照；全部不可用时返回空映射。
