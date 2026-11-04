@@ -61,7 +61,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatPeakWindows, parsePeakWindows } from "@/lib/pricing";
@@ -1515,8 +1515,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
               优先级数字越小越优先，同一模型有多个来源时会自动按优先级切换。
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea type="always" className="-mx-4 min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]]:overscroll-contain">
-          <form id="upstream-form" className="grid gap-4 px-4 pb-1" onSubmit={submit}>
+          <ScrollArea type="always" className="-mx-4 min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]]:overscroll-contain [&_[data-slot=table-container]]:overflow-visible">
+          <form id="upstream-form" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 px-4 pb-3" onSubmit={submit}>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="grid gap-2">
                 <Label htmlFor="upstream-name">名称</Label>
@@ -1640,7 +1640,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
               </div>
             </div>
 
-            <div className="grid gap-3">
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
               {tableModelIds.length > 0 ? (
                 <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-lg border bg-popover p-2">
                   <span className="text-xs text-muted-foreground">已选 {checkedCount} / {tableModelIds.length}</span>
@@ -1665,7 +1665,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                 </div>
               ) : null}
               {tableModelIds.length > 0 ? (
-                <div className="overflow-hidden rounded-lg border">
+                <div className="min-w-0 rounded-lg border">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -1810,6 +1810,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
 
             {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
           </form>
+          <ScrollBar orientation="horizontal" />
           </ScrollArea>
           <DialogFooter className="relative z-20 shrink-0">
             <Button type="submit" form="upstream-form" disabled={modelActionsBusy}>
