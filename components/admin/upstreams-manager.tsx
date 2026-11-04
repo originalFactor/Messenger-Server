@@ -16,11 +16,17 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Activity, ArrowDownToLine, ChevronsUpDown, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -128,6 +134,113 @@ interface ScheduleDraft {
   peakWindows: string;
 }
 
+interface BulkEditValues {
+  changeMultiplier: boolean;
+  multiplier: string;
+  changeOffPeak: boolean;
+  offPeakMultiplier: string;
+  changeWindows: boolean;
+  peakWindows: string;
+}
+
+/** 先校验整批再生成草稿，未勾选的字段逐模型保留。 */
+function buildBulkEditDrafts(
+  modelIds: readonly string[],
+  values: BulkEditValues,
+  scheduleOf: (modelId: string) => ScheduleDraft,
+): Record<string, Partial<MetaDraft>> {
+  if (!values.changeMultiplier && !values.changeOffPeak && !values.changeWindows) {
+    throw new Error("请至少选择一个要修改的字段。");
+  }
+  if (values.changeMultiplier && parseMultiplierInput(values.multiplier) === "invalid") {
+    throw new Error("模型整体倍率必须是非负数字。");
+  }
+  if (values.changeOffPeak && parseMultiplierInput(values.offPeakMultiplier) === "invalid") {
+    throw new Error("谷时倍率必须是非负数字。");
+  }
+  const patches: Record<string, Partial<MetaDraft>> = {};
+  for (const modelId of modelIds) {
+    const patch: Partial<MetaDraft> = {};
+    if (values.changeMultiplier) patch.multiplier = values.multiplier;
+    if (values.changeOffPeak || values.changeWindows) {
+      const schedule = { ...scheduleOf(modelId) };
+      if (values.changeOffPeak) schedule.offPeakMultiplier = values.offPeakMultiplier;
+      if (values.changeWindows) schedule.peakWindows = values.peakWindows;
+      const parsed = parsePeakWindows(schedule.peakWindows);
+      if ("error" in parsed) throw new Error(`模型 ${modelId}：${parsed.error}`);
+      if (values.changeOffPeak && parsed.windows.length === 0) {
+        throw new Error(`模型 ${modelId} 没有峰值时段，请同时设置峰值时段后再修改谷时倍率。`);
+      }
+      patch.timeBased = schedule;
+    }
+    patches[modelId] = patch;
+  }
+  return patches;
+}
+
+function omitModels<T>(values: Record<string, T>, modelIds: ReadonlySet<string>): Record<string, T> {
+  return Object.fromEntries(Object.entries(values).filter(([id]) => !modelIds.has(id)));
+}
+
+function BulkModelEditor({ modelIds, onApply, onClose }: {
+  modelIds: string[];
+  onApply: (values: BulkEditValues) => string | undefined;
+  onClose: () => void;
+}) {
+  const [values, setValues] = useState<BulkEditValues>({
+    changeMultiplier: false, multiplier: "1", changeOffPeak: false,
+    offPeakMultiplier: "1", changeWindows: false, peakWindows: "",
+  });
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-h-[calc(100vh-6rem)] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>批量编辑 {modelIds.length} 个模型</DialogTitle>
+          <DialogDescription>勾选要修改的字段，未勾选的保留各模型原值。应用后需保存上游。</DialogDescription>
+        </DialogHeader>
+        <form id="bulk-model-form" className="grid gap-4" onSubmit={(event) => {
+          event.preventDefault();
+          setError(onApply(values) ?? null);
+        }}>
+          <div className="grid gap-2">
+            <Label className="flex items-center gap-2">
+              <Checkbox checked={values.changeMultiplier} onCheckedChange={(checked) => setValues({ ...values, changeMultiplier: checked === true })} />
+              设置模型整体倍率
+            </Label>
+            <Input aria-label="批量模型整体倍率" inputMode="decimal" disabled={!values.changeMultiplier}
+              value={values.multiplier} onChange={(event) => setValues({ ...values, multiplier: event.target.value })} />
+          </div>
+          <div className="grid gap-2">
+            <Label className="flex items-center gap-2">
+              <Checkbox checked={values.changeOffPeak} onCheckedChange={(checked) => setValues({ ...values, changeOffPeak: checked === true })} />
+              设置谷时倍率（峰时 = 1）
+            </Label>
+            <Input aria-label="批量谷时倍率" inputMode="decimal" disabled={!values.changeOffPeak}
+              value={values.offPeakMultiplier} onChange={(event) => setValues({ ...values, offPeakMultiplier: event.target.value })} />
+            <p className="text-xs text-muted-foreground">仅修改谷时倍率时保留各模型峰值时段；没有时段的模型需要同时设置时段。</p>
+          </div>
+          <div className="grid gap-2">
+            <Label className="flex items-center gap-2">
+              <Checkbox checked={values.changeWindows} onCheckedChange={(checked) => setValues({ ...values, changeWindows: checked === true })} />
+              设置峰值时段
+            </Label>
+            <Textarea aria-label="批量峰值时段" rows={4} disabled={!values.changeWindows}
+              className="font-mono text-xs" placeholder={"1-5 01:00-09:00\n0,6 12:00-14:00"}
+              value={values.peakWindows} onChange={(event) => setValues({ ...values, peakWindows: event.target.value })} />
+            <p className="text-xs text-muted-foreground">UTC，每行一个时段，星期 0 = 周日。留空清除自定义峰谷配置并恢复继承。</p>
+          </div>
+          {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+        </form>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>取消</Button>
+          <Button type="submit" form="bulk-model-form">应用到所选模型</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function emptyTierDraft(): TierDraft {
   return { inputThreshold: "", inputRate: "", cacheReadRate: "", cacheWriteRate: "", outputRate: "" };
 }
@@ -216,7 +329,7 @@ function draftScheduleToMeta(draft: ScheduleDraft): UpstreamModelMeta["timeBased
   if ("error" in parsed || parsed.windows.length === 0) {
     return undefined;
   }
-  const multiplier = Number(draft.offPeakMultiplier.trim());
+  const multiplier = Number(draft.offPeakMultiplier.trim() || "1");
   return {
     offPeakMultiplier: Number.isFinite(multiplier) && multiplier >= 0 ? multiplier : 1,
     peakWindows: parsed.windows,
@@ -595,6 +708,12 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<UpstreamFormState>(emptyUpstreamForm);
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  /** 批量操作的勾选集合，与 models 的启用状态无关。 */
+  const [checkedModels, setCheckedModels] = useState<string[]>([]);
+  const [bulkEditingModels, setBulkEditingModels] = useState<string[]>([]);
+  const [pendingDeleteModels, setPendingDeleteModels] = useState<string[]>([]);
+  const [batchTestProgress, setBatchTestProgress] = useState<{ completed: number; total: number } | null>(null);
+  const batchTestController = useRef<AbortController | null>(null);
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
   /** 表中保留但停用的模型：不写入 models，仍在表格中显示，可随时重新启用。 */
   const [disabledModels, setDisabledModels] = useState<string[]>([]);
@@ -616,6 +735,13 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; text: string }>>({});
   /** 打开单模型编辑面板的模型；同时只编辑一个。 */
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
+
+  useEffect(() => () => batchTestController.current?.abort(), []);
+
+  function setFormOpen(open: boolean) {
+    if (!open) batchTestController.current?.abort();
+    setShowForm(open);
+  }
 
   // pi-catalog 元数据（归一化倍率），页面加载时拉取一次；上游 `/v1/models`
   // 自报的报价在各自编辑表单里优先于它。
@@ -644,6 +770,9 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setEditingId(null);
     setForm(emptyUpstreamForm);
     setSelectedModels([]);
+    setCheckedModels([]);
+    setBulkEditingModels([]);
+    setPendingDeleteModels([]);
     setDiscoveredModels([]);
     setDisabledModels([]);
     setManualModel("");
@@ -670,6 +799,9 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       multiplier: multiplierDisplay(upstream.multiplier),
     });
     setSelectedModels([...upstream.models].sort((a, b) => a.localeCompare(b)));
+    setCheckedModels([]);
+    setBulkEditingModels([]);
+    setPendingDeleteModels([]);
     setDiscoveredModels([...upstream.models].sort((a, b) => a.localeCompare(b)));
     setDisabledModels([...(upstream.disabledModels ?? [])].sort((a, b) => a.localeCompare(b)));
     setManualModel("");
@@ -702,59 +834,52 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
 
   /** 从表中彻底删除模型：同时移除 models、停用列表、已存元数据与上游报价。 */
   function deleteFormModel(modelId: string) {
-    if (!window.confirm(`确定从该上游删除模型「${modelId}」？`)) {
-      return;
-    }
-    setSelectedModels((selected) => selected.filter((value) => value !== modelId));
-    setDiscoveredModels((models) => models.filter((value) => value !== modelId));
-    setDisabledModels((disabled) => disabled.filter((value) => value !== modelId));
-    setModelPrices((prices) => {
-      if (prices[modelId] === undefined) {
-        return prices;
-      }
-      const next = { ...prices };
-      delete next[modelId];
-      return next;
-    });
-    setEditingModelMeta((meta) => {
-      if (meta[modelId] === undefined) {
-        return meta;
-      }
-      const next = { ...meta };
-      delete next[modelId];
-      return next;
-    });
-    setOverrideDrafts((drafts) => {
-      if (drafts[modelId] === undefined) {
-        return drafts;
-      }
-      const next = { ...drafts };
-      delete next[modelId];
-      return next;
-    });
-    setMetaDrafts((drafts) => {
-      if (drafts[modelId] === undefined) {
-        return drafts;
-      }
-      const next = { ...drafts };
-      delete next[modelId];
-      return next;
-    });
-    setTestResults((results) => {
-      if (results[modelId] === undefined) {
-        return results;
-      }
-      const next = { ...results };
-      delete next[modelId];
-      return next;
-    });
-    // 正在编辑的模型被删掉了，面板不能留在已不存在的行上。
-    setEditingModelId((current) => (current === modelId ? null : current));
+    setPendingDeleteModels([modelId]);
+  }
+
+  function removeFormModels(ids: readonly string[]) {
+    const removed = new Set(ids);
+    const keep = (values: string[]) => values.filter((id) => !removed.has(id));
+    setSelectedModels(keep);
+    setDiscoveredModels(keep);
+    setDisabledModels(keep);
+    setCheckedModels(keep);
+    setModelPrices((values) => omitModels(values, removed));
+    setEditingModelMeta((values) => omitModels(values, removed));
+    setOverrideDrafts((values) => omitModels(values, removed));
+    setMetaDrafts((values) => omitModels(values, removed));
+    setTestResults((values) => omitModels(values, removed));
+    setEditingModelId((current) => current && removed.has(current) ? null : current);
     setFormError(null);
+  }
+
+  function disableCheckedModels() {
+    const checked = new Set(checkedModels);
+    setSelectedModels((models) => models.filter((id) => !checked.has(id)));
+    setDisabledModels((models) => [...new Set([...models, ...checked])]);
+    toast.success(`已停用 ${checked.size} 个模型，保存上游后生效。`);
+  }
+
+  function applyBulkEdit(values: BulkEditValues): string | undefined {
+    try {
+      const patches = buildBulkEditDrafts(bulkEditingModels, values, (id) => pricingDraft(id).timeBased);
+      setMetaDrafts((drafts) => {
+        const next = { ...drafts };
+        for (const [id, patch] of Object.entries(patches)) {
+          next[id] = { ...next[id], ...patch };
+        }
+        return next;
+      });
+      setBulkEditingModels([]);
+      toast.success(`已更新 ${bulkEditingModels.length} 个模型，保存上游后生效。`);
+    } catch (error) {
+      return error instanceof Error ? error.message : "批量编辑失败。";
+    }
   }
 
   /** 手动添加模型：直接启用（表格里用「停用」撤销）。 */
   function addManualModel() {
+    if (modelActionsBusy) return;
     const modelId = manualModel.trim();
     if (!modelId) return;
     setDiscoveredModels((models) =>
@@ -795,8 +920,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       setDiscoveredModels((models) =>
         [...new Set([...models, ...payload.models ?? []])].sort((a, b) => a.localeCompare(b)),
       );
-      // 新发现的模型默认启用并写入 models：表格不再有勾选框，「停用」才是
-      // 显式动作（停用会把它移进 disabledModels）。
+      // 新发现的模型默认启用；批量勾选与启用状态分开维护。
       setSelectedModels((selected) =>
         [...new Set([...selected, ...payload.models ?? []])].sort((a, b) => a.localeCompare(b)),
       );
@@ -897,7 +1021,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
           return drafts;
         }
         const next = { ...drafts };
-        next[modelId] = { catalogModelId: drafts[modelId].catalogModelId };
+        const { catalogModelId, multiplier, tiers, timeBased } = drafts[modelId];
+        next[modelId] = { catalogModelId, multiplier, tiers, timeBased };
         return next;
       });
     }
@@ -989,11 +1114,19 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     timeBased?: UpstreamModelMeta["timeBased"];
   } {
     const fallback = defaultMeta(modelId);
-    if (!rowOverride(modelId)) {
-      return fallback;
-    }
     const stored = editingModelMeta[modelId];
     const draft = metaDrafts[modelId];
+    const extras = {
+      tiers: draft?.tiers !== undefined
+        ? draftTiersToMeta(draft.tiers) ?? fallback.tiers
+        : stored?.tiers ?? fallback.tiers,
+      timeBased: draft?.timeBased !== undefined
+        ? draftScheduleToMeta(draft.timeBased) ?? fallback.timeBased
+        : stored?.timeBased ?? fallback.timeBased,
+    };
+    if (!rowOverride(modelId)) {
+      return { ...fallback, ...extras };
+    }
     const pickRate = (
       draftValue: string | undefined,
       storedValue: number | null | undefined,
@@ -1018,8 +1151,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
         : inputRate * fallback.cacheWriteDiscount,
       outputRate: pickRate(draft?.outputRate, stored?.outputRate, fallback.outputRate),
       // 阶梯/峰谷：草稿（整份编辑）> 已存自定义 > 上游/目录。
-      tiers: draft?.tiers ? draftTiersToMeta(draft.tiers) : stored?.tiers ?? fallback.tiers,
-      timeBased: draft?.timeBased ? draftScheduleToMeta(draft.timeBased) : stored?.timeBased ?? fallback.timeBased,
+      ...extras,
     };
   }
 
@@ -1042,6 +1174,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (modelActionsBusy) return;
     // 草稿格式校验：无效输入阻止提交。
     for (const [modelId, draft] of Object.entries(metaDrafts)) {
       const badRate =
@@ -1095,34 +1228,23 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       return;
     }
     const modelMeta: Record<string, UpstreamModelMeta> = {};
-    for (const modelId of discoveredModels) {
+    for (const modelId of tableModelIds) {
       const draft = metaDrafts[modelId];
       const hasDraft = draft !== undefined && Object.keys(draft).length > 0;
       if (overrideDrafts[modelId] === undefined && editingModelMeta[modelId] === undefined && !hasDraft) {
         continue;
       }
-      if (!rowOverride(modelId)) {
-        // 覆盖关闭：保留目录目标与整体倍率，并关闭覆盖开关。
-        const entry: UpstreamModelMeta = { override: false };
-        const catalogModelId = rowCatalogModelId(modelId);
-        if (catalogModelId) entry.catalogModelId = catalogModelId;
-        if (draft?.multiplier !== undefined) {
-          entry.multiplier = parseMultiplier(draft.multiplier);
-        } else if (editingModelMeta[modelId]?.multiplier !== undefined) {
-          entry.multiplier = editingModelMeta[modelId]?.multiplier;
-        }
-        modelMeta[modelId] = entry;
-        continue;
-      }
-      const resolved = resolvedMeta(modelId);
       const entry: UpstreamModelMeta = {
-        override: true,
+        override: rowOverride(modelId),
         ...(rowCatalogModelId(modelId) ? { catalogModelId: rowCatalogModelId(modelId) } : {}),
-        cacheReadRate: resolved.cacheReadRate,
-        cacheWriteRate: resolved.cacheWriteRate,
-        inputRate: resolved.inputRate,
-        outputRate: resolved.outputRate,
       };
+      if (entry.override) {
+        const resolved = resolvedMeta(modelId);
+        entry.cacheReadRate = resolved.cacheReadRate;
+        entry.cacheWriteRate = resolved.cacheWriteRate;
+        entry.inputRate = resolved.inputRate;
+        entry.outputRate = resolved.outputRate;
+      }
       // 阶梯/峰谷是整份配置：只有用户真正编辑过（草稿里有）或本来就有自定义
       // 值时才写入。打开编辑器看一眼继承来的配置不该把它固化成自定义 ——
       // 否则上游/目录后续更新就再也影响不到这个模型。
@@ -1167,6 +1289,9 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     }
     if (Object.keys(keptPrices).length > 0) {
       payload.modelPrices = keptPrices;
+    } else if (editingId && Object.keys(upstreams.find((upstream) => upstream._id === editingId)?.modelPrices ?? {}).length > 0) {
+      // 删除最后一个带报价的模型时，省略字段会让服务端保留已删除模型的旧报价。
+      payload.modelPrices = null;
     }
     setBusy(true);
     setFormError(null);
@@ -1283,7 +1408,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   }
 
   /** 对单个模型发一次最小 chat completion，结果内联显示在该行测试按钮下。 */
-  async function testModel(modelId: string): Promise<{ ok: boolean; text: string }> {
+  async function testModel(modelId: string, signal?: AbortSignal): Promise<{ ok: boolean; text: string }> {
     if (!form.baseUrl) {
       setFormError("请先填写 Base URL。");
       return { ok: false, text: "请先填写 Base URL。" };
@@ -1300,11 +1425,13 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
           model: modelId,
           apiFormat: form.apiFormat,
         }),
+        signal,
       });
       const payload = (await response.json().catch(() => null)) as {
         latencyMs?: number;
         error?: string;
       } | null;
+      if (signal?.aborted) return { ok: false, text: "测试已停止。" };
       if (!response.ok || typeof payload?.latencyMs !== "number") {
         const failed = { ok: false, text: payload?.error ?? "测试失败。" };
         setTestResults((results) => ({ ...results, [modelId]: failed }));
@@ -1314,11 +1441,43 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       setTestResults((results) => ({ ...results, [modelId]: passed }));
       return passed;
     } catch {
+      if (signal?.aborted) return { ok: false, text: "测试已停止。" };
       const failed = { ok: false, text: "网络错误。" };
       setTestResults((results) => ({ ...results, [modelId]: failed }));
       return failed;
     } finally {
       setTestingModel(null);
+    }
+  }
+
+  async function testCheckedModels() {
+    if (!form.baseUrl) {
+      setFormError("请先填写 Base URL。");
+      return;
+    }
+    const ids = [...checkedModels];
+    const controller = new AbortController();
+    batchTestController.current = controller;
+    setBatchTestProgress({ completed: 0, total: ids.length });
+    let completed = 0;
+    let passed = 0;
+    try {
+      for (const id of ids) {
+        if (controller.signal.aborted) break;
+        const result = await testModel(id, controller.signal);
+        if (controller.signal.aborted) break;
+        completed += 1;
+        if (result.ok) passed += 1;
+        setBatchTestProgress({ completed, total: ids.length });
+      }
+      const summary = `${controller.signal.aborted ? "测试已停止" : "批量测试完成"}：${completed}/${ids.length}，成功 ${passed}，失败 ${completed - passed}`;
+      if (completed > passed) toast.error(summary);
+      else toast.success(summary);
+    } finally {
+      if (batchTestController.current === controller) {
+        batchTestController.current = null;
+        setBatchTestProgress(null);
+      }
     }
   }
 
@@ -1328,6 +1487,10 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
    */
   const tableModelIds = [...new Set([...discoveredModels, ...selectedModels, ...disabledModels])];
   const sortedDiscovered = [...tableModelIds].sort((a, b) => a.localeCompare(b));
+  const checkedSet = new Set(checkedModels);
+  const checkedCount = tableModelIds.filter((id) => checkedSet.has(id)).length;
+  const allChecked = tableModelIds.length > 0 && checkedCount === tableModelIds.length;
+  const modelActionsBusy = busy || testingModel !== null || batchTestProgress !== null;
   return (
     <div className="grid gap-4">
       <div>
@@ -1339,7 +1502,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
 
       <BaseModelPicker />
 
-      <Dialog open={showForm} onOpenChange={setShowForm}>
+      <Dialog open={showForm} onOpenChange={setFormOpen}>
         <DialogContent className="max-h-[calc(100vh-6rem)] overflow-y-auto sm:max-w-5xl">
           <DialogHeader className="pr-8">
             <DialogTitle>{editingId ? "编辑上游" : "新增上游"}</DialogTitle>
@@ -1445,7 +1608,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={fetchingModels || !form.baseUrl}
+                  disabled={modelActionsBusy || fetchingModels || !form.baseUrl}
                   onClick={fetchFormModels}
                 >
                   <RefreshCw className={fetchingModels ? "animate-spin" : undefined} />
@@ -1464,7 +1627,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                       }
                     }}
                   />
-                  <Button type="button" variant="outline" size="sm" onClick={addManualModel} disabled={!manualModel.trim()}>
+                  <Button type="button" variant="outline" size="sm" onClick={addManualModel} disabled={modelActionsBusy || !manualModel.trim()}>
                     添加
                   </Button>
                 </div>
@@ -1477,10 +1640,38 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
 
             <div className="grid gap-3">
               {tableModelIds.length > 0 ? (
+                <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-lg border bg-popover p-2">
+                  <span className="text-xs text-muted-foreground">已选 {checkedCount} / {tableModelIds.length}</span>
+                  <Button type="button" variant="outline" size="sm" disabled={modelActionsBusy || checkedCount === 0}
+                    onClick={() => void testCheckedModels()}>批量测试</Button>
+                  <Button type="button" variant="outline" size="sm" disabled={modelActionsBusy || checkedCount === 0}
+                    onClick={disableCheckedModels}>批量停用</Button>
+                  <Button type="button" variant="outline" size="sm" disabled={modelActionsBusy || checkedCount === 0}
+                    onClick={() => setBulkEditingModels([...checkedModels])}>批量编辑</Button>
+                  <Button type="button" variant="destructive" size="sm" disabled={modelActionsBusy || checkedCount === 0}
+                    onClick={() => setPendingDeleteModels([...checkedModels])}>批量删除</Button>
+                  <Button type="button" variant="ghost" size="sm" disabled={modelActionsBusy || checkedCount === 0}
+                    onClick={() => setCheckedModels([])}>取消选择</Button>
+                  {batchTestProgress ? (
+                    <>
+                      <span className="text-xs tabular-nums" role="status">
+                        已测试 {batchTestProgress.completed} / {batchTestProgress.total}
+                      </span>
+                      <Button type="button" variant="outline" size="sm" onClick={() => batchTestController.current?.abort()}>停止测试</Button>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+              {tableModelIds.length > 0 ? (
                 <div className="overflow-hidden rounded-lg border">
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead className="w-10">
+                          <Checkbox aria-label="全选模型用于批量操作" disabled={modelActionsBusy}
+                            checked={allChecked ? true : checkedCount > 0 ? "indeterminate" : false}
+                            onCheckedChange={(checked) => setCheckedModels(checked === true ? [...tableModelIds] : [])} />
+                        </TableHead>
                         <TableHead>模型 ID</TableHead>
                         <TableHead className="w-40">当前倍率</TableHead>
                         <TableHead className="w-56 text-right">操作</TableHead>
@@ -1495,7 +1686,13 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                         const tiers = meta.tiers ?? [];
                         const hasExtras = tiers.length > 0 || meta.timeBased !== undefined;
                         return (
-                          <TableRow key={modelId}>
+                          <TableRow key={modelId} data-state={checkedSet.has(modelId) ? "selected" : undefined}>
+                            <TableCell>
+                              <Checkbox aria-label={`选择模型 ${modelId}`} checked={checkedSet.has(modelId)} disabled={modelActionsBusy}
+                                onCheckedChange={(checked) => setCheckedModels((models) => checked === true
+                                  ? [...new Set([...models, modelId])]
+                                  : models.filter((id) => id !== modelId))} />
+                            </TableCell>
                             <TableCell className="font-mono text-xs">
                               {modelId}
                               {rowDisabled ? (
@@ -1537,7 +1734,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                   variant="outline"
                                   size="sm"
                                   className="h-7 px-2.5 text-xs"
-                                  disabled={busy}
+                                  disabled={modelActionsBusy}
                                   onClick={() => setEditingModelId(modelId)}
                                 >
                                   编辑
@@ -1547,7 +1744,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                   variant="outline"
                                   size="sm"
                                   className="h-7 px-2.5 text-xs"
-                                  disabled={testingModel !== null}
+                                  disabled={modelActionsBusy}
                                   onClick={() => void testModel(modelId)}
                                 >
                                   {testingModel === modelId ? "测试中…" : "测试"}
@@ -1558,7 +1755,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                     variant="outline"
                                     size="sm"
                                     className="h-7 px-2.5 text-xs"
-                                    disabled={busy}
+                                    disabled={modelActionsBusy}
                                     onClick={() => enableFormModel(modelId)}
                                   >
                                     启用
@@ -1569,7 +1766,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                     variant="outline"
                                     size="sm"
                                     className="h-7 px-2.5 text-xs"
-                                    disabled={busy}
+                                    disabled={modelActionsBusy}
                                     onClick={() => disableFormModel(modelId)}
                                   >
                                     停用
@@ -1580,7 +1777,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                   variant="destructive"
                                   size="sm"
                                   className="h-7 px-2.5 text-xs"
-                                  disabled={busy}
+                                  disabled={modelActionsBusy}
                                   onClick={() => deleteFormModel(modelId)}
                                 >
                                   删除
@@ -1612,10 +1809,10 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
             {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
           </form>
           <DialogFooter>
-            <Button type="submit" form="upstream-form" disabled={busy}>
+            <Button type="submit" form="upstream-form" disabled={modelActionsBusy}>
               {editingId ? "保存" : "创建"}
             </Button>
-            <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
+            <Button type="button" variant="outline" onClick={() => setFormOpen(false)}>
               取消
             </Button>
           </DialogFooter>
@@ -1647,6 +1844,28 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
           onClose={() => setEditingModelId(null)}
         />
       ) : null}
+
+      {bulkEditingModels.length > 0 ? (
+        <BulkModelEditor modelIds={bulkEditingModels} onApply={applyBulkEdit} onClose={() => setBulkEditingModels([])} />
+      ) : null}
+
+      <AlertDialog open={pendingDeleteModels.length > 0} onOpenChange={(open) => { if (!open) setPendingDeleteModels([]); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除 {pendingDeleteModels.length} 个模型？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将从此上游移除所选模型及其自定义配置、目录目标和上游报价，保存上游后生效。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => {
+              removeFormModels(pendingDeleteModels);
+              setPendingDeleteModels([]);
+            }}>删除</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Card>
         <CardHeader>
