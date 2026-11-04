@@ -1598,9 +1598,6 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                   value={form.multiplier}
                   onChange={(event) => setForm({ ...form, multiplier: event.target.value })}
                 />
-                <p className="text-[10px] text-muted-foreground">
-                  统一乘到该来源全部模型的生效价格上；留空 = 1，0 = 免费。
-                </p>
               </div>
             </div>
 
@@ -1614,7 +1611,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                   onClick={fetchFormModels}
                 >
                   <RefreshCw className={fetchingModels ? "animate-spin" : undefined} />
-                  {fetchingModels ? "拉取中…" : "从 /v1/models 拉取"}
+                  {fetchingModels ? "拉取中…" : "从上游拉取"}
                 </Button>
                 <div className="flex items-center gap-1.5">
                   <Input
@@ -1635,7 +1632,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                 </div>
                 <Button type="button" variant="outline" size="sm" onClick={updateMetaFromCatalog}>
                   <ArrowDownToLine />
-                  从 pi-catalog 更新元数据
+                  更新元数据
                 </Button>
               </div>
             </div>
