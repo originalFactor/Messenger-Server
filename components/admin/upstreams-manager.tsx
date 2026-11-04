@@ -43,6 +43,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -108,9 +109,9 @@ type CatalogMeta = Record<string, UpstreamModelMeta>;
 type PriceMap = Record<string, UpstreamModelPrice>;
 const CAPABILITY_FIELDS = [
   { key: "displayName", label: "显示名", kind: "text" },
-  { key: "inputModalities", label: "输入模态（逗号分隔）", kind: "list" },
+  { key: "inputModalities", label: "输入模态", kind: "list" },
   { key: "reasoning", label: "是否支持思考", kind: "boolean" },
-  { key: "reasoningEfforts", label: "Reasoning efforts（逗号分隔）", kind: "list" },
+  { key: "reasoningEfforts", label: "Reasoning efforts", kind: "list" },
   { key: "contextWindow", label: "上下文窗口", kind: "number" },
   { key: "maxOutputTokens", label: "最大输出 tokens", kind: "number" },
   { key: "supportsTemperature", label: "支持 temperature", kind: "boolean" },
@@ -118,6 +119,39 @@ const CAPABILITY_FIELDS = [
   { key: "supportsPenalties", label: "支持 penalties", kind: "boolean" },
 ] as const;
 type CapabilityKey = (typeof CAPABILITY_FIELDS)[number]["key"];
+
+function CapabilityMultiSelect({ id, value, inherited, options, onChange }: {
+  id: string;
+  value: string;
+  inherited: string[];
+  options: readonly string[];
+  onChange: (value: string) => void;
+}) {
+  const custom = value.split(/[,，\n]/).map((item) => item.trim()).filter(Boolean);
+  const selected = custom.length ? custom : inherited;
+  const choices = [...new Set([...options, ...inherited, ...custom])];
+  const summary = selected.length ? selected.join(", ") : "未提供";
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button id={id} type="button" variant="outline" className="w-full min-w-0 justify-between font-normal">
+          <span className="truncate">{custom.length ? summary : `继承（${summary}）`}</span>
+          <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        <DropdownMenuItem onSelect={() => onChange("")}>恢复继承 catalog</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {choices.map((option) => (
+          <DropdownMenuCheckboxItem key={option} checked={selected.includes(option)} onSelect={(event) => event.preventDefault()} onCheckedChange={(checked) => {
+            const next = checked ? [...new Set([...selected, option])] : selected.filter((item) => item !== option);
+            onChange(next.join(", "));
+          }}>{option}</DropdownMenuCheckboxItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 /** 草稿只记录用户动过的字段；未触碰字段缺省，由生效值解析兜底。 */
 interface MetaDraft extends Partial<Record<CapabilityKey, string>> {
@@ -529,6 +563,8 @@ function ModelEditor({
                         <SelectTrigger id={`model-cap-${field.key}`} className="w-full"><SelectValue /></SelectTrigger>
                         <SelectContent><SelectItem value="inherit">继承（{inherited === true ? "开启" : inherited === false ? "关闭" : "未知"}）</SelectItem><SelectItem value="true">开启</SelectItem><SelectItem value="false">关闭</SelectItem></SelectContent>
                       </Select>
+                    ) : field.kind === "list" ? (
+                      <CapabilityMultiSelect id={`model-cap-${field.key}`} value={capabilities[field.key]} inherited={Array.isArray(inherited) ? inherited : []} options={field.key === "inputModalities" ? ["text", "image", "audio", "video", "file"] : ["none", "minimal", "low", "medium", "high", "xhigh", "max"]} onChange={(value) => onChange({ [field.key]: value })} />
                     ) : <Input id={`model-cap-${field.key}`} type={field.kind === "number" ? "number" : "text"} min={field.kind === "number" ? 1 : undefined} step={field.kind === "number" ? 1 : undefined} value={capabilities[field.key]} placeholder={hint} onChange={(event) => onChange({ [field.key]: event.target.value })} />}
                   </div>
                 );
