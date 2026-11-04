@@ -249,12 +249,13 @@ function BulkModelEditor({ modelIds, onApply, onClose }: {
   const [error, setError] = useState<string | null>(null);
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-h-[calc(100vh-6rem)] overflow-y-auto sm:max-w-lg">
-        <DialogHeader>
+      <DialogContent className="flex h-[calc(100dvh-6rem)] flex-col overflow-hidden sm:max-w-lg">
+        <DialogHeader className="shrink-0">
           <DialogTitle>批量编辑 {modelIds.length} 个模型</DialogTitle>
           <DialogDescription>勾选要修改的字段，未勾选的保留各模型原值。应用后需保存上游。</DialogDescription>
         </DialogHeader>
-        <form id="bulk-model-form" className="grid gap-4" onSubmit={(event) => {
+        <ScrollArea type="always" className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
+        <form id="bulk-model-form" className="grid min-w-0 gap-4 pr-3 pb-2" onSubmit={(event) => {
           event.preventDefault();
           setError(onApply(values) ?? null);
         }}>
@@ -287,7 +288,8 @@ function BulkModelEditor({ modelIds, onApply, onClose }: {
           </div>
           {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
         </form>
-        <DialogFooter>
+        </ScrollArea>
+        <DialogFooter className="shrink-0">
           <Button type="button" variant="outline" onClick={onClose}>取消</Button>
           <Button type="submit" form="bulk-model-form">应用到所选模型</Button>
         </DialogFooter>
@@ -457,15 +459,16 @@ function ModelEditor({
   const setRate = (field: keyof typeof rates, value: string) => onChange({ [field]: value });
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
-      <DialogContent className="max-h-[calc(100vh-6rem)] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader className="pr-8">
-          <DialogTitle className="font-mono text-base">{modelId}</DialogTitle>
+      <DialogContent className="flex h-[calc(100dvh-6rem)] flex-col overflow-hidden sm:max-w-2xl">
+        <DialogHeader className="shrink-0 pr-8">
+          <DialogTitle className="break-all font-mono text-base">{modelId}</DialogTitle>
           <DialogDescription>
             倍率逐项留空即沿用上游 `/v1/models` 报价或 catalog，0 表示免费。模型能力留空时继承 catalog。
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-4">
+        <ScrollArea type="always" className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=table-container]]:overflow-visible">
+        <div className="grid min-w-0 gap-4 pr-3 pb-2">
           <div className="grid min-w-0 gap-2 rounded-lg border p-3">
             <Label htmlFor="catalog-model-target" className="text-xs">pi-catalog 目标模型</Label>
             <Popover
@@ -640,8 +643,8 @@ function ModelEditor({
                 未自定义时沿用上游 /v1/models 或 pi-catalog 的阶梯配置；留空的倍率字段沿用基础档。
               </p>
             ) : (
-              <div className="overflow-hidden rounded-lg border bg-background">
-                <Table>
+              <div className="min-w-0 rounded-lg border bg-background">
+                <Table className="min-w-[36rem]">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-28">阈值 (tokens)</TableHead>
@@ -749,8 +752,10 @@ function ModelEditor({
             </div>
           </div>
         </div>
+        <ScrollBar orientation="horizontal" />
+        </ScrollArea>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button type="button" onClick={onClose}>
             完成
           </Button>
