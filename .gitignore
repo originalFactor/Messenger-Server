@@ -11,3 +11,6 @@ tsconfig.tsbuildinfo
 
 # Local dev auth token scratch file
 .tmp-token.txt
+
+# Local runtime log files
+logs/

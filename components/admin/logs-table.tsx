@@ -44,7 +44,7 @@ function formatLogDetails(details: unknown): string {
 
 /**
  * 控制台捕获保留了终端的 SGR 颜色转义（`ESC[32m` 等），在浏览器里只会显示成
- * 一串 `[36m[39m` 噪声：摘要与 `details` 文本都先去掉。`runtime_logs` 里的
+ * 一串 `[36m[39m` 噪声：摘要与 `details` 文本都先去掉。`系统日志文件` 里的
  * 原始字符串不动，日志页只是渲染层做清洗。
  */
 function stripAnsi(text: string): string {

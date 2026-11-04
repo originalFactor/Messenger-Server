@@ -1610,6 +1610,10 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 
 `{ _id: "admin_bootstrap", grantedToUserId, createdAt }` —— 管理员晋升标记。注册事务以它的唯一键保证并发注册只产生一名管理员；启动迁移据此判断是否需要把最早用户提升为 admin。
 
+### 系统日志文件
+
+系统日志不使用数据库集合：`/api/admin/logs` 从 `RUNTIME_LOG_DIR`（默认 `./logs`）下的 UTC 按日 `runtime-YYYY-MM-DD.jsonl` 文件读取，保留原有筛选、分页与响应结构。stdout/stderr 同步镜像至文件，旧 `runtime_logs` 集合不再读写。
+
 ### MongoDB 索引
 
 服务首次连接时由 [`lib/mongo.ts`](./lib/mongo.ts) 初始化：
@@ -1625,7 +1629,6 @@ Agent 市场是面向所有已登录用户的公开 Agent 模板库。**所有�
 - `usage_logs`: `{ userId: 1, createdAt: -1, _id: 1 }`、`{ createdAt: -1, _id: 1 }`
 - `user_quotas`: `{ userId: 1, expiresAt: 1 }`
 - `user_sessions`: `{ userId: 1, syncCursor: 1 }`（按用户取最旧会话的游标）、TTL `{ expiresAt: 1 }`（会话 30 天到期自动回收）
-- `runtime_logs`: `{ createdAt: -1, _id: 1 }`、`{ level: 1, createdAt: -1, _id: 1 }`、`{ source: 1, createdAt: -1, _id: 1 }`，外加 30 天 TTL 索引（`{ createdAt: 1 }` + `expireAfterSeconds`）
 - `rate_limits`: TTL `{ expiresAt: 1 }`（限流计数按窗口自动回收）
 - `model_metadata`: 单文档 `_id = "pi_catalog"`，pi-catalog 倍率快照（冷启动兜底）
 - 额外的部分唯一索引保护「每用户一个活跃默认 Agent」不变式

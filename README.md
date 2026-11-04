@@ -251,3 +251,24 @@ pnpm lint
 
 - The former Redis/Vercel Blob whole-backup system and `/api/backups/*` endpoints were removed. Existing backup JSON payloads are not migrated automatically; a one-time migration is intentionally out of scope.
 - Avatar storage now uses S3-compatible object storage only. Existing Vercel Blob or filesystem avatars are not migrated automatically; configure a private bucket and re-upload avatars as needed.
+
+### System logs
+
+System logs are written to stdout/stderr and mirrored to local JSONL files, never
+to MongoDB. The admin system-log page and `/api/admin/logs` read these files with
+the existing time, level, source and pagination filters. Structured business logs
+retain their metadata; direct stdout writes use `info/api`, stderr uses `error/api`.
+Capture starts when Next initializes instrumentation, so earlier launcher output
+remains available only through the process/container logs.
+
+`RUNTIME_LOG_DIR` defaults to `./logs` and must be writable by the server user.
+Files are named `runtime-YYYY-MM-DD.jsonl` using UTC. Old daily files are removed
+on the first write each UTC day after 30 days (the boundary day is retained).
+Compose mounts the persistent `runtime-logs` volume at `/app/logs`; include it in
+backups and keep the single server instance attached to it. For a direct Docker
+run, mount a writable volume at `/app/logs`. File queries scan the selected daily
+files, so very large date ranges cost more I/O.
+
+Existing `runtime_logs` database records are neither queried nor migrated. This
+change leaves the old collection untouched; it can be removed manually after
+any required archival. Usage/billing and authentication records remain in MongoDB.

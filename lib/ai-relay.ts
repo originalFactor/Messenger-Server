@@ -175,7 +175,7 @@ async function settleUsage(
       longContextThreshold: params.longContextThreshold,
       timeMultiplier: params.timeMultiplier,
     });
-    // 成功记账不写 runtime_logs：usage_logs 已经保存了同一份数据，逐请求
+    // 成功记账不写 系统日志文件：usage_logs 已经保存了同一份数据，逐请求
     // 再插一行只会让日志表无谓膨胀（失败路径仍然记 error）。
   } catch (error) {
     relayLog.error("Unable to settle usage after completion.", { userId: params.userId, modelId: params.modelId, upstreamId: params.upstreamId, error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : error });

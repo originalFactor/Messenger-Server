@@ -50,9 +50,6 @@ export function getMongoClient(): Promise<MongoClient> {
   return globalThis.messengerMongoClientPromise;
 }
 
-/** 运行时日志保留期（TTL 索引驱动）：30 天。 */
-const RUNTIME_LOG_RETENTION_SECONDS = 30 * 24 * 60 * 60;
-
 async function ensureIndexesFor(database: Db): Promise<void> {
   if (!globalThis.messengerMongoIndexesPromise) {
     const indexes = Promise.all([
@@ -80,15 +77,6 @@ async function ensureIndexesFor(database: Db): Promise<void> {
       database.collection("usage_logs").createIndex({ userId: 1, createdAt: -1, _id: 1 }),
       database.collection("usage_logs").createIndex({ createdAt: -1, _id: 1 }),
       database.collection("user_quotas").createIndex({ userId: 1, expiresAt: 1 }),
-      database.collection("runtime_logs").createIndex({ createdAt: -1, _id: 1 }),
-      database.collection("runtime_logs").createIndex({ level: 1, createdAt: -1, _id: 1 }),
-      database.collection("runtime_logs").createIndex({ source: 1, createdAt: -1, _id: 1 }),
-      // 日志采集把每个 console.* 都镜像入库，没有 TTL 会无界增长，
-      // 并让管理端 countDocuments + skip 分页随时间线性变慢。
-      database.collection("runtime_logs").createIndex(
-        { createdAt: 1 },
-        { expireAfterSeconds: RUNTIME_LOG_RETENTION_SECONDS },
-      ),
       // 限流计数按窗口分文档，窗口过期即应回收。
       database.collection("rate_limits").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
       // 服务端会话是同步进度账本：{ userId, syncCursor } 供「取最旧会话游标」

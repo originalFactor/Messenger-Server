@@ -109,7 +109,7 @@ export async function GET(request: Request) {
   if (!collectionParam) {
     try {
       const delta = await getDeltaSince(session.sub, since);
-      // 成功路径不写 runtime_logs：客户端每次前后台切换都会同步，逐请求
+      // 成功路径不写 系统日志文件：客户端每次前后台切换都会同步，逐请求
       // 记 info 会把日志表变成同步心跳表。仅截断（异常状态）记 warn。
       if (delta.truncated) {
         syncLog.warn("Sync delta truncated; client should page by collection.", { userId: session.sub, since, latestVersion: delta.latestVersion });

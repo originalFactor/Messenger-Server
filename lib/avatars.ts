@@ -268,7 +268,7 @@ export type AvatarFetchResult =
 
 /**
  * 已经报告过「文件缺失」的路径。头像 GET 在每个页面渲染时都会触发，同一条
- * 漂移若逐次写 `runtime_logs` 会变成日志噪声，所以每条路径只记一次。
+ * 漂移若逐次写 `系统日志文件` 会变成日志噪声，所以每条路径只记一次。
  */
 const reportedMissingBlobs = new Set<string>();
 

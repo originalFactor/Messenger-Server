@@ -15,28 +15,108 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { type Filter } from "mongodb";
-import { getDb } from "@/lib/mongo";
+import { createReadStream } from "node:fs";
+import { appendFile, mkdir, readdir, stat, unlink } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { createInterface } from "node:readline";
+import { StringDecoder } from "node:string_decoder";
 import type { RuntimeLogDoc, RuntimeLogLevel, RuntimeLogSource } from "@/lib/types";
 
-/**
- * 未被包装的原始 `console.error` 引用：instrumentation 在 install 时回填，
- * 供 `recordRuntimeLog` 失败兜底用。绕开包装器本身，避免采集层故障再次
- * 触发捕获形成递归。回填前为 null，此时退回当前 `console.error`（启动
- * 早期、包装器尚未安装时）。
- */
-let rawStderr: typeof console.error | null = null;
+export const RUNTIME_LOG_PAGE_SIZE = 20;
+const DAY_MS = 86_400_000;
+const LOG_FILE = /^runtime-\d{4}-\d{2}-\d{2}\.jsonl$/;
 
-/** 供 instrumentation 回填未被包装的原始 `console.error`。 */
-export function bindRawConsole(stderr: typeof console.error): void {
-  rawStderr = stderr;
+// Shared across Next bundles and development reloads: never wrap streams twice.
+const state = globalThis as typeof globalThis & {
+  messengerRuntimeLogs?: {
+    stdout: typeof process.stdout.write;
+    stderr: typeof process.stderr.write;
+    pending: Promise<void>;
+    cleanupDay?: string;
+  };
+};
+
+function logDirectory(): string {
+  return resolve(process.env.RUNTIME_LOG_DIR || "logs");
 }
 
-/** 运行时日志页每页条数（管理后台「日志页」明细表分页大小）。 */
-export const RUNTIME_LOG_PAGE_SIZE = 20;
+function serialize(value: unknown): string {
+  const seen = new WeakSet<object>();
+  return JSON.stringify(value, (_key, item) => {
+    if (typeof item === "bigint") return String(item);
+    if (typeof item === "object" && item !== null) {
+      if (seen.has(item)) return "[Circular]";
+      seen.add(item);
+      if (item instanceof Error) return { name: item.name, message: item.message, stack: item.stack, cause: item.cause };
+    }
+    return item;
+  });
+}
+
+function enqueue(doc: RuntimeLogDoc, line = serialize(doc) + "\n"): Promise<void> {
+  const capture = state.messengerRuntimeLogs!;
+  const directory = logDirectory();
+  capture.pending = capture.pending.then(async () => {
+    await mkdir(directory, { recursive: true });
+    const day = new Date(doc.createdAt).toISOString().slice(0, 10);
+    await appendFile(join(directory, `runtime-${day}.jsonl`), line, { mode: 0o600 });
+    if (capture.cleanupDay !== day) {
+      const cutoff = new Date(doc.createdAt - 30 * DAY_MS).toISOString().slice(0, 10);
+      for (const file of await readdir(directory)) {
+        if (LOG_FILE.test(file) && file.slice(8, 18) < cutoff) {
+          await unlink(join(directory, file)).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== "ENOENT") throw error;
+          });
+        }
+      }
+      capture.cleanupDay = day;
+    }
+  }).catch((error) => {
+    // Raw writer bypasses capture, including when the directory is unwritable.
+    capture.stderr(`[runtime-logs] Unable to write log file: ${String(error)}\n`);
+  });
+  return capture.pending;
+}
+
+function document(input: RuntimeLogInput): RuntimeLogDoc {
+  return {
+    _id: randomUUID(),
+    ...input,
+    method: input.method ?? null,
+    path: input.path ?? null,
+    status: input.status ?? null,
+    details: input.details ?? null,
+    createdAt: Date.now(),
+  };
+}
+
+/** Mirror Node stream writes (including direct writes) without changing callbacks/backpressure. */
+export function installOutputCapture(): void {
+  if (state.messengerRuntimeLogs) return;
+  const stdout = process.stdout.write.bind(process.stdout);
+  const stderr = process.stderr.write.bind(process.stderr);
+  state.messengerRuntimeLogs = { stdout, stderr, pending: Promise.resolve() };
+  for (const [stream, original, level] of [
+    [process.stdout, stdout, "info"],
+    [process.stderr, stderr, "error"],
+  ] as const) {
+    const decoder = new StringDecoder("utf8");
+    stream.write = function (...args: Parameters<typeof stream.write>) {
+      const result = Reflect.apply(original, stream, args) as boolean;
+      try {
+        const chunk = args[0];
+        const message = typeof chunk === "string" ? chunk : decoder.write(Buffer.from(chunk));
+        if (message) void enqueue(document({ level, source: "api", message: message.trimEnd() }));
+      } catch (error) {
+        stderr(`[runtime-logs] Unable to capture output: ${String(error)}\n`);
+      }
+      return result;
+    } as typeof stream.write;
+  }
+}
 
 export interface RuntimeLogListOptions {
-  /** 时间范围下界（毫秒）；`createdAt >= sinceTs` 复用前缀索引。 */
+  /** 时间范围下界（毫秒）；`createdAt >= sinceTs` 用于文件内容过滤。 */
   sinceTs?: number;
   /** 时间范围上界（毫秒，开区间）：`createdAt < untilTs`。 */
   untilTs?: number;
@@ -70,39 +150,20 @@ export interface RuntimeLogInput {
   details?: unknown;
 }
 
-/**
- * 写入一条运行时日志。fire-and-forget 失败不影响调用方：日志采集不应
- * 阻断业务路径或抛二次异常。失败时退回未被包装的原始 `console.error`，
- * 保证至少有 stderr 且不触发捕获递归（`capturing` 由包装器在写前置位）。
- */
+/** Structured events go to stdout/stderr and the same file sink exactly once. */
 export async function recordRuntimeLog(input: RuntimeLogInput): Promise<void> {
-  const doc: RuntimeLogDoc = {
-    _id: randomUUID(),
-    level: input.level,
-    source: input.source,
-    method: input.method ?? null,
-    path: input.path ?? null,
-    status: input.status ?? null,
-    message: input.message,
-    details: input.details,
-    createdAt: Date.now(),
-  };
+  installOutputCapture();
+  const capture = state.messengerRuntimeLogs!;
   try {
-    const db = await getDb();
-    await db.collection<RuntimeLogDoc>("runtime_logs").insertOne(doc);
+    const doc = document(input);
+    const line = serialize(doc) + "\n";
+    (input.level === "info" ? capture.stdout : capture.stderr)(line);
+    await enqueue(doc, line);
   } catch (error) {
-    // 采集层故障不得影响业务路径；退回原始 stderr 兜底，绕开包装器递归。
-    const report = rawStderr ?? console.error.bind(console);
-    report("[runtime-logs] Unable to persist runtime log.", { input, error });
+    capture.stderr(`[runtime-logs] Unable to serialize log: ${String(error)}\n`);
   }
 }
 
-/**
- * 业务事件日志快捷构造器：固定 source，简化各业务域调用点的样板。
- * 返回 fire-and-forget 的 Promise，调用方 `void` 即可，不阻断业务路径。
- * `message` 为人读摘要；`details` 携带结构化上下文（userId/entityId/等），
- * 入库后供「日志页」查阅与按域筛选。每域一个实例，避免重复传 source。
- */
 export function createLogger(source: RuntimeLogSource) {
   return {
     info: (message: string, details?: unknown) => void recordRuntimeLog({ level: "info", source, message, details }),
@@ -111,46 +172,76 @@ export function createLogger(source: RuntimeLogSource) {
   };
 }
 
-/**
- * 管理后台「日志页」数据源。按 `(createdAt, _id)` 倒序做偏移分页，
- * 复用 `runtime_logs` 的 `{ createdAt: -1, _id: -1 }` 前缀索引：前缀
- * `createdAt` 同时服务范围过滤、级别/来源等值匹配、计数与倒序扫描。
- */
-export async function listRuntimeLogs(
-  options: RuntimeLogListOptions = {},
-): Promise<RuntimeLogListPage> {
-  const db = await getDb();
-  const pageSize = Math.min(Math.max(options.limit ?? RUNTIME_LOG_PAGE_SIZE, 1), 200);
-  const createdAt: Record<string, number> = {};
-  if (typeof options.sinceTs === "number") {
-    createdAt.$gte = options.sinceTs;
+/** Stream files; skip incomplete/corrupt records, but surface filesystem failures. */
+async function* readLogs(files: { path: string; size: number }[], options: RuntimeLogListOptions) {
+  for (const file of files) {
+    if (!file.size) continue;
+    const lines = createInterface({ input: createReadStream(file.path, { end: file.size - 1 }), crlfDelay: Infinity });
+    try {
+      for await (const line of lines) {
+        let doc: RuntimeLogDoc;
+        try { doc = JSON.parse(line) as RuntimeLogDoc; } catch { continue; }
+        if (!doc || typeof doc._id !== "string" || typeof doc.message !== "string" ||
+            !Number.isFinite(doc.createdAt) ||
+            !["info", "warn", "error"].includes(doc.level)) continue;
+        if (options.sinceTs !== undefined && doc.createdAt < options.sinceTs) continue;
+        if (options.untilTs !== undefined && doc.createdAt >= options.untilTs) continue;
+        if (options.level && doc.level !== options.level) continue;
+        if (options.source && doc.source !== options.source) continue;
+        yield doc;
+      }
+    } catch (error) {
+      // Retention or external rotation may remove a file between listing/opening.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    } finally {
+      lines.close();
+    }
   }
-  if (typeof options.untilTs === "number") {
-    createdAt.$lt = options.untilTs;
-  }
-  const filter: Filter<RuntimeLogDoc> = {};
-  if (Object.keys(createdAt).length > 0) {
-    filter.createdAt = createdAt;
-  }
-  if (options.level) {
-    filter.level = options.level;
-  }
-  if (options.source) {
-    filter.source = options.source;
-  }
-  const requestedPage = Math.max(1, Math.floor(options.page ?? 1));
+}
 
-  const [total, logs] = await Promise.all([
-    db.collection<RuntimeLogDoc>("runtime_logs").countDocuments(filter),
-    db.collection<RuntimeLogDoc>("runtime_logs")
-      .find(filter)
-      .sort({ createdAt: -1, _id: -1 })
-      .skip((requestedPage - 1) * pageSize)
-      .limit(pageSize)
-      .toArray(),
-  ]);
-
-  const totalPages = total === 0 ? 1 : Math.ceil(total / pageSize);
-  const page = Math.min(requestedPage, totalPages);
-  return { logs, total, page, pageSize };
+export async function listRuntimeLogs(options: RuntimeLogListOptions = {}): Promise<RuntimeLogListPage> {
+  await state.messengerRuntimeLogs?.pending;
+  const pageSize = Number.isFinite(options.limit)
+    ? Math.min(Math.max(Math.floor(options.limit!), 1), 200) : RUNTIME_LOG_PAGE_SIZE;
+  const requestedPage = Number.isFinite(options.page) ? Math.max(1, Math.floor(options.page!)) : 1;
+  const directory = logDirectory();
+  let files: string[];
+  try {
+    files = (await readdir(directory)).filter((file) => {
+      if (!LOG_FILE.test(file)) return false;
+      const start = Date.parse(file.slice(8, 18));
+      return (options.sinceTs === undefined || start + DAY_MS > options.sinceTs) &&
+        (options.untilTs === undefined || start < options.untilTs);
+    }).sort().reverse().map((file) => join(directory, file));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    files = [];
+  }
+  // Freeze byte boundaries so appends between the count and page scans do not shift results.
+  const snapshots = await Promise.all(files.map(async (path) => {
+    try { return { path, size: (await stat(path)).size }; } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      return { path, size: 0 };
+    }
+  }));
+  let total = 0;
+  for await (const _doc of readLogs(snapshots, options)) { void _doc; total++; }
+  const page = Math.min(requestedPage, Math.max(1, Math.ceil(total / pageSize)));
+  const offset = (page - 1) * pageSize;
+  // Only keep the newest page*size matches, rather than loading all file contents.
+  const selected: RuntimeLogDoc[] = [];
+  const compare = (a: RuntimeLogDoc, b: RuntimeLogDoc) => b.createdAt - a.createdAt || b._id.localeCompare(a._id);
+  for await (const doc of readLogs(snapshots, options)) {
+    let lo = 0, hi = selected.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (compare(selected[mid], doc) <= 0) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo < offset + pageSize) {
+      selected.splice(lo, 0, doc);
+      if (selected.length > offset + pageSize) selected.pop();
+    }
+  }
+  return { logs: selected.slice(offset), total, page, pageSize };
 }

@@ -24,6 +24,9 @@ services:
     environment:
       NODE_ENV: production
       PORT: "3000"
+      RUNTIME_LOG_DIR: /app/logs
+    volumes:
+      - runtime-logs:/app/logs
     ports:
       # Loopback by default: the only entry point is your reverse proxy. If
       # nginx runs in another container, attach both to a shared network and
@@ -34,3 +37,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  runtime-logs:

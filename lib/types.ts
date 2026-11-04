@@ -314,8 +314,8 @@ export type RuntimeLogSource =
   | "migration";
 
 /**
- * 系统运行日志文档（管理后台「日志页」数据源）。按 `(createdAt, _id)` 倒序
- * 做偏移分页，复用 `runtime_logs` 的 `{ createdAt: -1, _id: -1 }` 前缀索引。
+ * 系统运行日志 JSONL 记录（管理后台「日志页」数据源）。
+ * 文件查询按 `(createdAt, _id)` 倒序分页。
  * `level`/`source` 仅用于筛选，`details` 存原始错误/上下文对象，不保证模式稳定。
  */
 export interface RuntimeLogDoc {
