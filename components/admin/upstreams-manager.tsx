@@ -782,6 +782,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   const [error, setError] = useState<string | null>(null);
 
   const [catalogMeta, setCatalogMeta] = useState<CatalogMeta>({});
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
   /** 当前表单上游的报价快照（探测回填 / 编辑时载入），保存时随 PUT 提交。 */
   const [modelPrices, setModelPrices] = useState<PriceMap>({});
   const [editingModelMeta, setEditingModelMeta] = useState<Record<string, UpstreamModelMeta>>({});
@@ -816,6 +817,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
         if (!cancelled && payload.metadata) {
           setCatalogMeta(payload.metadata);
           setCatalogCapabilities(payload.models ?? {});
+          setCatalogLoaded(Object.keys(payload.metadata).length > 0 || Object.keys(payload.models ?? {}).length > 0);
         }
       } catch {
         if (!cancelled) toast.error("模型目录获取失败，请点击更新元数据重试。");
@@ -1018,6 +1020,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       }
       setCatalogMeta(metadata);
       setCatalogCapabilities(payload.models ?? {});
+      setCatalogLoaded(true);
       toast.success(`已从 pi-catalog 更新 ${Object.keys(metadata).length} 个模型的元数据`);
     } catch {
       setFormError("网络错误，请稍后重试。");
@@ -1084,6 +1087,22 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
 
   function rowCatalogModelId(modelId: string): string {
     return metaDrafts[modelId]?.catalogModelId ?? editingModelMeta[modelId]?.catalogModelId ?? "";
+  }
+
+  function rowUnconfigured(modelId: string): boolean {
+    if (!catalogLoaded) return false;
+    const target = rowCatalogModelId(modelId);
+    if (catalogModelDefault(modelId, catalogCapabilities, target)
+      || catalogModelDefault(modelId, catalogMeta, target)) return false;
+    if (Object.values(capabilityDraftOf(modelId)).some((value) => value.trim())) return false;
+    if (Object.values(rateDraftOf(modelId)).some((value) => value.trim())) return false;
+    const draft = metaDrafts[modelId];
+    const stored = editingModelMeta[modelId];
+    const multiplier = draft?.multiplier ?? stored?.multiplier;
+    if (multiplier != null && String(multiplier).trim()) return false;
+    const tiers = draft?.tiers ?? stored?.tiers;
+    const schedule = draft?.timeBased !== undefined ? draftScheduleToMeta(draft.timeBased) : stored?.timeBased;
+    return !(tiers?.length || schedule);
   }
 
   /**
@@ -1751,6 +1770,11 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                             </TableCell>
                             <TableCell className="font-mono text-xs">
                               {modelId}
+                              {rowUnconfigured(modelId) ? (
+                                <Badge variant="outline" className="ml-2 font-sans text-[10px]" title="未匹配到 catalog，且未手动配置模型元数据或倍率">
+                                  未配置
+                                </Badge>
+                              ) : null}
                               {rowDisabled ? (
                                 <Badge variant="secondary" className="ml-2 font-sans text-[10px]">
                                   已停用
