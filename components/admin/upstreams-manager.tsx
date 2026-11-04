@@ -1323,14 +1323,11 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   }
 
   /**
-   * 表格行 = 已发现模型 ∪ 已停用模型：启用的排前面，停用的沉底，
-   * 各自按 ID 排序。
+   * 表格行包含已发现、已启用和已停用的模型；固定按 ID 排序，让切换状态
+   * 不移动或卸载当前聚焦的行，避免滚动视窗跳走。
    */
-  const tableModelIds = [...new Set([...discoveredModels, ...disabledModels])];
-  const sortedDiscovered = [...tableModelIds].sort((a, b) => {
-    const disabledLast = Number(disabledModels.includes(a)) - Number(disabledModels.includes(b));
-    return disabledLast !== 0 ? disabledLast : a.localeCompare(b);
-  });
+  const tableModelIds = [...new Set([...discoveredModels, ...selectedModels, ...disabledModels])];
+  const sortedDiscovered = [...tableModelIds].sort((a, b) => a.localeCompare(b));
   return (
     <div className="grid gap-4">
       <div>
