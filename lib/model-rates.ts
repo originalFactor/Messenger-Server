@@ -86,6 +86,24 @@ export function normalizeMultiplier(value: number | null | undefined): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 1;
 }
 
+/** 默认目录匹配：完整 ID 优先，再去单个推理尾缀、单个 : 或 / 前缀、两者。 */
+export function matchModelDefault<T>(modelId: string, defaults: Readonly<Record<string, T>>): T | undefined {
+  const withoutTail = modelId.replace(/-(thinking|high|low|medium)$/, "");
+  const withoutPrefix = modelId.replace(/^[^:/]+[:/](?=.)/, "");
+  const candidates = [
+    modelId,
+    withoutTail,
+    withoutPrefix,
+    withoutPrefix.replace(/-(thinking|high|low|medium)$/, ""),
+  ];
+  for (const candidate of candidates) {
+    if (Object.hasOwn(defaults, candidate) && defaults[candidate] !== undefined) {
+      return defaults[candidate];
+    }
+  }
+  return undefined;
+}
+
 /** 逐腿有效化：缺省 / 非有限值 / 0 都视为「未返回」，回退下一级来源。 */
 function upstreamRate(value: number | null | undefined): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
@@ -212,7 +230,7 @@ export function currentStoredCard(
   defaults: CatalogRateMap,
   upstreamPrice?: UpstreamModelPrice | null,
 ): RateCard {
-  const catalogCard = defaults[model];
+  const catalogCard = matchModelDefault(model, defaults);
   const priceCard = upstreamPrice ?? undefined;
   const readDiscount = cacheDiscountRatio(catalogCard, priceCard, "cacheRead");
   const writeDiscount = cacheDiscountRatio(catalogCard, priceCard, "cacheWrite");
@@ -373,7 +391,7 @@ export function resolveBaseContext(
   if (baseModelId === null) {
     return null;
   }
-  if (defaults[baseModelId] !== undefined) {
+  if (matchModelDefault(baseModelId, defaults) !== undefined) {
     return { modelId: baseModelId };
   }
   const resolvable = upstreams.some((upstream) => {

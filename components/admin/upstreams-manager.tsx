@@ -56,6 +56,7 @@ import {
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { formatPeakWindows, parsePeakWindows } from "@/lib/pricing";
+import { matchModelDefault } from "@/lib/model-rates";
 import type { UpstreamDoc, UpstreamModelMeta, UpstreamModelPrice } from "@/lib/types";
 import { BaseModelPicker } from "@/components/admin/base-model-picker";
 
@@ -825,7 +826,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     timeBased?: UpstreamModelMeta["timeBased"];
   } {
     const price = modelPrices[modelId];
-    const catalog = catalogMeta[modelId];
+    const catalog = matchModelDefault(modelId, catalogMeta);
     // 上游报价的 0 表示「未返回」（回退目录）；目录里的 0 是真实的「免费」。
     const returned = (value: number | null | undefined): number | undefined =>
       typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
@@ -1106,7 +1107,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     // 与服务端解析同一来源链：上游 /v1/models 报价 > pi-catalog > 1x。
     const rateOf = (modelId: string): { inputRate: number; cacheReadRate: number; outputRate: number } => {
       const price = upstream.modelPrices?.[modelId];
-      const catalog = catalogMeta[modelId];
+      const catalog = matchModelDefault(modelId, catalogMeta);
       const priceInput = price?.inputRate && price.inputRate > 0 ? price.inputRate : undefined;
       const priceCache = price?.cacheReadRate && price.cacheReadRate > 0 ? price.cacheReadRate : undefined;
       const priceOutput = price?.outputRate && price.outputRate > 0 ? price.outputRate : undefined;

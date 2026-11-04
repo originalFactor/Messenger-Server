@@ -40,6 +40,7 @@
 
 ## Conventions
 
+- Default catalog matching accepts `[prefix(:|/)]<model-id>[-thinking|-high|-low|-medium]` (one optional prefix and one optional suffix, case-sensitive). `matchModelDefault` in `lib/model-rates.ts` is shared by server rate/base resolution and the console: try the exact ID, remove the suffix, remove the prefix, then remove both. Exact catalog variants keep their own prices; custom settings, upstream quotes, and relay routing still use the original full ID.
 - Use the `@/*` path alias for imports from the repository root.
 - API handlers validate request bodies and route IDs with the Zod schemas in `lib/validation.ts`, authenticate before accessing user data, and map storage failures through `lib/route-errors.ts`.
 - Keep API routes that touch MongoDB or Blob on the Node runtime (`export const runtime = "nodejs"`).
