@@ -112,6 +112,8 @@ export interface IrRequest {
   messages: IrMessage[];
   temperature?: number;
   topP?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
   maxTokens?: number;
   reasoningEffort?: string;
   tools?: IrTool[];
@@ -368,8 +370,10 @@ function baseRequest(model: string, record: Json): Omit<IrRequest, "messages"> {
     str(record.thinking_level);
   return {
     model,
-    temperature: num(record.temperature),
-    topP: num(record.top_p),
+    temperature: num(record.temperature) ?? num(generationConfig?.temperature),
+    topP: num(record.top_p) ?? num(generationConfig?.top_p),
+    frequencyPenalty: num(record.frequency_penalty),
+    presencePenalty: num(record.presence_penalty),
     maxTokens: maxTokens ?? num(generationConfig?.max_output_tokens),
     reasoningEffort,
     stream: record.stream === true,
@@ -726,6 +730,9 @@ function decodeInteractionsRequest(model: string, record: Json): IrRequest {
 // ---------------------------------------------------------------------------
 
 export function encodeUpstreamRequest(format: ApiFormat, ir: IrRequest): Json {
+  if (format !== "chat" && (ir.frequencyPenalty !== undefined || ir.presencePenalty !== undefined)) {
+    throw new Error(`The ${format} API does not support frequency_penalty/presence_penalty; clear these parameters or use a Chat Completions upstream.`);
+  }
   switch (format) {
     case "responses":
       return encodeResponsesRequest(ir);
@@ -845,6 +852,8 @@ function encodeChatRequest(ir: IrRequest): Json {
   const body: Json = { model: ir.model, messages, stream: ir.stream };
   if (ir.temperature !== undefined) body.temperature = ir.temperature;
   if (ir.topP !== undefined) body.top_p = ir.topP;
+  if (ir.frequencyPenalty !== undefined) body.frequency_penalty = ir.frequencyPenalty;
+  if (ir.presencePenalty !== undefined) body.presence_penalty = ir.presencePenalty;
   if (ir.maxTokens !== undefined) body.max_tokens = ir.maxTokens;
   if (ir.reasoningEffort && ir.reasoningEffort !== "none") body.reasoning_effort = ir.reasoningEffort;
   if (ir.reasoningEffort === "none") body.reasoning_effort = "none";
@@ -1091,6 +1100,8 @@ function encodeInteractionsRequest(ir: IrRequest): Json {
   }
 
   const generationConfig: Json = {};
+  if (ir.temperature !== undefined) generationConfig.temperature = ir.temperature;
+  if (ir.topP !== undefined) generationConfig.top_p = ir.topP;
   if (ir.maxTokens !== undefined) generationConfig.max_output_tokens = ir.maxTokens;
   const level = thinkingLevel(ir.reasoningEffort);
   if (level) generationConfig.thinking_level = level;

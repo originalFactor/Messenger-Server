@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ReasoningEffortSelect } from "@/components/messenger/reasoning-effort-select";
+import { SAMPLING_FIELDS, parseSamplingInputs, type SamplingKey } from "@/lib/sampling";
 import { resolveTools } from "@/components/messenger/chat-wire";
 import type { ConversationDoc, ProviderDoc } from "@/lib/types";
 
@@ -23,8 +24,12 @@ type Props = {
 
 export function ConversationSettings({ conversation, providers, agentModelId, onClose, onSave }: Props) {
   const [model, setModel] = useState(conversation.overrideModelId ?? "");
-  const [temperature, setTemperature] = useState(conversation.overrideTemperature?.toString() ?? "");
-  const [topP, setTopP] = useState(conversation.overrideTopP?.toString() ?? "");
+  const [samplingInputs, setSamplingInputs] = useState(() => Object.fromEntries(
+    SAMPLING_FIELDS.map((field) => [field.key, conversation[field.override]?.toString() ?? ""]),
+  ) as Record<SamplingKey, string>);
+  const [followSampling, setFollowSampling] = useState(() => Object.fromEntries(
+    SAMPLING_FIELDS.map((field) => [field.key, conversation[field.follow] ?? (conversation[field.override] == null)]),
+  ) as Record<SamplingKey, boolean>);
   const [maxTokens, setMaxTokens] = useState(conversation.overrideMaxTokens?.toString() ?? "");
   const [reasoning, setReasoning] = useState(conversation.overrideReasoningEffort ?? "");
   const [toolsEnabled, setToolsEnabled] = useState(conversation.overrideToolsEnabled ?? null);
@@ -34,15 +39,19 @@ export function ConversationSettings({ conversation, providers, agentModelId, on
   if (model && !models.includes(model)) models.unshift(model);
 
   async function save() {
-    const numeric = [temperature, topP, maxTokens].map((value) => value.trim() ? Number(value) : null);
-    const [temp, top, max] = numeric;
-    if (numeric.some((value) => value !== null && !Number.isFinite(value)) || (temp !== null && (temp < 0 || temp > 2)) || (top !== null && (top < 0 || top > 1)) || (max !== null && (!Number.isInteger(max) || max <= 0))) {
-      toast.error("Temperature 需为 0–2，Top P 需为 0–1，Max tokens 需为正整数。");
+    let sampling;
+    try { sampling = parseSamplingInputs(samplingInputs); } catch (error) {
+      toast.error(error instanceof Error ? error.message : "采样参数无效");
+      return;
+    }
+    const max = maxTokens.trim() ? Number(maxTokens) : null;
+    if (max !== null && (!Number.isInteger(max) || max <= 0)) {
+      toast.error("Max tokens 需为正整数。");
       return;
     }
     setSaving(true);
     try {
-      await onSave({ ...conversation, overrideModelId: model || null, overrideTemperature: temp, overrideTopP: top, overrideMaxTokens: max, overrideReasoningEffort: reasoning.trim() || null, overrideToolsEnabled: toolsEnabled, overrideToolsConfig: toolsConfig, updatedAt: Date.now() });
+      await onSave({ ...conversation, overrideModelId: model || null, overrideTemperature: sampling.temperature, overrideTopP: sampling.topP, overrideFrequencyPenalty: sampling.frequencyPenalty, overridePresencePenalty: sampling.presencePenalty, followAgentTemperature: followSampling.temperature, followAgentTopP: followSampling.topP, followAgentFrequencyPenalty: followSampling.frequencyPenalty, followAgentPresencePenalty: followSampling.presencePenalty, overrideMaxTokens: max, overrideReasoningEffort: reasoning.trim() || null, overrideToolsEnabled: toolsEnabled, overrideToolsConfig: toolsConfig, updatedAt: Date.now() });
       toast.success("对话设置已保存");
       onClose();
     } catch (error) {
@@ -57,7 +66,7 @@ export function ConversationSettings({ conversation, providers, agentModelId, on
       <DialogContent className="flex h-[calc(100dvh-2rem)] flex-col sm:max-w-xl">
         <DialogHeader className="shrink-0">
           <DialogTitle>对话设置</DialogTitle>
-          <DialogDescription>仅影响当前对话。参数留空或选择“跟随 Agent”时使用 Agent 配置。</DialogDescription>
+          <DialogDescription>仅影响当前对话。采样参数勾选“跟随 Agent”时继承；取消勾选后留空则不发送该参数。</DialogDescription>
         </DialogHeader>
         <ScrollArea type="always" className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
           <fieldset disabled={saving} className="grid min-w-0 gap-5 pr-3 pb-2">
@@ -68,16 +77,19 @@ export function ConversationSettings({ conversation, providers, agentModelId, on
                 <SelectContent><SelectItem value="__follow__">跟随 Agent</SelectItem>{models.map((id) => <SelectItem key={id} value={id}>{id}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            {[
-              { id: "temperature", label: "Temperature", value: temperature, set: setTemperature, step: "0.1" },
-              { id: "top-p", label: "Top P (top_p)", value: topP, set: setTopP, step: "0.05" },
-              { id: "max-tokens", label: "Max tokens (max_tokens)", value: maxTokens, set: setMaxTokens, step: "1" },
-            ].map((field) => (
-              <div key={field.id} className="grid gap-2">
-                <Label htmlFor={`conversation-${field.id}`}>{field.label}</Label>
-                <Input id={`conversation-${field.id}`} type="number" step={field.step} value={field.value} onChange={(event) => field.set(event.target.value)} placeholder="跟随 Agent" />
+            {SAMPLING_FIELDS.map((field) => (
+              <div key={field.key} className="grid gap-2">
+                <Label htmlFor={`conversation-${field.key}`}>{field.label}</Label>
+                <Label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Checkbox checked={followSampling[field.key]} onCheckedChange={(checked) => setFollowSampling({ ...followSampling, [field.key]: checked === true })} />跟随 Agent
+                </Label>
+                <Input id={`conversation-${field.key}`} type="number" step={field.step} min={field.min} max={field.max} disabled={followSampling[field.key]} value={samplingInputs[field.key]} onChange={(event) => setSamplingInputs({ ...samplingInputs, [field.key]: event.target.value })} placeholder={followSampling[field.key] ? "跟随 Agent" : "留空不发送"} />
               </div>
             ))}
+            <div className="grid gap-2">
+              <Label htmlFor="conversation-max-tokens">Max tokens (max_tokens)</Label>
+              <Input id="conversation-max-tokens" type="number" step="1" value={maxTokens} onChange={(event) => setMaxTokens(event.target.value)} placeholder="跟随 Agent" />
+            </div>
             <div className="grid gap-2">
               <Label htmlFor="conversation-reasoning">Reasoning effort</Label>
               <ReasoningEffortSelect id="conversation-reasoning" modelId={model || agentModelId} value={reasoning} onChange={setReasoning} disabled={saving} defaultLabel="跟随 Agent" />

@@ -71,6 +71,7 @@ import {
   toWireMessages,
   type StoredPart,
 } from "@/components/messenger/chat-wire";
+import { samplingRequestFields } from "@/lib/sampling";
 import { useRemoteDevice, type RemoteToolResult } from "@/components/messenger/remote";
 
 type Props = {
@@ -517,6 +518,10 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
         defaultModelId: titleAgentSource.followDefaultModel ? defaultAgent.defaultModelId : titleAgentSource.defaultModelId,
         temperature: titleAgentSource.followDefaultTemperature ? defaultAgent.temperature : titleAgentSource.temperature,
         topP: titleAgentSource.followDefaultTopP ? defaultAgent.topP : titleAgentSource.topP,
+        temperatureEnabled: titleAgentSource.followDefaultTemperature ? defaultAgent.temperatureEnabled : titleAgentSource.temperatureEnabled,
+        topPEnabled: titleAgentSource.followDefaultTopP ? defaultAgent.topPEnabled : titleAgentSource.topPEnabled,
+        frequencyPenalty: titleAgentSource.followDefaultFrequencyPenalty ? defaultAgent.frequencyPenalty : titleAgentSource.frequencyPenalty,
+        presencePenalty: titleAgentSource.followDefaultPresencePenalty ? defaultAgent.presencePenalty : titleAgentSource.presencePenalty,
         maxTokens: titleAgentSource.followDefaultMaxTokens ? defaultAgent.maxTokens : titleAgentSource.maxTokens,
         reasoningEffort: titleAgentSource.followDefaultReasoningEffort ? defaultAgent.reasoningEffort : titleAgentSource.reasoningEffort,
       }
@@ -528,6 +533,10 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
     defaultModelId: sourceAgent.followDefaultModel ? defaultAgent.defaultModelId : sourceAgent.defaultModelId,
     temperature: sourceAgent.followDefaultTemperature ? defaultAgent.temperature : sourceAgent.temperature,
     topP: sourceAgent.followDefaultTopP ? defaultAgent.topP : sourceAgent.topP,
+    temperatureEnabled: sourceAgent.followDefaultTemperature ? defaultAgent.temperatureEnabled : sourceAgent.temperatureEnabled,
+    topPEnabled: sourceAgent.followDefaultTopP ? defaultAgent.topPEnabled : sourceAgent.topPEnabled,
+    frequencyPenalty: sourceAgent.followDefaultFrequencyPenalty ? defaultAgent.frequencyPenalty : sourceAgent.frequencyPenalty,
+    presencePenalty: sourceAgent.followDefaultPresencePenalty ? defaultAgent.presencePenalty : sourceAgent.presencePenalty,
     maxTokens: sourceAgent.followDefaultMaxTokens ? defaultAgent.maxTokens : sourceAgent.maxTokens,
     reasoningEffort: sourceAgent.followDefaultReasoningEffort ? defaultAgent.reasoningEffort : sourceAgent.reasoningEffort,
   } : sourceAgent;
@@ -597,6 +606,12 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
       overrideModelId: conversation.overrideModelId ?? null,
       overrideTemperature: conversation.overrideTemperature ?? null,
       overrideTopP: conversation.overrideTopP ?? null,
+      overrideFrequencyPenalty: conversation.overrideFrequencyPenalty ?? null,
+      overridePresencePenalty: conversation.overridePresencePenalty ?? null,
+      followAgentTemperature: conversation.followAgentTemperature,
+      followAgentTopP: conversation.followAgentTopP,
+      followAgentFrequencyPenalty: conversation.followAgentFrequencyPenalty,
+      followAgentPresencePenalty: conversation.followAgentPresencePenalty,
       overrideMaxTokens: conversation.overrideMaxTokens ?? null,
       overrideReasoningEffort: conversation.overrideReasoningEffort ?? null,
       overrideToolsEnabled: conversation.overrideToolsEnabled ?? null,
@@ -752,8 +767,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
             stream: true,
             messages: toWireMessages(history),
             ...(projectTools.length > 0 ? { tools: projectTools } : {}),
-            temperature: selected.overrideTemperature ?? agent.temperature,
-            top_p: selected.overrideTopP ?? agent.topP,
+            ...samplingRequestFields(agent, selected),
             max_tokens: selected.overrideMaxTokens ?? agent.maxTokens ?? undefined,
             reasoning_effort: selected.overrideReasoningEffort ?? agent.reasoningEffort ?? undefined,
           }),
@@ -828,8 +842,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
         body: JSON.stringify({
           model: title.defaultModelId,
           stream: false,
-          temperature: title.temperature,
-          top_p: title.topP,
+          ...samplingRequestFields(title),
           max_tokens: title.maxTokens ?? 32,
           messages: [
             { role: "system", content: title.systemPrompt || "Generate a concise conversation title." },

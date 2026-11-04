@@ -201,6 +201,8 @@ async function saveUserTransaction(user: StoredUser, registrationCode?: string):
         defaultModelId: null,
         temperature: 0.7,
         topP: 1,
+        temperatureEnabled: false,
+        topPEnabled: false,
         maxTokens: null,
         reasoningEffort: null,
         isDefault: true,
@@ -410,7 +412,7 @@ async function getSyncVersion(userId: string): Promise<number> {
 }
 
 // 调用方只用到 _id / userId / deleted / version（以及 Agent 的 isDefault /
-// avatarUrl / avatarVersion），完整文档里的 messages（最多 10k 条）和
+// avatarUrl / avatarVersion 及需兼容保留的 Web 采样字段），完整文档里的 messages（最多 10k 条）和
 // models 数组从不被读，所以统一投影掉，避免每次 upsert/delete 把整篇
 // 大字段从 MongoDB 拉到 serverless 实例。
 const OWNERSHIP_PROJECTIONS: Record<"agents" | "conversations" | "providers" | "projects", Record<string, 0 | 1>> = {
@@ -422,8 +424,21 @@ const OWNERSHIP_PROJECTIONS: Record<"agents" | "conversations" | "providers" | "
     avatarUrl: 1,
     avatarVersion: 1,
     version: 1,
+    temperature: 1,
+    topP: 1,
+    temperatureEnabled: 1,
+    topPEnabled: 1,
+    frequencyPenalty: 1,
+    presencePenalty: 1,
+    followDefaultFrequencyPenalty: 1,
+    followDefaultPresencePenalty: 1,
   },
-  conversations: { _id: 1, userId: 1, deleted: 1, version: 1 },
+  conversations: {
+    _id: 1, userId: 1, deleted: 1, version: 1,
+    overrideFrequencyPenalty: 1, overridePresencePenalty: 1,
+    followAgentTemperature: 1, followAgentTopP: 1,
+    followAgentFrequencyPenalty: 1, followAgentPresencePenalty: 1,
+  },
   providers: { _id: 1, userId: 1, deleted: 1, version: 1 },
   projects: { _id: 1, userId: 1, deleted: 1, version: 1 },
 };
@@ -519,8 +534,12 @@ export async function upsertAgent(userId: string, agent: AgentUpsertInput): Prom
           systemPrompt: agent.systemPrompt,
           description: agent.description ?? "",
           defaultModelId: agent.defaultModelId ?? null,
-          temperature: agent.temperature,
-          topP: agent.topP,
+          temperature: agent.temperature ?? existing?.temperature ?? 0.7,
+          topP: agent.topP ?? existing?.topP ?? 1,
+          temperatureEnabled: agent.temperature === null ? false : agent.temperatureEnabled ?? existing?.temperatureEnabled ?? (agent.temperature !== undefined),
+          topPEnabled: agent.topP === null ? false : agent.topPEnabled ?? existing?.topPEnabled ?? (agent.topP !== undefined),
+          frequencyPenalty: agent.frequencyPenalty === undefined ? existing?.frequencyPenalty ?? null : agent.frequencyPenalty,
+          presencePenalty: agent.presencePenalty === undefined ? existing?.presencePenalty ?? null : agent.presencePenalty,
           maxTokens: agent.maxTokens ?? null,
           reasoningEffort: agent.reasoningEffort ?? null,
           isDefault: nextIsDefault,
@@ -528,6 +547,8 @@ export async function upsertAgent(userId: string, agent: AgentUpsertInput): Prom
           followDefaultModel: agent.followDefaultModel,
           followDefaultTemperature: agent.followDefaultTemperature,
           followDefaultTopP: agent.followDefaultTopP,
+          followDefaultFrequencyPenalty: agent.followDefaultFrequencyPenalty ?? existing?.followDefaultFrequencyPenalty ?? false,
+          followDefaultPresencePenalty: agent.followDefaultPresencePenalty ?? existing?.followDefaultPresencePenalty ?? false,
           followDefaultMaxTokens: agent.followDefaultMaxTokens,
           followDefaultReasoningEffort: agent.followDefaultReasoningEffort,
           marketAgentId: agent.marketAgentId ?? null,
@@ -754,7 +775,7 @@ export async function listAgentsSince(
 
 export async function upsertConversation(userId: string, conversation: ConversationUpsertInput): Promise<number> {
   return withVersionedWrite(userId, async (version, session) => {
-    await assertEntityOwnership<ConversationDoc>("conversations", userId, conversation.id, session);
+    const existing = await assertEntityOwnership<ConversationDoc>("conversations", userId, conversation.id, session);
     const db = await getDb();
     await db.collection<ConversationDoc>("conversations").updateOne(
       { _id: conversation.id, userId },
@@ -767,6 +788,12 @@ export async function upsertConversation(userId: string, conversation: Conversat
           overrideModelId: conversation.overrideModelId ?? null,
           overrideTemperature: conversation.overrideTemperature ?? null,
           overrideTopP: conversation.overrideTopP ?? null,
+          overrideFrequencyPenalty: conversation.overrideFrequencyPenalty === undefined ? existing?.overrideFrequencyPenalty ?? null : conversation.overrideFrequencyPenalty,
+          overridePresencePenalty: conversation.overridePresencePenalty === undefined ? existing?.overridePresencePenalty ?? null : conversation.overridePresencePenalty,
+          followAgentTemperature: conversation.followAgentTemperature ?? existing?.followAgentTemperature ?? (conversation.overrideTemperature == null),
+          followAgentTopP: conversation.followAgentTopP ?? existing?.followAgentTopP ?? (conversation.overrideTopP == null),
+          followAgentFrequencyPenalty: conversation.followAgentFrequencyPenalty ?? existing?.followAgentFrequencyPenalty ?? (conversation.overrideFrequencyPenalty == null),
+          followAgentPresencePenalty: conversation.followAgentPresencePenalty ?? existing?.followAgentPresencePenalty ?? (conversation.overridePresencePenalty == null),
           overrideMaxTokens: conversation.overrideMaxTokens ?? null,
           overrideReasoningEffort: conversation.overrideReasoningEffort ?? null,
           overrideToolsEnabled: conversation.overrideToolsEnabled ?? null,

@@ -361,6 +361,10 @@ export interface AgentDoc {
   defaultModelId?: string | null;
   temperature: number;
   topP: number;
+  temperatureEnabled?: boolean;
+  topPEnabled?: boolean;
+  frequencyPenalty?: number | null;
+  presencePenalty?: number | null;
   maxTokens?: number | null;
   reasoningEffort?: string | null;
   isDefault: boolean;
@@ -368,6 +372,8 @@ export interface AgentDoc {
   followDefaultModel: boolean;
   followDefaultTemperature: boolean;
   followDefaultTopP: boolean;
+  followDefaultFrequencyPenalty?: boolean;
+  followDefaultPresencePenalty?: boolean;
   followDefaultMaxTokens: boolean;
   followDefaultReasoningEffort: boolean;
   marketAgentId?: string | null;
@@ -410,6 +416,12 @@ export interface ConversationDoc {
   overrideModelId?: string | null;
   overrideTemperature?: number | null;
   overrideTopP?: number | null;
+  overrideFrequencyPenalty?: number | null;
+  overridePresencePenalty?: number | null;
+  followAgentTemperature?: boolean;
+  followAgentTopP?: boolean;
+  followAgentFrequencyPenalty?: boolean;
+  followAgentPresencePenalty?: boolean;
   overrideMaxTokens?: number | null;
   overrideReasoningEffort?: string | null;
   /** 会话级工具总开关覆盖；缺省 null = 跟随 Agent 生效值。 */
@@ -508,8 +520,12 @@ export interface AgentUpsertInput {
   systemPrompt: string;
   description?: string | null;
   defaultModelId?: string | null;
-  temperature: number;
-  topP: number;
+  temperature?: number | null;
+  topP?: number | null;
+  temperatureEnabled?: boolean;
+  topPEnabled?: boolean;
+  frequencyPenalty?: number | null;
+  presencePenalty?: number | null;
   maxTokens?: number | null;
   reasoningEffort?: string | null;
   isDefault: boolean;
@@ -517,6 +533,8 @@ export interface AgentUpsertInput {
   followDefaultModel: boolean;
   followDefaultTemperature: boolean;
   followDefaultTopP: boolean;
+  followDefaultFrequencyPenalty?: boolean;
+  followDefaultPresencePenalty?: boolean;
   followDefaultMaxTokens: boolean;
   followDefaultReasoningEffort: boolean;
   marketAgentId?: string | null;
@@ -564,6 +582,12 @@ export interface ConversationUpsertInput {
   overrideModelId?: string | null;
   overrideTemperature?: number | null;
   overrideTopP?: number | null;
+  overrideFrequencyPenalty?: number | null;
+  overridePresencePenalty?: number | null;
+  followAgentTemperature?: boolean;
+  followAgentTopP?: boolean;
+  followAgentFrequencyPenalty?: boolean;
+  followAgentPresencePenalty?: boolean;
   overrideMaxTokens?: number | null;
   overrideReasoningEffort?: string | null;
   /** 会话级工具总开关覆盖；缺省 null = 跟随 Agent 生效值。 */

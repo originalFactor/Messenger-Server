@@ -34,6 +34,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgentDoc, ModelEmbed, ProjectDoc, ProviderDoc } from "@/lib/types";
 import { ReasoningEffortSelect } from "@/components/messenger/reasoning-effort-select";
+import { parseSamplingInputs } from "@/lib/sampling";
 import type { PlazaModel } from "@/lib/model-plaza";
 
 type Props = {
@@ -56,6 +57,8 @@ type AgentDraft = {
   defaultModelId: string;
   temperature: string;
   topP: string;
+  frequencyPenalty: string;
+  presencePenalty: string;
   maxTokens: string;
   reasoningEffort: string;
   isDefault: boolean;
@@ -63,6 +66,8 @@ type AgentDraft = {
   followDefaultModel: boolean;
   followDefaultTemperature: boolean;
   followDefaultTopP: boolean;
+  followDefaultFrequencyPenalty: boolean;
+  followDefaultPresencePenalty: boolean;
   followDefaultMaxTokens: boolean;
   followDefaultReasoningEffort: boolean;
   createdAt: number;
@@ -100,8 +105,10 @@ function newAgent(): AgentDraft {
     role: "chat",
     selectedProviderId: "",
     defaultModelId: "",
-    temperature: "0.7",
-    topP: "1",
+    temperature: "",
+    topP: "",
+    frequencyPenalty: "",
+    presencePenalty: "",
     maxTokens: "",
     reasoningEffort: "",
     isDefault: false,
@@ -109,6 +116,8 @@ function newAgent(): AgentDraft {
     followDefaultModel: false,
     followDefaultTemperature: false,
     followDefaultTopP: false,
+    followDefaultFrequencyPenalty: false,
+    followDefaultPresencePenalty: false,
     followDefaultMaxTokens: false,
     followDefaultReasoningEffort: false,
     createdAt: now(),
@@ -124,8 +133,10 @@ function agentDraft(agent: AgentDoc, providerId = ""): AgentDraft {
     role: agent.isDefault ? "default" : agent.role === "title" ? "title" : "chat",
     selectedProviderId: providerId,
     defaultModelId: agent.defaultModelId ?? "",
-    temperature: String(agent.temperature),
-    topP: String(agent.topP),
+    temperature: agent.temperatureEnabled === false ? "" : String(agent.temperature),
+    topP: agent.topPEnabled === false ? "" : String(agent.topP),
+    frequencyPenalty: agent.frequencyPenalty?.toString() ?? "",
+    presencePenalty: agent.presencePenalty?.toString() ?? "",
     maxTokens: agent.maxTokens == null ? "" : String(agent.maxTokens),
     reasoningEffort: agent.reasoningEffort ?? "",
     isDefault: agent.isDefault,
@@ -133,6 +144,8 @@ function agentDraft(agent: AgentDoc, providerId = ""): AgentDraft {
     followDefaultModel: agent.followDefaultModel,
     followDefaultTemperature: agent.followDefaultTemperature,
     followDefaultTopP: agent.followDefaultTopP,
+    followDefaultFrequencyPenalty: agent.followDefaultFrequencyPenalty ?? false,
+    followDefaultPresencePenalty: agent.followDefaultPresencePenalty ?? false,
     followDefaultMaxTokens: agent.followDefaultMaxTokens,
     followDefaultReasoningEffort: agent.followDefaultReasoningEffort,
     createdAt: agent.createdAt,
@@ -277,14 +290,19 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
 
   async function saveAgent() {
     if (!agent) return;
-    const temperature = Number(agent.temperature);
-    const topP = Number(agent.topP);
+    let sampling;
+    try { sampling = parseSamplingInputs(agent); } catch (error) {
+      toast.error(error instanceof Error ? error.message : "采样参数无效");
+      return;
+    }
     const maxTokens = agent.maxTokens ? Number(agent.maxTokens) : null;
-    if (!agent.name.trim() || !agent.systemPrompt.trim() || !Number.isFinite(temperature) || !Number.isFinite(topP)) {
+    if (!agent.name.trim() || !agent.systemPrompt.trim()) {
       toast.error("请填写有效的 Agent 名称、提示词和采样参数。");
       return;
     }
     const previousAgent = agents.find((item) => item._id === agent.id);
+    const temperature = sampling.temperature ?? previousAgent?.temperature ?? 0.7;
+    const topP = sampling.topP ?? previousAgent?.topP ?? 1;
     setSaving(true);
     try {
       const response = await fetch(`/api/agents/${agent.id}`, {
@@ -298,6 +316,10 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
           defaultModelId: agent.defaultModelId.trim() || null,
           temperature,
           topP,
+          temperatureEnabled: sampling.temperature !== null,
+          topPEnabled: sampling.topP !== null,
+          frequencyPenalty: sampling.frequencyPenalty,
+          presencePenalty: sampling.presencePenalty,
           maxTokens: maxTokens == null || Number.isNaN(maxTokens) ? null : maxTokens,
           reasoningEffort: agent.reasoningEffort.trim() || null,
           isDefault: agent.role === "default",
@@ -305,6 +327,8 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
           followDefaultModel: agent.followDefaultModel,
           followDefaultTemperature: agent.followDefaultTemperature,
           followDefaultTopP: agent.followDefaultTopP,
+          followDefaultFrequencyPenalty: agent.followDefaultFrequencyPenalty,
+          followDefaultPresencePenalty: agent.followDefaultPresencePenalty,
           followDefaultMaxTokens: agent.followDefaultMaxTokens,
           followDefaultReasoningEffort: agent.followDefaultReasoningEffort,
           role: agent.role === "title" ? "title" : "chat",
@@ -329,6 +353,10 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
         defaultModelId: agent.defaultModelId.trim() || null,
         temperature,
         topP,
+        temperatureEnabled: sampling.temperature !== null,
+        topPEnabled: sampling.topP !== null,
+        frequencyPenalty: sampling.frequencyPenalty,
+        presencePenalty: sampling.presencePenalty,
         maxTokens,
         reasoningEffort: agent.reasoningEffort.trim() || null,
         isDefault: agent.role === "default",
@@ -337,6 +365,8 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
         followDefaultModel: agent.followDefaultModel,
         followDefaultTemperature: agent.followDefaultTemperature,
         followDefaultTopP: agent.followDefaultTopP,
+        followDefaultFrequencyPenalty: agent.followDefaultFrequencyPenalty,
+        followDefaultPresencePenalty: agent.followDefaultPresencePenalty,
         followDefaultMaxTokens: agent.followDefaultMaxTokens,
         followDefaultReasoningEffort: agent.followDefaultReasoningEffort,
         marketAgentId: previous?.marketAgentId ?? null,
@@ -537,8 +567,18 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
                   <p className="text-xs text-muted-foreground">{selectedAgentProvider?.name ?? "先选择 Provider"} · {agent.defaultModelId || "未选择模型"}</p>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="grid gap-2"><Label htmlFor="agent-temperature">Temperature</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultTemperature" label="跟随默认" checked={agent.followDefaultTemperature} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTemperature: checked })} /> : null}<Input id="agent-temperature" type="number" step="0.1" value={agent.temperature} disabled={agent.followDefaultTemperature && canFollowDefaults} onChange={(event) => setAgent({ ...agent, temperature: event.target.value })} /></div>
-                  <div className="grid gap-2"><Label htmlFor="agent-topP">Top P (top_p)</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultTopP" label="跟随默认" checked={agent.followDefaultTopP} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTopP: checked })} /> : null}<Input id="agent-topP" type="number" step="0.05" value={agent.topP} disabled={agent.followDefaultTopP && canFollowDefaults} onChange={(event) => setAgent({ ...agent, topP: event.target.value })} /></div>
+                  <div className="grid gap-2"><Label htmlFor="agent-temperature">Temperature</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultTemperature" label="跟随默认" checked={agent.followDefaultTemperature} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTemperature: checked })} /> : null}<Input id="agent-temperature" type="number" min="0" max="2" step="0.1" placeholder="留空不发送" value={agent.temperature} disabled={agent.followDefaultTemperature && canFollowDefaults} onChange={(event) => setAgent({ ...agent, temperature: event.target.value })} /></div>
+                  <div className="grid gap-2"><Label htmlFor="agent-topP">Top P (top_p)</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultTopP" label="跟随默认" checked={agent.followDefaultTopP} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTopP: checked })} /> : null}<Input id="agent-topP" type="number" min="0" max="1" step="0.05" placeholder="留空不发送" value={agent.topP} disabled={agent.followDefaultTopP && canFollowDefaults} onChange={(event) => setAgent({ ...agent, topP: event.target.value })} /></div>
+                  {([
+                    { key: "frequencyPenalty", follow: "followDefaultFrequencyPenalty", label: "Frequency penalty" },
+                    { key: "presencePenalty", follow: "followDefaultPresencePenalty", label: "Presence penalty" },
+                  ] as const).map((field) => (
+                    <div key={field.key} className="grid gap-2">
+                      <Label htmlFor={`agent-${field.key}`}>{field.label}</Label>
+                      {canFollowDefaults ? <FollowToggle id={`agent-${field.follow}`} label="跟随默认" checked={agent[field.follow]} onCheckedChange={(checked) => setAgent({ ...agent, [field.follow]: checked })} /> : null}
+                      <Input id={`agent-${field.key}`} type="number" min="-2" max="2" step="0.1" value={agent[field.key]} disabled={agent[field.follow] && canFollowDefaults} onChange={(event) => setAgent({ ...agent, [field.key]: event.target.value })} placeholder="留空不发送" />
+                    </div>
+                  ))}
                   <div className="grid gap-2"><Label htmlFor="agent-maxTokens">Max tokens (max_tokens)</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultMaxTokens" label="跟随默认" checked={agent.followDefaultMaxTokens} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultMaxTokens: checked })} /> : null}<Input id="agent-maxTokens" type="number" value={agent.maxTokens} disabled={agent.followDefaultMaxTokens && canFollowDefaults} onChange={(event) => setAgent({ ...agent, maxTokens: event.target.value })} placeholder="自动" /></div>
                   <div className="grid gap-2"><Label htmlFor="agent-reasoningEffort">Reasoning effort</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultReasoningEffort" label="跟随默认" checked={agent.followDefaultReasoningEffort} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultReasoningEffort: checked })} /> : null}<ReasoningEffortSelect id="agent-reasoningEffort" modelId={effectiveAgentModel} value={canFollowDefaults && agent.followDefaultReasoningEffort ? defaultAgent?.reasoningEffort ?? "" : agent.reasoningEffort} disabled={saving || (agent.followDefaultReasoningEffort && canFollowDefaults)} onChange={(value) => setAgent({ ...agent, reasoningEffort: value })} /></div>
                 </div>

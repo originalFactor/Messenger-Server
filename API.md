@@ -1686,3 +1686,11 @@ S3 兼容对象存储（配置见 README「Avatar Storage」）使用稳定的�
 ```json
 { "error": "描述信息" }
 ```
+
+### Messenger Web 可选采样参数
+
+Agent 编辑支持 temperature（0–2）、top_p（0–1）、frequency_penalty / presence_penalty（-2–2）；可编辑输入留空则不发给模型，0 为显式值。Agent 存储/同步继续携带数值 `temperature`、`topP`，用 `temperatureEnabled=false` / `topPEnabled=false` 表示未配置；旧文档缺少标志时保持启用。Agent PUT 接受对应数值为 null 或缺省；显式 null 会关闭该参数，新建时缺省也不启用。新增 `frequencyPenalty`、`presencePenalty` 为可空字段，支持 `followDefaultFrequencyPenalty` / `followDefaultPresencePenalty`。旧客户端未发送新增字段时保留已存设置。
+
+对话支持 `overrideFrequencyPenalty` / `overridePresencePenalty` 和四个可选布尔字段：`followAgentTemperature`、`followAgentTopP`、`followAgentFrequencyPenalty`、`followAgentPresencePenalty`。true 表示继承 Agent；false 时使用 override 值，null 表示不发送。标志缺省时沿用旧逻辑：override 为 null 则继承 Agent。Web 表单将继承选项与空值分开，保存通过原有会话 PUT 和同步版本事务。
+
+Web 聊天与标题请求均省略未启用/空值采样参数。配置格式转换支持 Chat Completions 的 penalties；对 Responses、Messages、Interactions 的不支持参数给出明确错误。`auto` 上游保持请求原样透传。Interactions 的 temperature/top_p 映射至 `generation_config`。
