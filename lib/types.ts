@@ -143,9 +143,9 @@ export interface RedemptionDoc {
 }
 
 export interface UpstreamModelMeta {
-  /** 覆盖开关：开启时本条自定义元数据生效，关闭时使用 models.dev 元数据。 */
+  /** 覆盖开关：开启时本条自定义元数据生效，关闭时使用上游报价 → pi-catalog 元数据。 */
   override?: boolean;
-  /** 缓存读取倍率，0 = 不计费；缺省按 models.dev 值（无数据按输入价）。 */
+  /** 缓存读取倍率，0 = 不计费；缺省按上游报价 → pi-catalog（无数据按输入价）。 */
   cacheReadRate?: number | null;
   /** 输入倍率，0 = 不计费。 */
   inputRate?: number | null;
@@ -160,13 +160,29 @@ export interface UpstreamModelMeta {
 }
 
 /**
+ * 上游自己 `/v1/models` 返回的报价（服务端维护，管理员不可手改）：
+ * 字段与本服务 `/v1/models` 的 `input_rate` / `cache_read_rate` /
+ * `output_rate` 同构，已经是倍率口径而不是美元价。未返回或返回 0 的
+ * 字段逐项回退 pi-catalog。
+ *
+ * 探测/拉取模型列表时刷新；模型从 `models` / `disabledModels` 删除时一并移除。
+ */
+export interface UpstreamModelPrice {
+  inputRate?: number | null;
+  cacheReadRate?: number | null;
+  outputRate?: number | null;
+  /** 报价的拉取时间（毫秒时间戳），仅用于展示。 */
+  fetchedAt?: number | null;
+}
+
+/**
  * 全局模型倍率设置（`model_rate_settings` 集合，单文档 `_id = "default"`）。
  * baseModelId 非空时，它的生效 tokenType 倍率即 1x 基准：其余模型的已存
- * 倍率（含覆盖条目）在基准切换时整体重算。
+ * 倍率（含覆盖条目）在基准切换时重新归一。
  */
 export interface ModelRateSettingsDoc {
   _id: "default";
-  /** 基准模型 ID；null = 未选基准，维持 models.dev 归一化倍率。 */
+  /** 基准模型 ID；null = 未选基准，维持 pi-catalog 归一化倍率。 */
   baseModelId: string | null;
   createdAt: number;
   updatedAt: number;
@@ -186,8 +202,13 @@ export interface UpstreamDoc {
   apiFormat?: "chat" | "responses" | "messages" | "interactions" | "auto" | null;
   /** 该上游可服务的模型 ID 列表。 */
   models: string[];
-  /** 按上游自定义的模型元数据；仅 override 开启的条目生效，其余用 models.dev 元数据。 */
+  /** 按上游自定义的模型元数据；仅 override 开启的条目生效，其余用上游报价 → pi-catalog 元数据。 */
   modelMeta?: Record<string, UpstreamModelMeta> | null;
+  /**
+   * 上游 `/v1/models` 自报的模型报价（倍率口径），服务端在探测时刷新；
+   * 解析时优先于 pi-catalog，逐字段回退。缺失（旧文档）= 全部回退目录。
+   */
+  modelPrices?: Record<string, UpstreamModelPrice> | null;
   /** 表中保留但停用的模型 ID：不参与服务，仅用于编辑表单回显。 */
   disabledModels?: string[] | null;
   /**

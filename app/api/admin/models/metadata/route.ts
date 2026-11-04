@@ -16,15 +16,18 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
-import { getModelDefaults } from "@/lib/model-metadata";
+import { getCatalogRates } from "@/lib/pi-catalog";
 
 export const runtime = "nodejs";
 
 /**
- * models.dev 模型元数据（实例内存缓存 24h）：modelId →
- * { override?, cacheReadRate?, inputRate?, outputRate? }。倍率以
- * deepseek-v4.1-flash 峰时输出费率 1.0 为基准折算；models.dev 不可用时
- * 返回空映射。
+ * pi-catalog 模型倍率（实例内存缓存 24h）：modelId →
+ * { cacheReadRate?, inputRate?, outputRate? }。倍率以 deepseek/deepseek-flash
+ * 的输出价格 1.0 为基准折算；pi.dev 不可用时返回空映射。
+ *
+ * 上游 `/v1/models` 自报的报价不在这里 —— 它们按上游存在 `upstreams.modelPrices`，
+ * 解析时优先于本目录（见 `lib/model-rates.ts`）。
+ *
  * 传 ?refresh=1 时绕过缓存强制重新拉取（控制台「更新元数据」入口）。
  */
 export async function GET(request: Request) {
@@ -34,7 +37,7 @@ export async function GET(request: Request) {
   }
 
   const forceRefresh = new URL(request.url).searchParams.get("refresh") === "1";
-  const { rates, degraded } = await getModelDefaults(forceRefresh);
+  const { rates, degraded } = await getCatalogRates(forceRefresh);
   const metadata: Record<string, { cacheReadRate: number; inputRate: number; outputRate: number }> = {};
   for (const [modelId, rate] of Object.entries(rates)) {
     metadata[modelId] = { cacheReadRate: rate.cacheRead, inputRate: rate.input, outputRate: rate.output };

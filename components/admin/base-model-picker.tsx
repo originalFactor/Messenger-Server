@@ -38,7 +38,7 @@ import {
 interface BaseModelView {
   baseModelId: string | null;
   models: string[];
-  /** 各模型当前生效的输入/缓存/输出倍率（models.dev 归一化口径）。 */
+  /** 各模型当前生效的输入/缓存/输出倍率（上游报价偏好，其余按 pi-catalog 归一）。 */
   rates: Record<string, { inputRate: number; cacheReadRate: number; outputRate: number }>;
 }
 
@@ -92,7 +92,7 @@ export function BaseModelPicker() {
       toast.success(
         payload.baseModelId
           ? `基准模型已切换为 ${payload.baseModelId}，全部模型价格已按新基准重算`
-          : "已清除基准模型，价格恢复 models.dev 口径",
+          : "已清除基准模型，价格恢复 pi-catalog 口径",
       );
       router.refresh();
     } catch {
@@ -124,7 +124,7 @@ export function BaseModelPicker() {
             <SelectValue placeholder={models.length === 0 ? "暂无可选模型" : "选择基准模型"} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={NO_BASE_MODEL}>不设基准（按 models.dev 价格）</SelectItem>
+            <SelectItem value={NO_BASE_MODEL}>不设基准（按 pi-catalog 价格）</SelectItem>
             {models.map((modelId) => {
               const rate = view?.rates[modelId];
               return (
@@ -142,7 +142,7 @@ export function BaseModelPicker() {
           </p>
         ) : (
           <p className="text-xs text-muted-foreground">
-            未设基准：全部价格按 models.dev 口径（deepseek-v4.1-flash 输出 = 1.0）。
+            未设基准：全部价格按 pi-catalog 口径（deepseek-flash 输出 = 1.0），有上游自报报价时以上游为准。
           </p>
         )}
         {error ? <p className="text-sm text-destructive">{error}</p> : null}

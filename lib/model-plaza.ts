@@ -20,8 +20,8 @@
  * providerRate），多上游倍率不一致时聚合为区间展示。
  */
 
-import { getModelDefaults } from "@/lib/model-metadata";
-import { type BaseModelContext, resolveModelRates } from "@/lib/model-rates";
+import { getCatalogRates } from "@/lib/pi-catalog";
+import { type BaseModelContext, resolveBaseContext, resolveModelRates } from "@/lib/model-rates";
 import { getModelRateSettings, listEnabledUpstreams } from "@/lib/storage";
 
 export interface PlazaModel {
@@ -39,12 +39,10 @@ export interface PlazaModel {
 export async function getModelPlaza(): Promise<PlazaModel[]> {
   const [upstreams, defaults, settings] = await Promise.all([
     listEnabledUpstreams(),
-    getModelDefaults(),
+    getCatalogRates(),
     getModelRateSettings(),
   ]);
-  const baseId = settings.baseModelId;
-  const base: BaseModelContext | null =
-    baseId !== null && defaults.rates[baseId] !== undefined ? { modelId: baseId } : null;
+  const base: BaseModelContext | null = resolveBaseContext(settings.baseModelId, defaults.rates, upstreams);
   const collected = new Map<string, { inputs: number[]; outputs: number[]; cacheReads: number[] }>();
   for (const upstream of upstreams) {
     for (const modelId of upstream.models) {

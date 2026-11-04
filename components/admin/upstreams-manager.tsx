@@ -56,7 +56,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
-import type { UpstreamDoc, UpstreamModelMeta } from "@/lib/types";
+import type { UpstreamDoc, UpstreamModelMeta, UpstreamModelPrice } from "@/lib/types";
 import { BaseModelPicker } from "@/components/admin/base-model-picker";
 
 type UpstreamApiFormatValue = "auto" | "chat" | "responses" | "messages" | "interactions";
@@ -90,7 +90,10 @@ const emptyUpstreamForm: UpstreamFormState = {
   multiplier: "",
 };
 
-type DevMeta = Record<string, UpstreamModelMeta>;
+/** pi-catalog 归一化倍率（upstreams.modelPrices 缺失时的兜底）。 */
+type CatalogMeta = Record<string, UpstreamModelMeta>;
+/** 上游 `/v1/models` 自报的报价（倍率口径），探测时刷新、保存时原样带回。 */
+type PriceMap = Record<string, UpstreamModelPrice>;
 /** 草稿只记录用户动过的字段；未触碰字段缺省，由生效值解析兜底。 */
 interface MetaDraft {
   inputRate?: string;
@@ -149,7 +152,9 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [devMeta, setDevMeta] = useState<DevMeta>({});
+  const [catalogMeta, setCatalogMeta] = useState<CatalogMeta>({});
+  /** 当前表单上游的报价快照（探测回填 / 编辑时载入），保存时随 PUT 提交。 */
+  const [modelPrices, setModelPrices] = useState<PriceMap>({});
   const [editingModelMeta, setEditingModelMeta] = useState<Record<string, UpstreamModelMeta>>({});
   const [metaDrafts, setMetaDrafts] = useState<Record<string, MetaDraft>>({});
   const [overrideDrafts, setOverrideDrafts] = useState<Record<string, boolean>>({});
@@ -158,7 +163,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   const [testingModel, setTestingModel] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; text: string }>>({});
 
-  // models.dev 元数据（含上下文与归一化倍率），页面加载时拉取一次。
+  // pi-catalog 元数据（归一化倍率），页面加载时拉取一次；上游 `/v1/models`
+  // 自报的报价在各自编辑表单里优先于它。
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -169,7 +175,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
           metadata?: Record<string, UpstreamModelMeta>;
         };
         if (!cancelled && payload.metadata) {
-          setDevMeta(payload.metadata);
+          setCatalogMeta(payload.metadata);
         }
       } catch {
         // 元数据仅用于展示/默认值，拉取失败静默降级（倍率按 1x 展示）。
@@ -190,6 +196,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setEditingModelMeta({});
     setMetaDrafts({});
     setOverrideDrafts({});
+    setModelPrices({});
     setTestResults({});
     setFormError(null);
     setShowForm(true);
@@ -214,6 +221,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setEditingModelMeta(upstream.modelMeta ?? {});
     setMetaDrafts({});
     setOverrideDrafts({});
+    setModelPrices(upstream.modelPrices ?? {});
     setTestResults({});
     setFormError(null);
     setShowForm(true);
@@ -241,7 +249,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     );
   }
 
-  /** 从表中彻底删除模型：同时移除 models、停用列表与已存元数据。 */
+  /** 从表中彻底删除模型：同时移除 models、停用列表、已存元数据与上游报价。 */
   function deleteFormModel(modelId: string) {
     if (!window.confirm(`确定从该上游删除模型「${modelId}」？`)) {
       return;
@@ -249,6 +257,14 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setSelectedModels((selected) => selected.filter((value) => value !== modelId));
     setDiscoveredModels((models) => models.filter((value) => value !== modelId));
     setDisabledModels((disabled) => disabled.filter((value) => value !== modelId));
+    setModelPrices((prices) => {
+      if (prices[modelId] === undefined) {
+        return prices;
+      }
+      const next = { ...prices };
+      delete next[modelId];
+      return next;
+    });
     setEditingModelMeta((meta) => {
       if (meta[modelId] === undefined) {
         return meta;
@@ -315,6 +331,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       });
       const payload = (await response.json().catch(() => null)) as {
         models?: string[];
+        prices?: PriceMap;
         error?: string;
       } | null;
       if (!response.ok || !payload?.models) {
@@ -324,7 +341,15 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       setDiscoveredModels((models) =>
         [...new Set([...models, ...payload.models ?? []])].sort((a, b) => a.localeCompare(b)),
       );
-      toast.success(`发现 ${payload.models.length} 个模型，勾选后保存即可`);
+      const prices = payload.prices ?? {};
+      if (Object.keys(prices).length > 0) {
+        setModelPrices((current) => ({ ...current, ...prices }));
+        toast.success(
+          `发现 ${payload.models.length} 个模型，其中 ${Object.keys(prices).length} 个带上游报价，勾选后保存即可`,
+        );
+      } else {
+        toast.success(`发现 ${payload.models.length} 个模型，勾选后保存即可`);
+      }
     } catch {
       setFormError("网络错误，请稍后重试。");
     } finally {
@@ -332,9 +357,9 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     }
   }
 
-  /** 从 models.dev 更新元数据：强制刷新服务端 24h 缓存并更新本页显示，
-   *  不改变任何模型的覆盖开关。 */
-  async function updateMetaFromModelsDev() {
+  /** 从 pi-catalog 更新元数据：强制刷新服务端 24h 缓存并更新本页显示，
+   *  不改变任何模型的覆盖开关与上游自报报价。 */
+  async function updateMetaFromCatalog() {
     setFormError(null);
     try {
       const response = await fetch("/api/admin/models/metadata?refresh=1");
@@ -347,11 +372,11 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       };
       const metadata = payload.metadata ?? {};
       if (Object.keys(metadata).length === 0) {
-        toast.error("models.dev 无可用元数据（服务器可能无法访问 models.dev）");
+        toast.error("pi-catalog 无可用元数据（服务器可能无法访问 pi.dev）");
         return;
       }
-      setDevMeta((meta) => ({ ...meta, ...metadata }));
-      toast.success(`已从 models.dev 更新 ${Object.keys(metadata).length} 个模型的元数据`);
+      setCatalogMeta((meta) => ({ ...meta, ...metadata }));
+      toast.success(`已从 pi-catalog 更新 ${Object.keys(metadata).length} 个模型的元数据`);
     } catch {
       setFormError("网络错误，请稍后重试。");
     }
@@ -361,7 +386,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     return metaDrafts[modelId] ?? {};
   }
 
-  /** 按模型覆盖开关：行草稿 > 已存自定义 > 默认关闭（用 models.dev）。 */
+  /** 按模型覆盖开关：行草稿 > 已存自定义 > 默认关闭（用上游报价 → pi-catalog）。 */
   function rowOverride(modelId: string): boolean {
     return overrideDrafts[modelId] ?? editingModelMeta[modelId]?.override ?? false;
   }
@@ -390,51 +415,76 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     return multiplierDisplay(editingModelMeta[modelId]?.multiplier);
   }
 
-  /** 生效元数据（按模型）：覆盖开启时 草稿 > 自定义 > models.dev > 0（0 = 不计费）；
-   *  关闭时（默认使用 models.dev 数据）models.dev 缺失或为 0 时按 1x 展示。
+  /**
+   * 该模型的默认（未覆盖）tokenType 倍率：上游 `/v1/models` 报价优先，
+   * 缺字段回退 pi-catalog，都没有按 1x。同时给出「缓存价 ÷ 输入价」的
+   * 折扣比例（上游自报两者时用上游的，否则用目录的），供覆盖条目在未填
+   * 缓存价时折算 —— 与服务端 `lib/model-rates.ts` 的解析口径一致。
+   */
+  function defaultMeta(modelId: string): {
+    inputRate: number;
+    cacheReadRate: number;
+    outputRate: number;
+    cacheDiscount: number;
+  } {
+    const price = modelPrices[modelId];
+    const catalog = catalogMeta[modelId];
+    const priceInput = price?.inputRate && price.inputRate > 0 ? price.inputRate : undefined;
+    const priceCache = price?.cacheReadRate && price.cacheReadRate > 0 ? price.cacheReadRate : undefined;
+    const priceOutput = price?.outputRate && price.outputRate > 0 ? price.outputRate : undefined;
+    const catalogDiscount = catalog?.inputRate && catalog.inputRate > 0 && typeof catalog.cacheReadRate === "number" && catalog.cacheReadRate > 0
+      ? catalog.cacheReadRate / catalog.inputRate
+      : 1;
+    const cacheDiscount = priceInput !== undefined && priceCache !== undefined ? priceCache / priceInput : catalogDiscount;
+    const inputRate = priceInput ?? (catalog?.inputRate && catalog.inputRate > 0 ? catalog.inputRate : 1);
+    return {
+      inputRate,
+      cacheReadRate: priceCache ?? (catalog?.cacheReadRate && catalog.cacheReadRate > 0 ? catalog.cacheReadRate : inputRate * catalogDiscount),
+      outputRate: priceOutput ?? (catalog?.outputRate && catalog.outputRate > 0 ? catalog.outputRate : 1),
+      cacheDiscount,
+    };
+  }
+
+  /** 该模型是否带上游 `/v1/models` 自报报价（表格里打标用）。 */
+  function hasUpstreamPrice(modelId: string): boolean {
+    const price = modelPrices[modelId];
+    return price !== undefined && (price.inputRate !== undefined || price.cacheReadRate !== undefined || price.outputRate !== undefined);
+  }
+
+  /** 生效元数据（按模型）：覆盖开启时 草稿 > 自定义 > 上游报价 > pi-catalog > 0
+   *  （0 = 不计费）；关闭时直接用「上游报价 > pi-catalog」，缺失按 1x 展示。
    *  返回值为 tokenType 倍率（未含 modelRate / providerRate）。 */
   function resolvedMeta(modelId: string): {
     inputRate: number;
     cacheReadRate: number;
     outputRate: number;
   } {
-    const dev = devMeta[modelId];
+    const fallback = defaultMeta(modelId);
     if (!rowOverride(modelId)) {
-      const devRate = dev?.inputRate;
-      const devOutRate = dev?.outputRate;
-      const devCacheRate = dev?.cacheReadRate;
-      return {
-        inputRate: devRate && devRate > 0 ? devRate : 1,
-        // 缓存读取缺失按输入价计（不收缓存折扣的供应商即如此）。
-        cacheReadRate: devCacheRate && devCacheRate > 0 ? devCacheRate : (devRate && devRate > 0 ? devRate : 1),
-        outputRate: devOutRate && devOutRate > 0 ? devOutRate : 1,
-      };
+      return fallback;
     }
     const stored = editingModelMeta[modelId];
     const draft = metaDrafts[modelId];
     const pickRate = (
       draftValue: string | undefined,
       storedValue: number | null | undefined,
-      devValue: number | null | undefined,
+      defaultValue: number,
     ): number => {
       if (draftValue !== undefined) {
         const parsed = parseRateInput(draftValue);
-        return parsed === "invalid" ? (storedValue ?? devValue ?? 0) : parsed;
+        return parsed === "invalid" ? (storedValue ?? defaultValue) : parsed;
       }
-      return storedValue ?? devValue ?? 0;
+      return storedValue ?? defaultValue;
     };
-    const inputRate = pickRate(draft?.inputRate, stored?.inputRate, dev?.inputRate);
-    // 缓存价未自定义时沿用 models.dev 的折扣比例（cache ÷ input）而不是其
-    // 绝对倍率 —— 与 lib/model-rates.ts 的解析口径保持一致。
-    const devDiscount = dev?.inputRate && dev.inputRate > 0 && typeof dev.cacheReadRate === "number"
-      ? dev.cacheReadRate / dev.inputRate
-      : 1;
+    const inputRate = pickRate(draft?.inputRate, stored?.inputRate, fallback.inputRate);
     return {
       inputRate,
+      // 未填缓存价时按「实际输入价 × 缓存折扣」折算（与 lib/model-rates.ts 一致），
+      // 而不是直接沿用目录里的绝对缓存倍率 —— 两套口径不同。
       cacheReadRate: draft?.cacheReadRate !== undefined || stored?.cacheReadRate != null
-        ? pickRate(draft?.cacheReadRate, stored?.cacheReadRate, dev?.cacheReadRate)
-        : inputRate * devDiscount,
-      outputRate: pickRate(draft?.outputRate, stored?.outputRate, dev?.outputRate),
+        ? pickRate(draft?.cacheReadRate, stored?.cacheReadRate, fallback.cacheReadRate)
+        : inputRate * fallback.cacheDiscount,
+      outputRate: pickRate(draft?.outputRate, stored?.outputRate, fallback.outputRate),
     };
   }
 
@@ -523,6 +573,17 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     if (Object.keys(modelMeta).length > 0) {
       payload.modelMeta = modelMeta;
     }
+    // 上游报价是服务端维护的数据：表单探测到就原样带回，否则省略该字段
+    // 让服务端保留库中已有值（PUT 不会因此清空探测结果）。
+    const keptPrices: PriceMap = {};
+    for (const [modelId, price] of Object.entries(modelPrices)) {
+      if (hasUpstreamPrice(modelId)) {
+        keptPrices[modelId] = price;
+      }
+    }
+    if (Object.keys(keptPrices).length > 0) {
+      payload.modelPrices = keptPrices;
+    }
     setBusy(true);
     setFormError(null);
     try {
@@ -569,25 +630,31 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       setError("该上游未配置模型。");
       return;
     }
+    // 与服务端解析同一来源链：上游 /v1/models 报价 > pi-catalog > 1x。
     const rateOf = (modelId: string): { inputRate: number; cacheReadRate: number; outputRate: number } => {
-      const dev = devMeta[modelId];
-      const meta = upstream.modelMeta?.[modelId];
-      const devDiscount = dev?.inputRate && dev.inputRate > 0 && typeof dev.cacheReadRate === "number"
-        ? dev.cacheReadRate / dev.inputRate
+      const price = upstream.modelPrices?.[modelId];
+      const catalog = catalogMeta[modelId];
+      const priceInput = price?.inputRate && price.inputRate > 0 ? price.inputRate : undefined;
+      const priceCache = price?.cacheReadRate && price.cacheReadRate > 0 ? price.cacheReadRate : undefined;
+      const priceOutput = price?.outputRate && price.outputRate > 0 ? price.outputRate : undefined;
+      const catalogDiscount = catalog?.inputRate && catalog.inputRate > 0 && typeof catalog.cacheReadRate === "number" && catalog.cacheReadRate > 0
+        ? catalog.cacheReadRate / catalog.inputRate
         : 1;
+      const discount = priceInput !== undefined && priceCache !== undefined ? priceCache / priceInput : catalogDiscount;
+      const fallbackInput = priceInput ?? (catalog?.inputRate && catalog.inputRate > 0 ? catalog.inputRate : 1);
+      const fallbackOutput = priceOutput ?? (catalog?.outputRate && catalog.outputRate > 0 ? catalog.outputRate : 1);
+      const fallbackCache =
+        priceCache ?? (catalog?.cacheReadRate && catalog.cacheReadRate > 0 ? catalog.cacheReadRate : fallbackInput * discount);
+      const meta = upstream.modelMeta?.[modelId];
       if (meta?.override) {
-        const inputRate = meta.inputRate ?? dev?.inputRate ?? 1;
+        const inputRate = meta.inputRate ?? fallbackInput;
         return {
           inputRate,
-          cacheReadRate: meta.cacheReadRate ?? inputRate * devDiscount,
-          outputRate: meta.outputRate ?? dev?.outputRate ?? 1,
+          cacheReadRate: meta.cacheReadRate ?? inputRate * discount,
+          outputRate: meta.outputRate ?? fallbackOutput,
         };
       }
-      return {
-        inputRate: dev?.inputRate ?? 1,
-        cacheReadRate: dev?.cacheReadRate ?? dev?.inputRate ?? 1,
-        outputRate: dev?.outputRate ?? 1,
-      };
+      return { inputRate: fallbackInput, cacheReadRate: fallbackCache, outputRate: fallbackOutput };
     };
     const cheapest = [...upstream.models].sort((a, b) => {
       const rateA = rateOf(a);
@@ -841,9 +908,9 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                     添加
                   </Button>
                 </div>
-                <Button type="button" variant="outline" size="sm" onClick={updateMetaFromModelsDev}>
+                <Button type="button" variant="outline" size="sm" onClick={updateMetaFromCatalog}>
                   <ArrowDownToLine />
-                  从 models.dev 更新元数据
+                  从 pi-catalog 更新元数据
                 </Button>
               </div>
             </div>
@@ -880,7 +947,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                         const editable = rowOverride(modelId);
                         const rowDisabled = disabledModels.includes(modelId);
                         const rawDraft = metaDraftOf(modelId);
-                        // 覆盖开启：未触碰字段显示当前生效值（自定义 > models.dev > 0），
+                        // 覆盖开启：未触碰字段显示当前生效值（自定义 > 上游报价 > pi-catalog > 0），
                         // 用户动过的字段（含主动清空 = 0）显示草稿原值。
                         const draft: MetaDraft = editable
                           ? {
@@ -915,6 +982,15 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                               ) : selectedModels.includes(modelId) ? (
                                 <Badge variant="secondary" className="ml-2 font-sans text-[10px]">
                                   已选
+                                </Badge>
+                              ) : null}
+                              {hasUpstreamPrice(modelId) ? (
+                                <Badge
+                                  variant="outline"
+                                  className="ml-2 font-sans text-[10px]"
+                                  title="该上游的 /v1/models 自报了价格，解析时优先于 pi-catalog"
+                                >
+                                  上游报价
                                 </Badge>
                               ) : null}
                             </TableCell>

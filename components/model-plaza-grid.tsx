@@ -57,7 +57,7 @@ function formatRateRange(min: number, max: number): string {
   return lo === hi ? formatRate(lo) : `${formatRate(lo)} ~ ${formatRate(hi)}`;
 }
 
-/** 拆出 models.dev 风格的前缀供应商（deepseek/deepseek-v4.1-flash → deepseek），无前缀只显示裸 ID。 */
+/** 拆出目录里的前缀供应商（deepseek/deepseek-flash → deepseek），无前缀只显示裸 ID。 */
 function splitModelId(modelId: string): { vendor?: string; name: string } {
   const separator = modelId.indexOf("/");
   return separator > 0

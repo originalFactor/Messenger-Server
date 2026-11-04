@@ -47,6 +47,7 @@ import type {
   SyncSummary,
   UpstreamDoc,
   UpstreamModelMeta,
+  UpstreamModelPrice,
   UsageLogDoc,
   UsageStats,
   UserDoc,
@@ -1783,6 +1784,8 @@ export interface UpstreamInput {
   apiFormat?: "chat" | "responses" | "messages" | "interactions" | "auto";
   models: string[];
   modelMeta?: Record<string, UpstreamModelMeta> | null;
+  /** 上游 `/v1/models` 自报的模型报价；undefined = 保留库中已有值。 */
+  modelPrices?: Record<string, UpstreamModelPrice> | null;
   /** 表中保留但停用的模型 ID：不参与服务，仅用于编辑表单回显。 */
   disabledModels?: string[] | null;
   /** 上游整体倍率（providerRate）；缺省 = 1。 */
@@ -1838,6 +1841,45 @@ function normalizeUpstreamModels(models: string[]): string[] {
 }
 
 /**
+ * 上游报价规范化：只保留有限正数，逐字段剔除 0 / 非法值（0 表示「未返回」，
+ * 解析时回退 pi-catalog）；只保留仍被该上游引用（`models` 或
+ * `disabledModels`）的模型，避免删掉的模型留下孤儿报价。没有任何报价字段
+ * 的条目（例如只有 fetchedAt）直接丢弃 —— 它不影响任何解析。
+ */
+function normalizeUpstreamModelPrices(
+  modelPrices: Record<string, UpstreamModelPrice> | null | undefined,
+  keptModels: Iterable<string>,
+): Record<string, UpstreamModelPrice> | null {
+  if (!modelPrices) {
+    return null;
+  }
+  const kept = new Set(keptModels);
+  const normalized: Record<string, UpstreamModelPrice> = {};
+  for (const [modelId, price] of Object.entries(modelPrices)) {
+    const id = modelId.trim();
+    if (!id || !price || !kept.has(id)) continue;
+    const entry: UpstreamModelPrice = {};
+    if (typeof price.inputRate === "number" && Number.isFinite(price.inputRate) && price.inputRate > 0) {
+      entry.inputRate = price.inputRate;
+    }
+    if (typeof price.cacheReadRate === "number" && Number.isFinite(price.cacheReadRate) && price.cacheReadRate > 0) {
+      entry.cacheReadRate = price.cacheReadRate;
+    }
+    if (typeof price.outputRate === "number" && Number.isFinite(price.outputRate) && price.outputRate > 0) {
+      entry.outputRate = price.outputRate;
+    }
+    if (entry.inputRate === undefined && entry.cacheReadRate === undefined && entry.outputRate === undefined) {
+      continue;
+    }
+    if (typeof price.fetchedAt === "number" && Number.isFinite(price.fetchedAt) && price.fetchedAt >= 0) {
+      entry.fetchedAt = price.fetchedAt;
+    }
+    normalized[id] = entry;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
+/**
  * 停用模型列表规范化：trimming + 去重，并剔除同时出现在 models 里的 ID
  * （models 优先 —— 一个模型不能既服务又停用）。停用 ID 本身不是 models 的
  * 子集：模型停用时已从 models 移除，这里绝不能与之求交，否则停用行在重开
@@ -1884,15 +1926,18 @@ export async function getUpstreamById(upstreamId: string): Promise<UpstreamDoc |
 export async function createUpstream(input: UpstreamInput): Promise<UpstreamDoc> {
   const db = await getDb();
   const now = Date.now();
+  const models = normalizeUpstreamModels(input.models);
+  const disabledModels = normalizeUpstreamDisabledModels(models, input.disabledModels);
   const upstream: UpstreamDoc = {
     _id: randomUUID(),
     name: input.name,
     baseUrl: input.baseUrl,
     apiKey: input.apiKey,
     apiFormat: normalizeUpstreamApiFormat(input.apiFormat),
-    models: normalizeUpstreamModels(input.models),
+    models,
     modelMeta: normalizeUpstreamModelMeta(input.modelMeta),
-    disabledModels: normalizeUpstreamDisabledModels(normalizeUpstreamModels(input.models), input.disabledModels),
+    modelPrices: normalizeUpstreamModelPrices(input.modelPrices, [...models, ...disabledModels]),
+    disabledModels,
     multiplier: input.multiplier ?? null,
     priority: input.priority,
     enabled: input.enabled,
@@ -1905,6 +1950,14 @@ export async function createUpstream(input: UpstreamInput): Promise<UpstreamDoc>
 
 export async function updateUpstream(upstreamId: string, input: UpstreamInput): Promise<UpstreamDoc> {
   const db = await getDb();
+  const models = normalizeUpstreamModels(input.models);
+  const disabledModels = normalizeUpstreamDisabledModels(models, input.disabledModels);
+  // 报价只有探测接口会写：PUT 省略该字段时保留库中已有值（旧控制台/客户端
+  // 不会因此清空探测结果），显式传 null 才清空。
+  const prices =
+    input.modelPrices === undefined
+      ? {}
+      : { modelPrices: normalizeUpstreamModelPrices(input.modelPrices, [...models, ...disabledModels]) };
   const updated = await db.collection<UpstreamDoc>("upstreams").findOneAndUpdate(
     { _id: upstreamId },
     {
@@ -1913,12 +1966,10 @@ export async function updateUpstream(upstreamId: string, input: UpstreamInput): 
         baseUrl: input.baseUrl,
         apiKey: input.apiKey,
         apiFormat: normalizeUpstreamApiFormat(input.apiFormat),
-        models: normalizeUpstreamModels(input.models),
+        models,
         modelMeta: normalizeUpstreamModelMeta(input.modelMeta),
-        disabledModels: normalizeUpstreamDisabledModels(
-          normalizeUpstreamModels(input.models),
-          input.disabledModels,
-        ),
+        ...prices,
+        disabledModels,
         multiplier: input.multiplier ?? null,
         priority: input.priority,
         enabled: input.enabled,
@@ -1941,6 +1992,40 @@ export async function deleteUpstream(upstreamId: string): Promise<void> {
   }
 }
 
+/**
+ * 用一次探测结果刷新上游报价（服务端维护，管理员不可手改）：只写该上游
+ * 当前引用（`models` / `disabledModels`）的模型，其余忽略；探测未返回报价
+ * 的模型保留上一次的值（上游临时不返回扩展字段时不至于把价格清空）。
+ *
+ * 控制台表单保存时会带上自己的报价快照（PUT 的 `modelPrices`），因此这里
+ * 只用于「对已存上游点探测」这条路径。
+ */
+export async function refreshUpstreamModelPrices(
+  upstreamId: string,
+  prices: Record<string, UpstreamModelPrice>,
+): Promise<UpstreamDoc | null> {
+  const db = await getDb();
+  const upstream = await getUpstreamById(upstreamId);
+  if (!upstream) {
+    return null;
+  }
+  const merged = { ...(upstream.modelPrices ?? {}), ...prices };
+  const updated = await db.collection<UpstreamDoc>("upstreams").findOneAndUpdate(
+    { _id: upstreamId },
+    {
+      $set: {
+        modelPrices: normalizeUpstreamModelPrices(merged, [
+          ...(upstream.models ?? []),
+          ...(upstream.disabledModels ?? []),
+        ]),
+        updatedAt: Date.now(),
+      },
+    },
+    { returnDocument: "after", includeResultMetadata: false },
+  );
+  return updated ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // 全局模型倍率设置：1x 基准模型
 // ---------------------------------------------------------------------------
@@ -1959,17 +2044,17 @@ export async function getModelRateSettings(): Promise<ModelRateSettingsDoc> {
 }
 
 export interface SetBaseModelInput {
-  /** 新基准模型 ID；null = 清除基准（回到 models.dev 归一化口径）。 */
+  /** 新基准模型 ID；null = 清除基准（回到 pi-catalog 归一化口径）。 */
   baseModelId: string | null;
 }
 
 /**
- * 切换 1x 基准模型：只写 model_rate_settings。
+ * 切换 1x 基准模型：只写 `model_rate_settings`。
  *
- * 存量倍率长期保存在 models.dev 归一化空间，与基准无关；基准是解析期
- * 的分母（见 resolveModelRates），因此切换基准不改任何上游数据 ——
- * 模型间相对价格恒定、随时可逆、无浮点漂移。基准模型自身在解析时
- * 恒为 1x（存量 ÷ 自身存量）。
+ * 存量倍率长期保存在 pi-catalog 归一化空间（上游自报报价优先），与基准
+ * 无关；基准是解析期的分母（见 `resolveModelRates`），因此切换基准不改
+ * 任何上游数据 —— 模型间相对价格恒定、随时可逆、无浮点漂移。基准模型
+ * 自身在解析时恒为 1x（存量 ÷ 自身存量）。
  */
 export async function setBaseModel(input: SetBaseModelInput): Promise<ModelRateSettingsDoc> {
   const db = await getDb();
@@ -1989,7 +2074,7 @@ export async function setBaseModel(input: SetBaseModelInput): Promise<ModelRateS
   return settings;
 }
 
-/** 全部启用的上游文档（含 modelMeta），供模型广场做倍率聚合。 */
+/** 全部启用的上游文档（含 modelMeta / modelPrices），供模型广场做倍率聚合。 */
 export async function listEnabledUpstreams(): Promise<UpstreamDoc[]> {
   const db = await getDb();
   return db.collection<UpstreamDoc>("upstreams")

@@ -26,10 +26,10 @@ export async function GET(request: Request) {
     return openAiError("Invalid API key.", 401, { type: "authentication_error", code: "invalid_api_key" });
   }
 
-  // 模型元数据（倍率）与 /v1/chat/completions 的 resolveModelMeta 语义一致：
-  // override 开启用自定义值（缺失回退 models.dev），关闭用 models.dev。
-  // 倍率取各上游的最小值（最优惠价），0 = 该模型免费。
-  // 上下文窗口不再由服务端下发，客户端自行从 models.dev 推导。
+  // 模型元数据（倍率）与 /v1/chat/completions 的 resolveModelRates 语义一致：
+  // override 开启用自定义值（缺失回退上游 /v1/models 报价 → pi-catalog），
+  // 关闭用上游报价 → pi-catalog。倍率取各上游的最小值（最优惠价），
+  // 0 = 该模型免费。上下文窗口不再由服务端下发，客户端自行推导。
   const plaza = await getModelPlaza();
   const now = Math.floor(Date.now() / 1000);
   return jsonOk({

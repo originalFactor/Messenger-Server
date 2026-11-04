@@ -56,8 +56,8 @@ import {
   upstreamHeaders,
 } from "@/lib/ai-formats";
 import { authenticateAiKey } from "@/lib/ai-proxy";
-import { getModelDefaults } from "@/lib/model-metadata";
-import { type BaseModelContext, resolveModelRates } from "@/lib/model-rates";
+import { type CatalogRateMap, getCatalogRates } from "@/lib/pi-catalog";
+import { type BaseModelContext, resolveBaseContext, resolveModelRates } from "@/lib/model-rates";
 import { computeCost } from "@/lib/quota";
 import { consumeQuota, getModelRateSettings, getUserQuotaState, listUpstreamsForModel, recordUsage } from "@/lib/storage";
 import type { UpstreamDoc } from "@/lib/types";
@@ -81,7 +81,7 @@ export const UPSTREAM_TIMEOUT_MS = (RELAY_MAX_DURATION_SECONDS - 5) * 1000;
 const relayLog = createLogger("relay");
 
 interface ModelDefaults {
-  rates: Record<string, { input: number; output: number; cacheRead: number }>;
+  rates: CatalogRateMap;
 }
 
 interface SettleParams {
@@ -89,17 +89,18 @@ interface SettleParams {
   modelId: string;
   promptTokens: number;
   defaults: ModelDefaults;
-  /** 1x 基准上下文；无基准（baseModelId = null）= models.dev 归一化口径。 */
+  /** 1x 基准上下文；无基准（baseModelId = null）= pi-catalog 归一化口径。 */
   base: BaseModelContext | null;
 }
 
 /**
  * 元数据解析（按模型）：modelMeta.override 开启时使用其自定义值（缺失
- * 字段回退 models.dev），否则直接使用 models.dev 元数据；倍率无数据时
- * 默认 1x（显式配置 0 = 不计费）。最终实际倍率再乘以模型整体倍率
- * modelRate（modelMeta[model].multiplier）与上游整体倍率 providerRate
- * （upstream.multiplier）：实际倍率 = tokenTypeRate × modelRate × providerRate。
- * 设了 1x 基准模型时基准模型自身恒为 1x。缓存读取倍率按配置原样生效。
+ * 字段回退上游 `/v1/models` 报价 → pi-catalog），关闭时直接用「上游报价 →
+ * pi-catalog」；倍率无数据时默认 1x（显式配置 0 = 不计费）。最终实际倍率
+ * 再乘以模型整体倍率 modelRate（modelMeta[model].multiplier）与上游整体
+ * 倍率 providerRate（upstream.multiplier）：实际倍率 = tokenTypeRate ×
+ * modelRate × providerRate。设了 1x 基准模型时基准模型自身恒为 1x。
+ * 缓存读取倍率按配置原样生效。
  */
 function resolveModelMeta(upstream: UpstreamDoc, model: string, defaults: ModelDefaults, base: BaseModelContext | null) {
   return resolveModelRates(upstream, model, defaults.rates, base);
@@ -884,12 +885,12 @@ export async function relayCompletion({ format, request }: RelayOptions): Promis
     );
   }
 
-  // 四个独立读取并行：额度、上游列表、models.dev 元数据、基准设置互不依赖，
+  // 四个独立读取并行：额度、上游列表、pi-catalog 元数据、基准设置互不依赖，
   // 串行会让每次对话多付约 3 个 RTT。
   const [quota, upstreams, defaults, settings] = await Promise.all([
     getUserQuotaState(user.id),
     listUpstreamsForModel(ir.model),
-    getModelDefaults(),
+    getCatalogRates(),
     getModelRateSettings(),
   ]);
   if (!quota.available) {
@@ -908,9 +909,8 @@ export async function relayCompletion({ format, request }: RelayOptions): Promis
     return clientError(format, `Model '${ir.model}' has no available upstream.`, 404, "model_not_found");
   }
 
-  const baseModelId = settings.baseModelId;
-  const base: BaseModelContext | null =
-    baseModelId !== null && defaults.rates[baseModelId] !== undefined ? { modelId: baseModelId } : null;
+  // 基准只在确实有报价时启用（pi-catalog 记录或上游自报）；否则与未设基准等价。
+  const base: BaseModelContext | null = resolveBaseContext(settings.baseModelId, defaults.rates, upstreams);
   // 提示词估算要遍历全部消息与工具定义，只算一次。
   const promptTokens = estimateIrPromptTokens(ir);
   const settle: SettleParams = {

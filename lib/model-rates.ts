@@ -19,23 +19,28 @@
  * 与控制台展示都走这里，避免四份实现漂移。
  *
  * 两层口径：
- * - 存量倍率（stored）长期保存在 models.dev 归一化空间里，与基准无关：
- *   override 开启用自定义值（缺失字段回退 models.dev），关闭用
- *   models.dev，无数据默认 1x，显式 0 = 不计费。
+ * - 存量倍率（stored）长期保存在归一化空间里，与基准无关：
+ *   override 开启用自定义值（缺失字段回退上游报价 → pi-catalog），关闭用
+ *   上游报价 → pi-catalog，无数据默认 1x，显式 0 = 不计费。
  * - 实际倍率 = 存量倍率 ÷ 基准模型存量倍率 × modelRate × providerRate。
+ *
+ * 上游报价（`upstreams.modelPrices`）来自上游自己的 `/v1/models` 响应里的
+ * `input_rate` / `cache_read_rate` / `output_rate`，与本站 `/v1/models`
+ * 输出同构（已是倍率口径，不是美元价）。上游未返回、或返回 0 的字段逐个
+ * 回退 pi-catalog（`lib/pi-catalog.ts`）。
  *
  * 设了 1x 基准模型 B 时，B 自身恒为 1x（存量 ÷ 自身存量），其余模型
  * （含 override 覆盖条目）的实际倍率按 B 重新归一 —— 基准切换只改解析
  * 口径、不改任何存量数据，因此随时可逆、不产生浮点漂移，模型间的相对
- * 价格关系恒定。未设基准时分母取 1（models.dev 归一化口径）。
+ * 价格关系恒定。未设基准时分母取 1（归一化口径）。
  *
  * 缓存读取倍率按配置原样生效，不做「不得高于输入价」的夹取 —— 个别
  * 供应商的缓存读取报价确实高于输入价（也有把缓存写入价填进该字段的
  * 情况），静默改写会让命中缓存反而按输入价计费。
  */
 
-import type { UpstreamModelMeta } from "@/lib/types";
-import type { ModelRateMap } from "@/lib/model-metadata";
+import type { CatalogRateMap } from "@/lib/pi-catalog";
+import type { UpstreamModelMeta, UpstreamModelPrice } from "@/lib/types";
 
 export interface ResolvedRates {
   inputRate: number;
@@ -58,33 +63,59 @@ function rateOrOne(value: number | undefined): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 1;
 }
 
+/** 上游报价有效性：缺省 / 非有限值 / 0 都视为「未返回」，回退目录。 */
+function upstreamRate(value: number | null | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 function round4(value: number): number {
   return Math.round(value * 10_000) / 10_000;
 }
 
 /**
- * 存量 tokenType 倍率（不含基准归一、不含 modelRate/providerRate 缩放）：
- * 覆盖开启取自定义值（缺失回退 models.dev），关闭取 models.dev，
- * 无数据按 1x。基准模型自身无显式条目时回退 models.dev —— 与其它模型
- * 用同一口径求值，保证「自身 ÷ 自身 = 1」。
+ * 缓存读取价 ÷ 输入价 的折扣比例：上游报价两者都有时用它（上游自报的
+ * 缓存折扣最可信），否则用 pi-catalog 的同一比例，都没有按 1（不收缓存
+ * 折扣的供应商即如此）。
+ */
+function cacheDiscountRatio(
+  catalogRate: CatalogRateMap[string] | undefined,
+  price: UpstreamModelPrice | undefined,
+): number {
+  const priceInput = upstreamRate(price?.inputRate);
+  const priceCache = upstreamRate(price?.cacheReadRate);
+  if (priceInput !== undefined && priceCache !== undefined && priceInput > 0) {
+    return priceCache / priceInput;
+  }
+  if (catalogRate && catalogRate.input > 0) {
+    return catalogRate.cacheRead / catalogRate.input;
+  }
+  return 1;
+}
+
+/**
+ * 存量 tokenType 倍率的来源链：覆盖自定义值 > 上游 /v1/models 报价 >
+ * pi-catalog > 1x。`cacheRead` 缺省时按输入价 × 缓存折扣折算 —— 两套口径
+ * 不同，直接取目录里的绝对倍率会得到数倍于输入价的缓存价
+ * （如 gemini-3.8-flash 的 0.9375 vs 0.0625）。
  */
 export function currentStoredRates(
   model: string,
   stored: UpstreamModelMeta | undefined,
-  defaults: ModelRateMap,
+  defaults: CatalogRateMap,
+  upstreamPrice?: UpstreamModelPrice | null,
 ): ResolvedRates {
-  const devRate = defaults[model];
-  const devInput = devRate?.input ?? 1;
-  const devOutput = devRate?.output ?? 1;
-  const devCache = devRate?.cacheRead ?? devInput;
+  const catalogRate = defaults[model];
+  const price = upstreamPrice ?? undefined;
+  const discount = cacheDiscountRatio(catalogRate, price);
+  const devInput = upstreamRate(price?.inputRate) ?? catalogRate?.input ?? 1;
+  const devOutput = upstreamRate(price?.outputRate) ?? catalogRate?.output ?? 1;
+  // 缓存读取：上游报价优先；缺省按折扣比例折算到实际输入价。
+  const devCache = upstreamRate(price?.cacheReadRate) ?? round4(devInput * discount);
+
   if (stored?.override) {
     const inputRate = stored.inputRate ?? devInput;
     const outputRate = stored.outputRate ?? devOutput;
-    // 缓存价未自定义时按 models.dev 的折扣比例（cache ÷ input）折算到实际
-    // 输入价，而不是直接沿用 models.dev 的绝对倍率 —— 两套口径不同，直接
-    // 取用会得到数倍于输入价的缓存价（如 gemini-3.8-flash 的 0.9375 vs 0.0625）。
-    const cacheReadRate = stored.cacheReadRate
-      ?? round4(inputRate * (devRate && devRate.input > 0 ? devRate.cacheRead / devRate.input : 1));
+    const cacheReadRate = stored.cacheReadRate ?? round4(inputRate * discount);
     return { inputRate, outputRate, cacheReadRate };
   }
   return {
@@ -97,21 +128,26 @@ export function currentStoredRates(
 /**
  * 按模型解析实际倍率：
  * 实际倍率 = tokenTypeRate ÷ baseRate × modelRate × providerRate。
- * base 为 null（未设基准）= models.dev 归一化口径。
+ * base 为 null（未设基准）= pi-catalog 归一化口径。
  */
 export function resolveModelRates(
-  upstream: Pick<UpstreamDocLike, "modelMeta" | "multiplier">,
+  upstream: Pick<UpstreamDocLike, "modelMeta" | "modelPrices" | "multiplier">,
   model: string,
-  defaults: ModelRateMap,
+  defaults: CatalogRateMap,
   base: BaseModelContext | null = null,
 ): ResolvedRates {
   const custom: UpstreamModelMeta | undefined = upstream.modelMeta?.[model];
-  const stored = currentStoredRates(model, custom, defaults);
+  const stored = currentStoredRates(model, custom, defaults, upstream.modelPrices?.[model]);
   const modelRate = normalizeMultiplier(custom?.multiplier);
   const providerRate = normalizeMultiplier(upstream.multiplier);
   // base == model 时 stored ÷ baseStored 恒为 1，无需特例分支。
   const baseStored = base
-    ? currentStoredRates(base.modelId, upstream.modelMeta?.[base.modelId], defaults)
+    ? currentStoredRates(
+        base.modelId,
+        upstream.modelMeta?.[base.modelId],
+        defaults,
+        upstream.modelPrices?.[base.modelId],
+      )
     : { inputRate: 1, outputRate: 1, cacheReadRate: 1 };
   const scale = modelRate * providerRate;
   return {
@@ -121,8 +157,44 @@ export function resolveModelRates(
   };
 }
 
-/** 解析用的最小上游形状（modelMeta + multiplier 即可）。 */
+/** 解析用的最小上游形状（modelMeta + modelPrices + multiplier 即可）。 */
 interface UpstreamDocLike {
   modelMeta?: Record<string, UpstreamModelMeta> | null;
+  modelPrices?: Record<string, UpstreamModelPrice> | null;
   multiplier?: number | null;
+}
+
+/**
+ * 1x 基准上下文：只有在该模型确实有可解析的倍率时才启用 —— pi-catalog
+ * 有记录，某个上游在 `/v1/models` 里自报了它的价格，或某个上游用覆盖
+ * 条目给了它倍率。都没有时基准恒为 1x 分母，与「未设基准」等价。
+ */
+export function resolveBaseContext(
+  baseModelId: string | null,
+  defaults: CatalogRateMap,
+  upstreams: readonly Pick<UpstreamDocLike, "modelMeta" | "modelPrices">[],
+): BaseModelContext | null {
+  if (baseModelId === null) {
+    return null;
+  }
+  if (defaults[baseModelId] !== undefined) {
+    return { modelId: baseModelId };
+  }
+  const resolvable = upstreams.some((upstream) => {
+    const price = upstream.modelPrices?.[baseModelId];
+    if (
+      price !== undefined
+      && (upstreamRate(price.inputRate) !== undefined
+        || upstreamRate(price.outputRate) !== undefined
+        || upstreamRate(price.cacheReadRate) !== undefined)
+    ) {
+      return true;
+    }
+    const custom = upstream.modelMeta?.[baseModelId];
+    return custom?.override === true
+      && (upstreamRate(custom.inputRate) !== undefined
+        || upstreamRate(custom.outputRate) !== undefined
+        || upstreamRate(custom.cacheReadRate) !== undefined);
+  });
+  return resolvable ? { modelId: baseModelId } : null;
 }

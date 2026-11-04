@@ -285,6 +285,25 @@ export const upstreamInputSchema = z.object({
     .refine((meta) => Object.keys(meta).length <= 1_000, "Too many model meta entries.")
     .nullable()
     .optional(),
+  /**
+   * 上游 `/v1/models` 自报的模型报价（倍率口径），由探测回填、解析时优先于
+   * pi-catalog。控制台不可手改，但表单会把探测结果原样带回保存。
+   */
+  modelPrices: z
+    .record(
+      z.string().max(200),
+      z
+        .object({
+          inputRate: z.number().finite().min(0).max(100_000).nullable().optional(),
+          cacheReadRate: z.number().finite().min(0).max(100_000).nullable().optional(),
+          outputRate: z.number().finite().min(0).max(100_000).nullable().optional(),
+          fetchedAt: z.number().int().nonnegative().nullable().optional(),
+        })
+        .strict(),
+    )
+    .refine((prices) => Object.keys(prices).length <= 1_000, "Too many model price entries.")
+    .nullable()
+    .optional(),
   /** 表中保留但停用的模型 ID：不在 models 中、不参与服务，仅用于编辑表单回显。 */
   disabledModels: z.array(z.string().trim().min(1).max(200)).max(1_000).optional(),
   /** 上游整体倍率：乘到该上游所有模型的生效倍率上；缺省 = 1，0 = 全部不计费。 */

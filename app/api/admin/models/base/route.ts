@@ -16,7 +16,7 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
-import { getModelDefaults } from "@/lib/model-metadata";
+import { getCatalogRates } from "@/lib/pi-catalog";
 import { currentStoredRates } from "@/lib/model-rates";
 import { createLogger } from "@/lib/runtime-logs";
 import { getModelRateSettings, listUpstreams, setBaseModel } from "@/lib/storage";
@@ -42,19 +42,24 @@ export async function GET() {
   const [settings, upstreams, defaults] = await Promise.all([
     getModelRateSettings(),
     listUpstreams(),
-    getModelDefaults(),
+    getCatalogRates(),
   ]);
-  const modelIds = [...new Set(upstreams.filter((u) => u.enabled).flatMap((u) => u.models))].sort((a, b) =>
+  const enabled = upstreams.filter((upstream) => upstream.enabled);
+  const modelIds = [...new Set(enabled.flatMap((upstream) => upstream.models))].sort((a, b) =>
     a.localeCompare(b),
   );
   const rates: Record<string, { inputRate: number; cacheReadRate: number; outputRate: number }> = {};
   for (const modelId of modelIds) {
-    // 基准口径 = 当前生效的存量 tokenType 倍率（不含 model/provider 倍率）。
-    const stored = currentStoredRates(modelId, undefined, defaults.rates);
+    // 报价可能按上游不同（上游 `/v1/models` 自报时），展示取最优惠的一条；
+    // 实际计费时基准分母按该次请求命中的上游各自计算，基准模型自身恒为 1x。
+    const candidates = enabled.filter((candidate) => candidate.models.includes(modelId));
+    const resolved = candidates.map((upstream) =>
+      currentStoredRates(modelId, undefined, defaults.rates, upstream.modelPrices?.[modelId]),
+    );
     rates[modelId] = {
-      inputRate: stored.inputRate,
-      cacheReadRate: stored.cacheReadRate,
-      outputRate: stored.outputRate,
+      inputRate: Math.min(...resolved.map((rate) => rate.inputRate)),
+      cacheReadRate: Math.min(...resolved.map((rate) => rate.cacheReadRate)),
+      outputRate: Math.min(...resolved.map((rate) => rate.outputRate)),
     };
   }
   return jsonOk({
