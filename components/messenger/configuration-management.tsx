@@ -253,7 +253,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
   const providerForModel = (modelId: string | null | undefined) =>
     initialAllProviders.find((item) => item.models.some((model) => model.modelId === modelId))?._id ?? "";
   const [agent, setAgent] = useState<AgentDraft | null>(() => initialAgents[0] ? agentDraft(initialAgents[0], providerForModel(initialAgents[0].defaultModelId)) : newAgent());
-  const [provider, setProvider] = useState<ProviderDraft | null>(() => initialProviders[0] ? providerDraft(initialProviders[0]) : newProvider());
+  const [provider, setProvider] = useState<ProviderDraft | null>(() => providerDraft(builtinProvider));
   const [project, setProject] = useState<ProjectDraft | null>(() => initialProjects[0] ? projectDraft(initialProjects[0]) : newProject());
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
@@ -267,7 +267,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
   const effectiveAgentModel = canFollowDefaults && agent?.followDefaultModel
     ? defaultAgent?.defaultModelId : agent?.defaultModelId;
 
-  const activeItems = tab === "agents" ? agents : tab === "providers" ? providers : projects;
+  const activeItems = tab === "agents" ? agents : tab === "providers" ? allProviders : projects;
   const visibleItems = activeItems.filter((item) => {
     const name = "name" in item ? item.name : "";
     return name.toLowerCase().includes(query.toLowerCase());
@@ -402,7 +402,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
   }
 
   async function saveProvider() {
-    if (!provider) return;
+    if (!provider || provider.id === BUILTIN_PROVIDER_ID) return;
     if (!provider.name.trim() || !provider.baseUrl.trim() || !provider.apiKey.trim() || provider.models.some((model) => !model.modelId.trim())) {
       toast.error("请填写 Provider 名称、地址和 API Key。");
       return;
@@ -454,7 +454,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
 
   async function removeCurrent() {
     const current = tab === "agents" ? agent : tab === "providers" ? provider : project;
-    if (!current) return;
+    if (!current || (tab === "providers" && current.id === BUILTIN_PROVIDER_ID)) return;
     const resource = tab === "agents" ? "agents" : tab === "providers" ? "providers" : "projects";
     try {
       const response = await fetch(`/api/${resource}/${current.id}`, { method: "DELETE" });
@@ -466,7 +466,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
       } else if (tab === "providers") {
         const next = providers.filter((item) => item._id !== current.id);
         setProviders(next);
-        setProvider(next[0] ? providerDraft(next[0]) : newProvider());
+        setProvider(next[0] ? providerDraft(next[0]) : providerDraft(builtinProvider));
       } else {
         const next = projects.filter((item) => item._id !== current.id);
         setProjects(next);
@@ -483,6 +483,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
     providers: { label: "Providers", description: "管理 API 地址、密钥和可用模型。", icon: Server },
     projects: { label: "Projects", description: "为工作流保留共享的项目工作区。", icon: FolderKanban },
   }[tab];
+  const viewingBuiltinProvider = tab === "providers" && provider?.id === BUILTIN_PROVIDER_ID;
   const isNew = !activeItems.some((item) => item._id === (tab === "agents" ? agent?.id : tab === "providers" ? provider?.id : project?.id));
 
   return (
@@ -493,7 +494,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
             {(["agents", "providers", "projects"] as const).map((item) => {
               const meta = {
                 agents: { label: "Agents", icon: Bot, count: agents.length },
-                providers: { label: "Providers", icon: Server, count: providers.length },
+                providers: { label: "Providers", icon: Server, count: allProviders.length },
                 projects: { label: "Projects", icon: FolderKanban, count: projects.length },
               }[item];
               const Icon = meta.icon;
@@ -516,7 +517,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
                 <Button key={item._id} variant={active ? "secondary" : "ghost"} aria-pressed={active} className="h-auto min-w-0 justify-start px-2 py-3" onClick={() => selectItem(item)}>
                   <span className="min-w-0 flex-1 text-left">
                     <span className="block truncate">{item.name}</span>
-                    <span className="mt-1 block truncate text-xs font-normal text-muted-foreground">{tab === "providers" ? (item as ProviderDoc).baseUrl : tab === "projects" ? (item as ProjectDoc).workspace || "未设置工作区" : (item as AgentDoc).defaultModelId || "未设置模型"}</span>
+                    <span className="mt-1 block truncate text-xs font-normal text-muted-foreground">{tab === "providers" ? item._id === BUILTIN_PROVIDER_ID ? `内置云服务 · ${builtinProvider.models.length} 个模型` : (item as ProviderDoc).baseUrl : tab === "projects" ? (item as ProjectDoc).workspace || "未设置工作区" : (item as AgentDoc).defaultModelId || "未设置模型"}</span>
                   </span>
                   <ChevronRight className="size-4 shrink-0" />
                 </Button>
@@ -528,7 +529,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
       <section className="flex min-h-0 min-w-0 flex-col gap-4" aria-label="配置编辑">
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-xl font-semibold tracking-tight">{isNew ? "新增" : "编辑"} {tabMeta.label.slice(0, -1)}</h2>
+            <h2 className="text-xl font-semibold tracking-tight">{viewingBuiltinProvider ? "查看" : isNew ? "新增" : "编辑"} {tabMeta.label.slice(0, -1)}</h2>
             <p className="text-xs text-muted-foreground">{tabMeta.description}</p>
           </div>
           <Button onClick={addItem} size="sm"><Plus /> 新建</Button>
@@ -588,7 +589,25 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
             </Card>
           ) : null}
 
-          {tab === "providers" && provider ? (
+          {viewingBuiltinProvider ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">{builtinProvider.name}<Badge variant="secondary">内置</Badge></CardTitle>
+                <CardDescription>通过 Messenger Cloud 提供模型，无需配置地址和 API Key。模型由平台管理，可在 Agent 的模型设置中选择。</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-3">
+                <Label>可用模型（{builtinProvider.models.length}）</Label>
+                {builtinProvider.models.length ? builtinProvider.models.map((model) => (
+                  <div key={model.id} className="flex min-w-0 items-center justify-between gap-3 rounded-lg border p-3">
+                    <span className="min-w-0 break-all text-sm">{model.displayName || model.modelId}</span>
+                    <Badge variant="secondary" className="shrink-0">可用</Badge>
+                  </div>
+                )) : <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">平台暂未提供可用模型。</p>}
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {tab === "providers" && provider && !viewingBuiltinProvider ? (
             <Card>
               <CardHeader><CardTitle>{isNew ? "新增" : "编辑"} Provider</CardTitle><CardDescription>API Key 仅用于同步和 AI 请求，不会展示给其他用户。</CardDescription></CardHeader>
               <CardContent className="grid gap-5">
