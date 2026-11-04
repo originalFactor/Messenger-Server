@@ -1719,12 +1719,17 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                             onCheckedChange={(checked) => setCheckedModels(checked === true ? [...tableModelIds] : [])} />
                         </TableHead>
                         <TableHead>模型 ID</TableHead>
+                        <TableHead>显示名</TableHead>
                         <TableHead className="w-40">当前倍率</TableHead>
                         <TableHead className="w-56 text-right">操作</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {sortedDiscovered.map((modelId) => {
+                        const displayName = resolveModelCapabilities(modelId, catalogCapabilities, {
+                          catalogModelId: rowCatalogModelId(modelId),
+                          displayName: (metaDrafts[modelId]?.displayName ?? editingModelMeta[modelId]?.displayName)?.trim() || null,
+                        }).displayName ?? modelId;
                         const rowDisabled = disabledModels.includes(modelId);
                         const enabled = selectedModels.includes(modelId);
                         const effective = effectiveMeta(modelId);
@@ -1755,6 +1760,9 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                   上游报价
                                 </Badge>
                               ) : null}
+                            </TableCell>
+                            <TableCell className="max-w-64 text-sm">
+                              <span className="block truncate" title={displayName}>{displayName}</span>
                             </TableCell>
                             <TableCell className="font-mono text-xs tabular-nums">
                               <span
