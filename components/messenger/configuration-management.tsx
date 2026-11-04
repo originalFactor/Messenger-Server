@@ -30,6 +30,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgentDoc, ModelEmbed, ProjectDoc, ProviderDoc } from "@/lib/types";
 import type { PlazaModel } from "@/lib/model-plaza";
@@ -448,71 +449,61 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
     providers: { label: "Providers", description: "管理 API 地址、密钥和可用模型。", icon: Server },
     projects: { label: "Projects", description: "为工作流保留共享的项目工作区。", icon: FolderKanban },
   }[tab];
-  const TabIcon = tabMeta.icon;
+  const isNew = !activeItems.some((item) => item._id === (tab === "agents" ? agent?.id : tab === "providers" ? provider?.id : project?.id));
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="grid gap-1">
-          <h1 className="text-xl font-semibold tracking-tight">配置管理</h1>
-          <p className="max-w-2xl text-sm text-muted-foreground">直接在 Web 配置同步到手机、桌面端和 Web Messenger 的 Agents、Providers 与 Projects。</p>
+    <div className="grid min-h-0 flex-1 grid-cols-[9rem_minmax(0,1fr)] gap-3 sm:grid-cols-[15rem_minmax(0,1fr)] sm:gap-5">
+      <aside className="flex min-h-0 min-w-0 flex-col gap-3 border-r pr-3 sm:pr-5" aria-label="配置导航">
+        <Tabs value={tab} onValueChange={(value) => { setTab(value as Tab); setQuery(""); }} orientation="vertical">
+          <TabsList className="h-auto w-full flex-col items-stretch">
+            {(["agents", "providers", "projects"] as const).map((item) => {
+              const meta = {
+                agents: { label: "Agents", icon: Bot, count: agents.length },
+                providers: { label: "Providers", icon: Server, count: providers.length },
+                projects: { label: "Projects", icon: FolderKanban, count: projects.length },
+              }[item];
+              const Icon = meta.icon;
+              return (
+                <TabsTrigger key={item} value={item} className="w-full justify-start">
+                  <Icon /> {meta.label}
+                  <Badge variant="secondary" className="ml-auto px-1.5 tabular-nums">{meta.count}</Badge>
+                </TabsTrigger>
+              );
+            })}
+          </TabsList>
+        </Tabs>
+        <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="筛选..." aria-label="筛选配置" className="h-9" />
+        <ScrollArea type="always" className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
+          <div className="grid gap-1 pr-3">
+            {visibleItems.length === 0 ? <p className="p-2 text-xs text-muted-foreground">{query ? "没有匹配的配置" : "暂无配置，请在右侧新建。"}</p> : null}
+            {visibleItems.map((item) => {
+              const active = (tab === "agents" ? agent?.id : tab === "providers" ? provider?.id : project?.id) === item._id;
+              return (
+                <Button key={item._id} variant={active ? "secondary" : "ghost"} aria-pressed={active} className="h-auto min-w-0 justify-start px-2 py-3" onClick={() => selectItem(item)}>
+                  <span className="min-w-0 flex-1 text-left">
+                    <span className="block truncate">{item.name}</span>
+                    <span className="mt-1 block truncate text-xs font-normal text-muted-foreground">{tab === "providers" ? (item as ProviderDoc).baseUrl : tab === "projects" ? (item as ProjectDoc).workspace || "未设置工作区" : (item as AgentDoc).defaultModelId || "未设置模型"}</span>
+                  </span>
+                  <ChevronRight className="size-4 shrink-0" />
+                </Button>
+              );
+            })}
+          </div>
+        </ScrollArea>
+      </aside>
+      <section className="flex min-h-0 min-w-0 flex-col gap-4" aria-label="配置编辑">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-xl font-semibold tracking-tight">{isNew ? "新增" : "编辑"} {tabMeta.label.slice(0, -1)}</h2>
+            <p className="text-xs text-muted-foreground">{tabMeta.description}</p>
+          </div>
+          <Button onClick={addItem} size="sm"><Plus /> 新建</Button>
         </div>
-        <Button onClick={addItem}><Plus /> 新建{tabMeta.label.slice(0, -1)}</Button>
-      </div>
-
-      <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
-        <TabsList>
-          {(["agents", "providers", "projects"] as const).map((item) => {
-            const meta = {
-              agents: { label: "Agents", icon: Bot, count: agents.length },
-              providers: { label: "Providers", icon: Server, count: providers.length },
-              projects: { label: "Projects", icon: FolderKanban, count: projects.length },
-            }[item];
-            const Icon = meta.icon;
-            return (
-              <TabsTrigger key={item} value={item}>
-                <Icon />
-                {meta.label}
-                <Badge variant="secondary" className="px-1.5 tabular-nums">{meta.count}</Badge>
-              </TabsTrigger>
-            );
-          })}
-        </TabsList>
-      </Tabs>
-
-      <div className="grid gap-6">
-        <div className="min-w-0 space-y-4">
-          <Card>
-            <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-3">
-                <div className="grid size-10 place-items-center rounded-lg bg-muted text-muted-foreground"><TabIcon className="size-5" /></div>
-                <div><CardTitle>{tabMeta.label}</CardTitle><CardDescription>{tabMeta.description}</CardDescription></div>
-              </div>
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="筛选..." className="h-9 sm:w-48" />
-            </CardHeader>
-            <CardContent className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {visibleItems.length === 0 ? <button type="button" onClick={addItem} className="rounded-lg border border-dashed p-5 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/50">还没有配置，点击新建 →</button> : null}
-              {visibleItems.map((item) => {
-                const id = item._id;
-                const active = (tab === "agents" ? agent?.id : tab === "providers" ? provider?.id : project?.id) === id;
-                return (
-                  <button key={id} type="button" onClick={() => selectItem(item)} className={`group rounded-lg border p-4 text-left transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${active ? "border-primary bg-muted" : "bg-card hover:bg-muted/50"}`}>
-                    <div className="flex items-start gap-3">
-                      <div className={`grid size-9 place-items-center rounded-lg ${active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
-                        {tab === "agents" ? <Bot className="size-4" /> : tab === "providers" ? <Server className="size-4" /> : <FolderKanban className="size-4" />}
-                      </div>
-                      <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{item.name}</span><span className="mt-1 block truncate text-xs text-muted-foreground">{tab === "providers" ? (item as ProviderDoc).baseUrl : tab === "projects" ? (item as ProjectDoc).workspace || "未设置工作区" : (item as AgentDoc).defaultModelId || "未设置模型"}</span></span>
-                      <ChevronRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                    </div>
-                  </button>
-                );
-              })}
-            </CardContent>
-          </Card>
-
+        <ScrollArea type="always" className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
+          <div className="min-w-0 space-y-4 pr-3 pb-2">
           {tab === "agents" && agent ? (
             <Card>
-              <CardHeader><CardTitle className="flex items-center gap-2">编辑 Agent {agent.role === "default" ? <Badge><Check className="size-3" /> 默认</Badge> : null} {agent.role === "title" ? <Badge variant="secondary"><WandSparkles className="size-3" /> 标题生成</Badge> : null}</CardTitle><CardDescription>保存后会通过同步服务分发到其他设备。</CardDescription></CardHeader>
+              <CardHeader><CardTitle className="flex items-center gap-2">{isNew ? "新增" : "编辑"} Agent {agent.role === "default" ? <Badge><Check className="size-3" /> 默认</Badge> : null} {agent.role === "title" ? <Badge variant="secondary"><WandSparkles className="size-3" /> 标题生成</Badge> : null}</CardTitle><CardDescription>保存后会通过同步服务分发到其他设备。</CardDescription></CardHeader>
               <CardContent className="grid gap-5">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="grid gap-2"><Label>名称</Label><Input value={agent.name} disabled={agent.role === "default"} onChange={(event) => setAgent({ ...agent, name: event.target.value })} /></div>
@@ -535,7 +526,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
 
           {tab === "providers" && provider ? (
             <Card>
-              <CardHeader><CardTitle>编辑 Provider</CardTitle><CardDescription>API Key 仅用于同步和 AI 请求，不会展示给其他用户。</CardDescription></CardHeader>
+              <CardHeader><CardTitle>{isNew ? "新增" : "编辑"} Provider</CardTitle><CardDescription>API Key 仅用于同步和 AI 请求，不会展示给其他用户。</CardDescription></CardHeader>
               <CardContent className="grid gap-5">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="grid gap-2"><Label>名称</Label><Input value={provider.name} onChange={(event) => setProvider({ ...provider, name: event.target.value })} /></div>
@@ -553,7 +544,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
 
           {tab === "projects" && project ? (
             <Card>
-              <CardHeader><CardTitle>编辑 Project</CardTitle><CardDescription>项目会与会话一起同步，方便在不同设备继续工作。</CardDescription></CardHeader>
+              <CardHeader><CardTitle>{isNew ? "新增" : "编辑"} Project</CardTitle><CardDescription>项目会与会话一起同步，方便在不同设备继续工作。</CardDescription></CardHeader>
               <CardContent className="grid gap-5">
                 <div className="grid gap-2"><Label>名称</Label><Input value={project.name} onChange={(event) => setProject({ ...project, name: event.target.value })} /></div>
                 <div className="grid gap-2"><Label>工作区路径</Label><Input value={project.workspace} onChange={(event) => setProject({ ...project, workspace: event.target.value })} placeholder="可选，例如 /workspace/my-project" /></div>
@@ -561,8 +552,9 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
               </CardContent>
             </Card>
           ) : null}
-        </div>
-      </div>
+          </div>
+        </ScrollArea>
+      </section>
     </div>
   );
 }
