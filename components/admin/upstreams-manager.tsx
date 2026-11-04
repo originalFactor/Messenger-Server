@@ -107,6 +107,11 @@ const emptyUpstreamForm: UpstreamFormState = {
 type CatalogMeta = Record<string, UpstreamModelMeta>;
 /** 上游 `/v1/models` 自报的报价（倍率口径），探测时刷新、保存时原样带回。 */
 type PriceMap = Record<string, UpstreamModelPrice>;
+const rateDisplayFormat = new Intl.NumberFormat("en-US", {
+  minimumSignificantDigits: 2,
+  maximumSignificantDigits: 2,
+  useGrouping: false,
+});
 const CAPABILITY_FIELDS = [
   { key: "displayName", label: "显示名", kind: "text" },
   { key: "inputModalities", label: "输入模态", kind: "list" },
@@ -1770,8 +1775,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                   hasExtras ? "（已含阶梯与峰谷配置）" : ""
                                 }`}
                               >
-                                {effective.inputRate} / {effective.cacheReadRate} / {effective.cacheWriteRate} /{" "}
-                                {effective.outputRate}
+                                {[effective.inputRate, effective.cacheReadRate, effective.cacheWriteRate, effective.outputRate].map((rate) => rateDisplayFormat.format(rate)).join(" / ")}
                               </span>
                               {hasExtras ? (
                                 <span className="ml-1 font-sans text-[10px] text-muted-foreground">
