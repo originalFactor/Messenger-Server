@@ -49,6 +49,75 @@ function parseRate(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
+/** 长上下文阶梯：接受本站导出形状（`input_tokens_above`）与内部形状（`inputThreshold`）。 */
+function parseTiers(value: unknown): UpstreamModelPrice["tiers"] {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const tiers = value
+    .map((raw) => {
+      const record = (raw ?? {}) as Record<string, unknown>;
+      const threshold = parsePositiveInt(record.input_tokens_above ?? record.inputThreshold);
+      if (threshold === undefined) {
+        return null;
+      }
+      const tier: NonNullable<UpstreamModelPrice["tiers"]>[number] = { inputThreshold: threshold };
+      const inclusive = record.input_tokens_above_inclusive ?? record.inputThresholdInclusive;
+      if (typeof inclusive === "boolean") {
+        tier.inputThresholdInclusive = inclusive;
+      }
+      const input = parseRate(record.input_rate ?? record.inputRate);
+      const output = parseRate(record.output_rate ?? record.outputRate);
+      const cacheRead = parseRate(record.cache_read_rate ?? record.cacheReadRate);
+      const cacheWrite = parseRate(record.cache_write_rate ?? record.cacheWriteRate);
+      if (input !== undefined) tier.inputRate = input;
+      if (output !== undefined) tier.outputRate = output;
+      if (cacheRead !== undefined) tier.cacheReadRate = cacheRead;
+      if (cacheWrite !== undefined) tier.cacheWriteRate = cacheWrite;
+      return tier;
+    })
+    .filter((tier): tier is NonNullable<UpstreamModelPrice["tiers"]>[number] => tier !== null);
+  return tiers.length > 0 ? tiers.sort((a, b) => a.inputThreshold - b.inputThreshold) : undefined;
+}
+
+/** 峰谷配置：接受本站导出形状（`off_peak_multiplier` / `peak_windows`）与内部驼峰。 */
+function parseTimeBased(value: unknown): UpstreamModelPrice["timeBased"] {
+  const record = (value ?? null) as Record<string, unknown> | null;
+  if (!record || typeof record !== "object") {
+    return undefined;
+  }
+  const multiplier = record.off_peak_multiplier ?? record.offPeakMultiplier;
+  if (typeof multiplier !== "number" || !Number.isFinite(multiplier) || multiplier < 0) {
+    return undefined;
+  }
+  const rawWindows = record.peak_windows ?? record.peakWindows;
+  if (!Array.isArray(rawWindows)) {
+    return undefined;
+  }
+  const windows = rawWindows
+    .map((raw) => {
+      const window = (raw ?? {}) as Record<string, unknown>;
+      const weekdays = Array.isArray(window.weekdays)
+        ? window.weekdays.filter((day): day is number => Number.isInteger(day) && day >= 0 && day <= 6)
+        : [];
+      const startMinute = parsePositiveInt(window.start_minute ?? window.startMinute);
+      const endMinute = parsePositiveInt(window.end_minute ?? window.endMinute);
+      if (weekdays.length === 0 || startMinute === undefined || endMinute === undefined) {
+        return null;
+      }
+      if (startMinute >= endMinute || endMinute > 24 * 60) {
+        return null;
+      }
+      return { weekdays, startMinute, endMinute };
+    })
+    .filter((window): window is { weekdays: number[]; startMinute: number; endMinute: number } => window !== null);
+  return windows.length > 0 ? { offPeakMultiplier: multiplier, peakWindows: windows } : undefined;
+}
+
+function parsePositiveInt(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
 /**
  * 拉取上游模型 ID 及其自报报价。OpenAI/Anthropic 返回 `{ data: [{ id }] }`，
  * Gemini 返回 `{ models: [{ name: "models/…" }] }` —— 两种形状都接受，
@@ -112,7 +181,12 @@ export async function probeUpstreamModels(
       name?: unknown;
       input_rate?: unknown;
       cache_read_rate?: unknown;
+      cache_write_rate?: unknown;
+      cacheWriteRate?: unknown;
       output_rate?: unknown;
+      tiers?: unknown;
+      time_based?: unknown;
+      timeBased?: unknown;
     };
     const value = typeof record.id === "string" ? record.id : record.name;
     if (typeof value !== "string") continue;
@@ -122,10 +196,17 @@ export async function probeUpstreamModels(
     const price: UpstreamModelPrice = {};
     const inputRate = parseRate(record.input_rate);
     const cacheReadRate = parseRate(record.cache_read_rate);
+    const cacheWriteRate = parseRate(record.cache_write_rate ?? record.cacheWriteRate);
     const outputRate = parseRate(record.output_rate);
     if (inputRate !== undefined) price.inputRate = inputRate;
     if (cacheReadRate !== undefined) price.cacheReadRate = cacheReadRate;
+    if (cacheWriteRate !== undefined) price.cacheWriteRate = cacheWriteRate;
     if (outputRate !== undefined) price.outputRate = outputRate;
+    // 长上下文阶梯与峰谷是可选的扩展：上游给了就整份采用，解析时覆盖目录配置。
+    const tiers = parseTiers(record.tiers);
+    if (tiers) price.tiers = tiers;
+    const timeBased = parseTimeBased(record.time_based ?? record.timeBased);
+    if (timeBased) price.timeBased = timeBased;
     if (Object.keys(price).length > 0) {
       price.fetchedAt = fetchedAt;
       prices[modelId] = price;

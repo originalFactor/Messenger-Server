@@ -95,30 +95,44 @@ interface SettleParams {
 
 /**
  * 元数据解析（按模型）：modelMeta.override 开启时使用其自定义值（缺失
- * 字段回退上游 `/v1/models` 报价 → pi-catalog），关闭时直接用「上游报价 →
+ * 腿回退上游 `/v1/models` 报价 → pi-catalog），关闭时直接用「上游报价 →
  * pi-catalog」；倍率无数据时默认 1x（显式配置 0 = 不计费）。最终实际倍率
  * 再乘以模型整体倍率 modelRate（modelMeta[model].multiplier）与上游整体
  * 倍率 providerRate（upstream.multiplier）：实际倍率 = tokenTypeRate ×
  * modelRate × providerRate。设了 1x 基准模型时基准模型自身恒为 1x。
- * 缓存读取倍率按配置原样生效。
+ * 缓存读取/写入倍率按配置原样生效。
+ *
+ * 传入本次请求的提示总量与时间戳后，解析会再套用长上下文阶梯与峰谷
+ * 系数（见 `lib/pricing.ts`）；结算时用的是「这一次」的真实倍率。
  */
-function resolveModelMeta(upstream: UpstreamDoc, model: string, defaults: ModelDefaults, base: BaseModelContext | null) {
-  return resolveModelRates(upstream, model, defaults.rates, base);
+function resolveModelMeta(
+  upstream: UpstreamDoc,
+  model: string,
+  defaults: ModelDefaults,
+  base: BaseModelContext | null,
+  usage: { promptTokens: number; atMs: number } | null = null,
+) {
+  return resolveModelRates(upstream, model, defaults.rates, base, usage);
 }
 
 /**
  * 请求完成后按 usage 扣减额度并记录用量。usage 缺失时按完成文本的
  * 字符长度估算 completion tokens。失败只记日志，不影响响应送达。
  *
- * 记账口径：`usage_logs.promptTokens` 只记未命中缓存的输入 token，
- * 缓存读取 token 单独记在 `cachedTokens`；`totalTokens` 仍是完整用量
- * （未缓存输入 + 缓存读取 + 输出），供趋势图与汇总统计使用。
+ * 记账口径：`usage_logs.promptTokens` 只记未命中缓存写入/读取的输入 token，
+ * 缓存读取与写入 token 各记在 `cachedTokens` / `cacheWriteTokens`；
+ * `totalTokens` 仍是完整用量（未缓存输入 + 缓存读取 + 缓存写入 + 输出），
+ * 供趋势图与汇总统计使用。`longContextThreshold` / `timeMultiplier` 记录
+ * 本次命中的阶梯与峰谷系数，便于对账。
  */
 async function settleUsage(
   params: SettleParams & {
     inputRate: number;
     outputRate: number;
     cacheReadRate: number;
+    cacheWriteRate: number;
+    longContextThreshold: number | null;
+    timeMultiplier: number;
     upstreamId: string | null;
     /** 上游报告的用量；undefined = 上游未提供，按文本长度估算。 */
     usage: IrUsage | null | undefined;
@@ -130,9 +144,10 @@ async function settleUsage(
   const usage = params.usage;
   const completionTokens = usage?.completionTokens ?? Math.ceil(params.completionChars / 4);
   const promptTokens = usage?.promptTokens ?? params.promptTokens;
-  // 上游的 prompt tokens 含缓存命中部分；缓存量不会超过提示总量。
+  // 上游的 prompt tokens 含缓存读写部分；两者之和不会超过提示总量。
   const cachedTokens = Math.min(usage?.cachedTokens ?? 0, promptTokens);
-  const uncachedTokens = promptTokens - cachedTokens;
+  const cacheWriteTokens = Math.min(usage?.cacheWriteTokens ?? 0, promptTokens - cachedTokens);
+  const uncachedTokens = promptTokens - cachedTokens - cacheWriteTokens;
   const totalTokens = usage?.totalTokens ?? promptTokens + completionTokens;
   const cost = computeCost(
     promptTokens,
@@ -141,6 +156,8 @@ async function settleUsage(
     params.outputRate,
     cachedTokens,
     params.cacheReadRate,
+    cacheWriteTokens,
+    params.cacheWriteRate,
   );
   try {
     await consumeQuota(params.userId, cost);
@@ -151,9 +168,12 @@ async function settleUsage(
       promptTokens: uncachedTokens,
       completionTokens,
       cachedTokens,
+      cacheWriteTokens,
       totalTokens,
       cost,
       durationMs: params.durationMs,
+      longContextThreshold: params.longContextThreshold,
+      timeMultiplier: params.timeMultiplier,
     });
     // 成功记账不写 runtime_logs：usage_logs 已经保存了同一份数据，逐请求
     // 再插一行只会让日志表无谓膨胀（失败路径仍然记 error）。
@@ -467,7 +487,12 @@ async function nonStreamProxy(
     decoded.finishReason = normalizeFinishReason(decoded.finishReason);
     await settleUsage({
       ...settle,
-      ...resolveModelMeta(upstream, settle.modelId, settle.defaults, settle.base),
+      ...resolveModelMeta(upstream, settle.modelId, settle.defaults, settle.base, {
+        // 阶梯与峰谷按「本次请求」计：提示总量取上游报告的（缺失用估算），
+        // 时刻取请求开始时间，避免长请求跨过峰值边界时按结束时刻计费。
+        promptTokens: decoded.usage?.promptTokens ?? settle.promptTokens,
+        atMs: startedAt,
+      }),
       upstreamId: upstream._id,
       usage: decoded.usage,
       completionChars: decoded.text.length,
@@ -578,7 +603,10 @@ export function buildStreamingResponse(
     settled = true;
     return settleUsage({
       ...settle,
-      ...resolveModelMeta(upstream, settle.modelId, settle.defaults, settle.base),
+      ...resolveModelMeta(upstream, settle.modelId, settle.defaults, settle.base, {
+        promptTokens: sniffed.usage?.promptTokens ?? settle.promptTokens,
+        atMs: startedAt,
+      }),
       upstreamId: upstream._id,
       usage: sniffed.usage,
       completionChars: sniffed.completionChars,
@@ -752,7 +780,10 @@ function buildPassThroughStreamingResponse(
     settled = true;
     return settleUsage({
       ...settle,
-      ...resolveModelMeta(upstream, settle.modelId, settle.defaults, settle.base),
+      ...resolveModelMeta(upstream, settle.modelId, settle.defaults, settle.base, {
+        promptTokens: sniffed.usage?.promptTokens ?? settle.promptTokens,
+        atMs: startedAt,
+      }),
       upstreamId: upstream._id,
       usage: sniffed.usage,
       completionChars: sniffed.completionChars,

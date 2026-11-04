@@ -56,6 +56,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
+import { formatPeakWindows, parsePeakWindows } from "@/lib/pricing";
 import type { UpstreamDoc, UpstreamModelMeta, UpstreamModelPrice } from "@/lib/types";
 import { BaseModelPicker } from "@/components/admin/base-model-picker";
 
@@ -98,9 +99,38 @@ type PriceMap = Record<string, UpstreamModelPrice>;
 interface MetaDraft {
   inputRate?: string;
   cacheReadRate?: string;
+  cacheWriteRate?: string;
   outputRate?: string;
   /** 模型整体倍率（modelRate）草稿；空串 = 1。 */
   multiplier?: string;
+  /** 长上下文阶梯草稿（整份覆盖）；undefined = 未动，沿用上游/目录。 */
+  tiers?: TierDraft[];
+  /** 峰谷草稿（整份覆盖）；undefined = 未动，沿用上游/目录。 */
+  timeBased?: ScheduleDraft;
+}
+
+/** 长上下文阶梯的行编辑状态（全部以字符串保存，提交时统一校验）。 */
+interface TierDraft {
+  inputThreshold: string;
+  inputRate: string;
+  cacheReadRate: string;
+  cacheWriteRate: string;
+  outputRate: string;
+}
+
+/** 峰谷配置的行编辑状态：谷时系数 + 每行一个时段。 */
+interface ScheduleDraft {
+  offPeakMultiplier: string;
+  peakWindows: string;
+}
+
+function emptyTierDraft(): TierDraft {
+  return { inputThreshold: "", inputRate: "", cacheReadRate: "", cacheWriteRate: "", outputRate: "" };
+}
+
+/** 与服务端一致的四位小数量化，避免浮点尾巴污染展示。 */
+function round4(value: number): number {
+  return Math.round(value * 10_000) / 10_000;
 }
 
 /** 倍率编辑：非负数字，空串 = 0（不计费）。 */
@@ -137,6 +167,230 @@ function parseMultiplier(input: string): number {
   return parsed === "invalid" ? 1 : parsed;
 }
 
+/** 草稿阶梯 → 提交形状：只保留填了阈值的行，空字段表示「沿用基础档」。 */
+function draftTiersToMeta(tiers: TierDraft[]): UpstreamModelMeta["tiers"] {
+  const parsed: NonNullable<UpstreamModelMeta["tiers"]> = [];
+  for (const tier of tiers) {
+    const threshold = Number(tier.inputThreshold.trim());
+    if (!Number.isFinite(threshold) || threshold <= 0) {
+      continue;
+    }
+    const entry: NonNullable<UpstreamModelMeta["tiers"]>[number] = { inputThreshold: threshold };
+    const optional = (value: string): number | undefined => {
+      const trimmed = value.trim();
+      if (!trimmed) return undefined;
+      const parsedValue = Number(trimmed);
+      return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : undefined;
+    };
+    const inputRate = optional(tier.inputRate);
+    const cacheReadRate = optional(tier.cacheReadRate);
+    const cacheWriteRate = optional(tier.cacheWriteRate);
+    const outputRate = optional(tier.outputRate);
+    if (inputRate !== undefined) entry.inputRate = inputRate;
+    if (cacheReadRate !== undefined) entry.cacheReadRate = cacheReadRate;
+    if (cacheWriteRate !== undefined) entry.cacheWriteRate = cacheWriteRate;
+    if (outputRate !== undefined) entry.outputRate = outputRate;
+    parsed.push(entry);
+  }
+  return parsed.sort((a, b) => a.inputThreshold - b.inputThreshold);
+}
+
+/** 已存阶梯 → 草稿行（编辑表单回显）。 */
+function metaTiersToDraft(tiers: UpstreamModelMeta["tiers"] | undefined): TierDraft[] {
+  return (tiers ?? []).map((tier) => ({
+    inputThreshold: String(tier.inputThreshold),
+    inputRate: tier.inputRate !== undefined && tier.inputRate !== null ? String(tier.inputRate) : "",
+    cacheReadRate: tier.cacheReadRate !== undefined && tier.cacheReadRate !== null ? String(tier.cacheReadRate) : "",
+    cacheWriteRate: tier.cacheWriteRate !== undefined && tier.cacheWriteRate !== null ? String(tier.cacheWriteRate) : "",
+    outputRate: tier.outputRate !== undefined && tier.outputRate !== null ? String(tier.outputRate) : "",
+  }));
+}
+
+/** 草稿峰谷 → 提交形状：无合法时段即返回 undefined（视为未配置）。 */
+function draftScheduleToMeta(draft: ScheduleDraft): UpstreamModelMeta["timeBased"] {
+  const parsed = parsePeakWindows(draft.peakWindows);
+  if ("error" in parsed || parsed.windows.length === 0) {
+    return undefined;
+  }
+  const multiplier = Number(draft.offPeakMultiplier.trim());
+  return {
+    offPeakMultiplier: Number.isFinite(multiplier) && multiplier >= 0 ? multiplier : 1,
+    peakWindows: parsed.windows,
+  };
+}
+
+/** 已存峰谷 → 草稿（编辑表单回显）。 */
+function metaScheduleToDraft(schedule: UpstreamModelMeta["timeBased"] | undefined): ScheduleDraft {
+  return {
+    offPeakMultiplier: schedule ? String(schedule.offPeakMultiplier) : "1",
+    peakWindows: schedule ? formatPeakWindows(schedule) : "",
+  };
+}
+
+/**
+ * 附加计价编辑器：长上下文阶梯（整份覆盖）与峰谷配置（谷时系数 + 时段）。
+ * 空的阶梯表 = 不启用自定义阶梯（沿用上游报价 / pi-catalog）；时段清空 =
+ * 不启用周期性谷时价。两者都以字符串保存草稿，由上级统一校验。
+ */
+function PricingEditor({
+  modelId,
+  tiers,
+  schedule,
+  inheritedTiers,
+  inheritedSchedule,
+  onChange,
+  onClose,
+}: {
+  modelId: string;
+  tiers: TierDraft[];
+  schedule: ScheduleDraft;
+  inheritedTiers: UpstreamModelMeta["tiers"];
+  inheritedSchedule: UpstreamModelMeta["timeBased"];
+  onChange: (patch: Partial<MetaDraft>) => void;
+  onClose: () => void;
+}) {
+  const setTier = (index: number, patch: Partial<TierDraft>) =>
+    onChange({ tiers: tiers.map((tier, position) => (position === index ? { ...tier, ...patch } : tier)) });
+  const inheritedTierText = (inheritedTiers ?? [])
+    .map((tier) => `>${tier.inputThreshold} tokens`)
+    .join("、");
+  return (
+    <div className="grid gap-4 rounded-lg border bg-muted/30 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium">附加计价 · {modelId}</p>
+          <p className="text-[10px] text-muted-foreground">
+            长上下文按提示总量整次切换档位；峰谷按 UTC 时段生效，峰值按牌价、其余时间乘谷时系数。
+          </p>
+        </div>
+        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+          收起
+        </Button>
+      </div>
+
+      <div className="grid gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Label className="text-xs">长上下文阶梯</Label>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-muted-foreground">
+              {inheritedTierText ? `当前继承：${inheritedTierText}` : "当前无阶梯"}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => onChange({ tiers: [...tiers, emptyTierDraft()] })}
+            >
+              <Plus />
+              添加档位
+            </Button>
+          </div>
+        </div>
+        {tiers.length === 0 ? (
+          <p className="text-[10px] text-muted-foreground">
+            未自定义时沿用上游 /v1/models 或 pi-catalog 的阶梯配置；留空的倍率字段沿用基础档。
+          </p>
+        ) : (
+          <div className="overflow-hidden rounded-lg border bg-background">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-28">阈值 (tokens)</TableHead>
+                  <TableHead className="w-24">输入</TableHead>
+                  <TableHead className="w-24">缓存读取</TableHead>
+                  <TableHead className="w-24">缓存写入</TableHead>
+                  <TableHead className="w-24">输出</TableHead>
+                  <TableHead className="w-14">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {tiers.map((tier, index) => (
+                  <TableRow key={index}>
+                    <TableCell>
+                      <Input
+                        inputMode="numeric"
+                        className="h-8 font-mono text-xs tabular-nums"
+                        placeholder="128000"
+                        value={tier.inputThreshold}
+                        onChange={(event) => setTier(index, { inputThreshold: event.target.value })}
+                      />
+                    </TableCell>
+                    {(["inputRate", "cacheReadRate", "cacheWriteRate", "outputRate"] as const).map((field) => (
+                      <TableCell key={field}>
+                        <Input
+                          inputMode="decimal"
+                          className="h-8 font-mono text-xs tabular-nums"
+                          placeholder="沿用"
+                          value={tier[field]}
+                          onChange={(event) => setTier(index, { [field]: event.target.value })}
+                        />
+                      </TableCell>
+                    ))}
+                    <TableCell>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => onChange({ tiers: tiers.filter((_, position) => position !== index) })}
+                      >
+                        删除
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
+
+      <div className="grid gap-2">
+        <Label className="text-xs">峰谷计费</Label>
+        <p className="text-[10px] text-muted-foreground">
+          {inheritedSchedule
+            ? `当前继承：谷时 ×${inheritedSchedule.offPeakMultiplier}，时段 ${formatPeakWindows(inheritedSchedule) || "—"}`
+            : "当前无峰谷配置"}
+        </p>
+        <div className="grid gap-2 sm:grid-cols-[10rem_1fr]">
+          <div className="grid gap-1">
+            <Label htmlFor="pricing-off-peak" className="text-[10px]">
+              谷时系数（峰值 = 1）
+            </Label>
+            <Input
+              id="pricing-off-peak"
+              inputMode="decimal"
+              className="h-8 font-mono text-xs tabular-nums"
+              placeholder="1"
+              value={schedule.offPeakMultiplier}
+              onChange={(event) =>
+                onChange({
+                  timeBased: { ...schedule, offPeakMultiplier: event.target.value },
+                })
+              }
+            />
+          </div>
+          <div className="grid gap-1">
+            <Label htmlFor="pricing-peak-windows" className="text-[10px]">
+              峰值时段（UTC，每行一个；星期 0 = 周日）
+            </Label>
+            <textarea
+              id="pricing-peak-windows"
+              rows={3}
+              spellCheck={false}
+              placeholder={"1-5 01:00-09:00\n6-0 12:00-14:00"}
+              className="w-full rounded-md border border-input bg-transparent px-2.5 py-1.5 font-mono text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              value={schedule.peakWindows}
+              onChange={(event) => onChange({ timeBased: { ...schedule, peakWindows: event.target.value } })}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -162,6 +416,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   const [listTestResults, setListTestResults] = useState<Record<string, { ok: boolean; text: string }>>({});
   const [testingModel, setTestingModel] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; text: string }>>({});
+  /** 展开「附加计价」（长上下文阶梯 / 峰谷）的模型；同时只编辑一个。 */
+  const [pricingEditorModel, setPricingEditorModel] = useState<string | null>(null);
 
   // pi-catalog 元数据（归一化倍率），页面加载时拉取一次；上游 `/v1/models`
   // 自报的报价在各自编辑表单里优先于它。
@@ -198,6 +454,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setOverrideDrafts({});
     setModelPrices({});
     setTestResults({});
+    setPricingEditorModel(null);
     setFormError(null);
     setShowForm(true);
     setError(null);
@@ -223,6 +480,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setOverrideDrafts({});
     setModelPrices(upstream.modelPrices ?? {});
     setTestResults({});
+    setPricingEditorModel(null);
     setFormError(null);
     setShowForm(true);
     setError(null);
@@ -386,6 +644,21 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     return metaDrafts[modelId] ?? {};
   }
 
+  /**
+   * 附加计价的编辑草稿：动过就显示草稿，否则把「已存自定义 → 上游/目录」
+   * 的生效配置铺进编辑器，避免打开时看到空表。
+   */
+  function pricingDraft(modelId: string): { tiers: TierDraft[]; timeBased: ScheduleDraft } {
+    const draft = metaDrafts[modelId];
+    const stored = editingModelMeta[modelId];
+    const fallback = defaultMeta(modelId);
+    const tiers = draft?.tiers
+      ?? metaTiersToDraft(stored?.tiers ?? fallback.tiers);
+    const schedule = draft?.timeBased
+      ?? metaScheduleToDraft(stored?.timeBased ?? fallback.timeBased);
+    return { tiers, timeBased: schedule };
+  }
+
   /** 按模型覆盖开关：行草稿 > 已存自定义 > 默认关闭（用上游报价 → pi-catalog）。 */
   function rowOverride(modelId: string): boolean {
     return overrideDrafts[modelId] ?? editingModelMeta[modelId]?.override ?? false;
@@ -416,48 +689,76 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   }
 
   /**
-   * 该模型的默认（未覆盖）tokenType 倍率：上游 `/v1/models` 报价优先，
-   * 缺字段回退 pi-catalog，都没有按 1x。同时给出「缓存价 ÷ 输入价」的
-   * 折扣比例（上游自报两者时用上游的，否则用目录的），供覆盖条目在未填
-   * 缓存价时折算 —— 与服务端 `lib/model-rates.ts` 的解析口径一致。
+   * 单条腿的目录/报价来源：上游 `/v1/models` 报价优先，缺字段回退
+   * pi-catalog，都没有按 1x。缓存腿缺省时按「输入价 × 折扣比例」折算
+   * （上游自报两者时用上游的折扣，否则用目录的）—— 与服务端
+   * `lib/model-rates.ts` 的解析口径一致。
    */
   function defaultMeta(modelId: string): {
     inputRate: number;
     cacheReadRate: number;
+    cacheWriteRate: number;
     outputRate: number;
-    cacheDiscount: number;
+    cacheReadDiscount: number;
+    cacheWriteDiscount: number;
+    tiers?: UpstreamModelMeta["tiers"];
+    timeBased?: UpstreamModelMeta["timeBased"];
   } {
     const price = modelPrices[modelId];
     const catalog = catalogMeta[modelId];
-    const priceInput = price?.inputRate && price.inputRate > 0 ? price.inputRate : undefined;
-    const priceCache = price?.cacheReadRate && price.cacheReadRate > 0 ? price.cacheReadRate : undefined;
-    const priceOutput = price?.outputRate && price.outputRate > 0 ? price.outputRate : undefined;
-    const catalogDiscount = catalog?.inputRate && catalog.inputRate > 0 && typeof catalog.cacheReadRate === "number" && catalog.cacheReadRate > 0
-      ? catalog.cacheReadRate / catalog.inputRate
-      : 1;
-    const cacheDiscount = priceInput !== undefined && priceCache !== undefined ? priceCache / priceInput : catalogDiscount;
-    const inputRate = priceInput ?? (catalog?.inputRate && catalog.inputRate > 0 ? catalog.inputRate : 1);
+    // 上游报价的 0 表示「未返回」（回退目录）；目录里的 0 是真实的「免费」。
+    const returned = (value: number | null | undefined): number | undefined =>
+      typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+    const catalogRate = (value: number | null | undefined): number | undefined =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+    const priceInput = returned(price?.inputRate);
+    const priceRead = returned(price?.cacheReadRate);
+    const priceWrite = returned(price?.cacheWriteRate);
+    const catalogInput = returned(catalog?.inputRate);
+    const catalogRead = catalogRate(catalog?.cacheReadRate);
+    const catalogWrite = catalogRate(catalog?.cacheWriteRate);
+    const ratio = (leg: number | undefined, input: number | undefined): number | undefined =>
+      leg !== undefined && input !== undefined && input > 0 ? leg / input : undefined;
+    const catalogReadDiscount = ratio(catalogRead, catalogInput) ?? 1;
+    const catalogWriteDiscount = ratio(catalogWrite, catalogInput) ?? catalogReadDiscount;
+    const cacheReadDiscount = ratio(priceRead, priceInput) ?? catalogReadDiscount;
+    const cacheWriteDiscount = ratio(priceWrite, priceInput) ?? catalogWriteDiscount;
+    const inputRate = priceInput ?? catalogInput ?? 1;
     return {
       inputRate,
-      cacheReadRate: priceCache ?? (catalog?.cacheReadRate && catalog.cacheReadRate > 0 ? catalog.cacheReadRate : inputRate * catalogDiscount),
-      outputRate: priceOutput ?? (catalog?.outputRate && catalog.outputRate > 0 ? catalog.outputRate : 1),
-      cacheDiscount,
+      cacheReadRate: priceRead ?? catalogRead ?? round4(inputRate * catalogReadDiscount),
+      cacheWriteRate: priceWrite ?? catalogWrite ?? round4(inputRate * catalogWriteDiscount),
+      outputRate: returned(price?.outputRate) ?? returned(catalog?.outputRate) ?? 1,
+      cacheReadDiscount,
+      cacheWriteDiscount,
+      // 结构整份取用：上游给了就用上游的，否则用目录的（自定义在 resolvedMeta 里优先）。
+      tiers: price?.tiers ?? catalog?.tiers ?? undefined,
+      timeBased: price?.timeBased ?? catalog?.timeBased ?? undefined,
     };
   }
 
   /** 该模型是否带上游 `/v1/models` 自报报价（表格里打标用）。 */
   function hasUpstreamPrice(modelId: string): boolean {
     const price = modelPrices[modelId];
-    return price !== undefined && (price.inputRate !== undefined || price.cacheReadRate !== undefined || price.outputRate !== undefined);
+    return price !== undefined
+      && (price.inputRate !== undefined
+        || price.cacheReadRate !== undefined
+        || price.cacheWriteRate !== undefined
+        || price.outputRate !== undefined
+        || price.tiers !== undefined
+        || price.timeBased !== undefined);
   }
 
   /** 生效元数据（按模型）：覆盖开启时 草稿 > 自定义 > 上游报价 > pi-catalog > 0
    *  （0 = 不计费）；关闭时直接用「上游报价 > pi-catalog」，缺失按 1x 展示。
-   *  返回值为 tokenType 倍率（未含 modelRate / providerRate）。 */
+   *  返回值为 tokenType 四腿（未含 modelRate / providerRate）。 */
   function resolvedMeta(modelId: string): {
     inputRate: number;
     cacheReadRate: number;
+    cacheWriteRate: number;
     outputRate: number;
+    tiers?: UpstreamModelMeta["tiers"];
+    timeBased?: UpstreamModelMeta["timeBased"];
   } {
     const fallback = defaultMeta(modelId);
     if (!rowOverride(modelId)) {
@@ -479,12 +780,18 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     const inputRate = pickRate(draft?.inputRate, stored?.inputRate, fallback.inputRate);
     return {
       inputRate,
-      // 未填缓存价时按「实际输入价 × 缓存折扣」折算（与 lib/model-rates.ts 一致），
+      // 未填缓存价时按「实际输入价 × 折扣比例」折算（与 lib/model-rates.ts 一致），
       // 而不是直接沿用目录里的绝对缓存倍率 —— 两套口径不同。
       cacheReadRate: draft?.cacheReadRate !== undefined || stored?.cacheReadRate != null
         ? pickRate(draft?.cacheReadRate, stored?.cacheReadRate, fallback.cacheReadRate)
-        : inputRate * fallback.cacheDiscount,
+        : inputRate * fallback.cacheReadDiscount,
+      cacheWriteRate: draft?.cacheWriteRate !== undefined || stored?.cacheWriteRate != null
+        ? pickRate(draft?.cacheWriteRate, stored?.cacheWriteRate, fallback.cacheWriteRate)
+        : inputRate * fallback.cacheWriteDiscount,
       outputRate: pickRate(draft?.outputRate, stored?.outputRate, fallback.outputRate),
+      // 阶梯/峰谷：草稿（整份编辑）> 已存自定义 > 上游/目录。
+      tiers: draft?.tiers ? draftTiersToMeta(draft.tiers) : stored?.tiers ?? fallback.tiers,
+      timeBased: draft?.timeBased ? draftScheduleToMeta(draft.timeBased) : stored?.timeBased ?? fallback.timeBased,
     };
   }
 
@@ -492,15 +799,15 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   function effectiveMeta(modelId: string): {
     inputRate: number;
     cacheReadRate: number;
+    cacheWriteRate: number;
     outputRate: number;
   } {
     const base = resolvedMeta(modelId);
-    const modelMultiplier = parseMultiplier(rowMultiplier(modelId));
-    const providerMultiplier = parseMultiplier(form.multiplier);
-    const scale = modelMultiplier * providerMultiplier;
+    const scale = parseMultiplier(rowMultiplier(modelId)) * parseMultiplier(form.multiplier);
     return {
       inputRate: base.inputRate * scale,
       cacheReadRate: base.cacheReadRate * scale,
+      cacheWriteRate: base.cacheWriteRate * scale,
       outputRate: base.outputRate * scale,
     };
   }
@@ -512,14 +819,46 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       const badRate =
         (draft.inputRate !== undefined && parseRateInput(draft.inputRate) === "invalid") ||
         (draft.cacheReadRate !== undefined && parseRateInput(draft.cacheReadRate) === "invalid") ||
+        (draft.cacheWriteRate !== undefined && parseRateInput(draft.cacheWriteRate) === "invalid") ||
         (draft.outputRate !== undefined && parseRateInput(draft.outputRate) === "invalid");
       if (badRate) {
-        setFormError(`模型 ${modelId} 的倍率必须是数字。`);
+        setFormError(`模型 ${modelId} 的倍率必须是非负数字。`);
         return;
       }
       if (draft.multiplier !== undefined && parseMultiplierInput(draft.multiplier) === "invalid") {
         setFormError(`模型 ${modelId} 的整体倍率必须是非负数字。`);
         return;
+      }
+      // 阶梯：阈值必须是正整数，价格腿必须是非负数字（留空 = 沿用基础档）。
+      if (draft.tiers) {
+        for (const tier of draft.tiers) {
+          if (!tier.inputThreshold.trim()) {
+            continue;
+          }
+          const threshold = Number(tier.inputThreshold);
+          if (!Number.isInteger(threshold) || threshold <= 0) {
+            setFormError(`模型 ${modelId} 的长上下文阈值必须是正整数。`);
+            return;
+          }
+          const badTierRate = [tier.inputRate, tier.cacheReadRate, tier.cacheWriteRate, tier.outputRate]
+            .some((value) => value.trim() !== "" && parseRateInput(value) === "invalid");
+          if (badTierRate) {
+            setFormError(`模型 ${modelId} 的长上下文倍率必须是非负数字。`);
+            return;
+          }
+        }
+      }
+      if (draft.timeBased) {
+        const parsedWindows = parsePeakWindows(draft.timeBased.peakWindows);
+        if ("error" in parsedWindows) {
+          setFormError(`模型 ${modelId}：${parsedWindows.error}`);
+          return;
+        }
+        const offPeak = Number(draft.timeBased.offPeakMultiplier.trim());
+        if (draft.timeBased.offPeakMultiplier.trim() !== "" && (!Number.isFinite(offPeak) || offPeak < 0)) {
+          setFormError(`模型 ${modelId} 的谷时系数必须是非负数字。`);
+          return;
+        }
       }
     }
     const providerMultiplier = parseMultiplierInput(form.multiplier);
@@ -549,9 +888,18 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       const entry: UpstreamModelMeta = {
         override: true,
         cacheReadRate: resolved.cacheReadRate,
+        cacheWriteRate: resolved.cacheWriteRate,
         inputRate: resolved.inputRate,
         outputRate: resolved.outputRate,
       };
+      // 阶梯/峰谷是整份配置：表单里编辑过就写入，否则沿用已存值（不写回
+      // 「把上游/目录的结构固化成自定义」）。
+      if (resolved.tiers && resolved.tiers.length > 0) {
+        entry.tiers = resolved.tiers;
+      }
+      if (resolved.timeBased) {
+        entry.timeBased = resolved.timeBased;
+      }
       if (draft?.multiplier !== undefined) {
         entry.multiplier = parseMultiplier(draft.multiplier);
       } else if (editingModelMeta[modelId]?.multiplier !== undefined) {
@@ -764,7 +1112,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   }
 
   /** 只读展示（覆盖关闭或未编辑时）的倍率文本。 */
-  function rateDisplay(modelId: string, field: "inputRate" | "cacheReadRate" | "outputRate"): string {
+  function rateDisplay(modelId: string, field: "inputRate" | "cacheReadRate" | "cacheWriteRate" | "outputRate"): string {
     return String(resolvedMeta(modelId)[field]);
   }
 
@@ -934,9 +1282,11 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                         <TableHead className="w-16">覆盖</TableHead>
                         <TableHead className="w-24">输入倍率</TableHead>
                         <TableHead className="w-24">缓存读取倍率</TableHead>
+                        <TableHead className="w-24">缓存写入倍率</TableHead>
                         <TableHead className="w-24">输出倍率</TableHead>
                         <TableHead className="w-24">模型整体倍率</TableHead>
                         <TableHead className="w-28">实际倍率（生效）</TableHead>
+                        <TableHead className="w-28">附加计价</TableHead>
                         <TableHead className="w-32">测试</TableHead>
                         <TableHead className="w-16">操作</TableHead>
                       </TableRow>
@@ -953,6 +1303,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                           ? {
                               inputRate: rawDraft.inputRate ?? String(meta.inputRate),
                               cacheReadRate: rawDraft.cacheReadRate ?? String(meta.cacheReadRate),
+                              cacheWriteRate: rawDraft.cacheWriteRate ?? String(meta.cacheWriteRate),
                               outputRate: rawDraft.outputRate ?? String(meta.outputRate),
                             }
                           : rawDraft;
@@ -1034,6 +1385,20 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                 <Input
                                   inputMode="decimal"
                                   className="h-8 font-mono text-xs tabular-nums"
+                                  value={draft.cacheWriteRate}
+                                  onChange={(event) => setDraft("cacheWriteRate", event.target.value)}
+                                />
+                              ) : (
+                                <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                                  {rateDisplay(modelId, "cacheWriteRate")}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              {editable ? (
+                                <Input
+                                  inputMode="decimal"
+                                  className="h-8 font-mono text-xs tabular-nums"
                                   value={draft.outputRate}
                                   onChange={(event) => setDraft("outputRate", event.target.value)}
                                 />
@@ -1072,10 +1437,53 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                       Number(form.multiplier) || 1,
                                     )}`}
                                   >
-                                    {effective.inputRate} / {effective.cacheReadRate} / {effective.outputRate}
+                                    {effective.inputRate} / {effective.cacheReadRate} / {effective.cacheWriteRate} /{" "}
+                                    {effective.outputRate}
                                   </span>
                                 );
                               })()}
+                            </TableCell>
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              {(() => {
+                                const tiers = meta.tiers ?? [];
+                                const schedule = meta.timeBased;
+                                if (tiers.length === 0 && !schedule) {
+                                  return <span className="text-[10px] text-muted-foreground">—</span>;
+                                }
+                                return (
+                                  <div className="grid gap-0.5 text-[10px] leading-tight">
+                                    {tiers.length > 0 ? (
+                                      <span
+                                        className="font-mono tabular-nums"
+                                        title={tiers
+                                          .map((tier) => `>${tier.inputThreshold} tokens`)
+                                          .join("\n")}
+                                      >
+                                        阶梯 {tiers.length} 档
+                                      </span>
+                                    ) : null}
+                                    {schedule ? (
+                                      <span
+                                        className="font-mono tabular-nums"
+                                        title={formatPeakWindows(schedule) || undefined}
+                                      >
+                                        峰谷 ×{schedule.offPeakMultiplier}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                );
+                              })()}
+                              {editable ? (
+                                <Button
+                                  type="button"
+                                  variant="link"
+                                  size="sm"
+                                  className="h-5 px-0 text-[10px]"
+                                  onClick={() => setPricingEditorModel(modelId)}
+                                >
+                                  编辑
+                                </Button>
+                              ) : null}
                             </TableCell>
                             <TableCell onClick={(event) => event.stopPropagation()}>
                               <div className="flex flex-col items-start gap-0.5">
@@ -1149,6 +1557,26 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                 </div>
               ) : null}
             </div>
+
+            {pricingEditorModel ? (
+              <PricingEditor
+                modelId={pricingEditorModel}
+                tiers={pricingDraft(pricingEditorModel).tiers}
+                schedule={pricingDraft(pricingEditorModel).timeBased}
+                inheritedTiers={defaultMeta(pricingEditorModel).tiers}
+                inheritedSchedule={defaultMeta(pricingEditorModel).timeBased}
+                onChange={(patch) =>
+                  setMetaDrafts((drafts) => ({
+                    ...drafts,
+                    [pricingEditorModel]: {
+                      ...(drafts[pricingEditorModel] ?? {}),
+                      ...patch,
+                    },
+                  }))
+                }
+                onClose={() => setPricingEditorModel(null)}
+              />
+            ) : null}
 
             {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
           </form>

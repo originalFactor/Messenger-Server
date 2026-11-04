@@ -261,6 +261,40 @@ export const redeemSchema = z.object({
 
 export const upstreamApiFormatSchema = z.enum(["chat", "responses", "messages", "interactions", "auto"]);
 
+/** 单条倍率输入：非负有限数，0 = 该腿不计费。 */
+const rateInputSchema = z.number().finite().min(0).max(100_000).nullable().optional();
+
+/** 长上下文阶梯条目：阈值必填，四条腿可选（缺省沿用基础档）。 */
+export const pricingTierInputSchema = z
+  .object({
+    inputThreshold: z.number().int().positive().max(100_000_000),
+    inputThresholdInclusive: z.boolean().optional(),
+    inputRate: rateInputSchema,
+    cacheReadRate: rateInputSchema,
+    cacheWriteRate: rateInputSchema,
+    outputRate: rateInputSchema,
+  })
+  .strict();
+
+/** 峰值时段：UTC 星期 0–6（周日 = 0），分钟 0–1440，起始须早于结束。 */
+export const pricingPeakWindowInputSchema = z
+  .object({
+    weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+    startMinute: z.number().int().min(0).max(1_440),
+    endMinute: z.number().int().min(0).max(1_440),
+  })
+  .strict()
+  .refine((window) => window.startMinute < window.endMinute, "A peak window must start before it ends.")
+  .refine((window) => new Set(window.weekdays).size === window.weekdays.length, "Duplicate weekdays.");
+
+/** 峰谷配置：谷时系数 + 峰值时段列表（空列表 = 无周期性谷时价）。 */
+export const pricingScheduleInputSchema = z
+  .object({
+    offPeakMultiplier: z.number().finite().min(0).max(100_000),
+    peakWindows: z.array(pricingPeakWindowInputSchema).max(24),
+  })
+  .strict();
+
 export const upstreamInputSchema = z.object({
   name: z.string().trim().min(1).max(100),
   baseUrl: z.string().url().max(2_000),
@@ -274,11 +308,16 @@ export const upstreamInputSchema = z.object({
       z
         .object({
           override: z.boolean().optional(),
-          cacheReadRate: z.number().finite().min(0).max(100_000).nullable().optional(),
-          inputRate: z.number().finite().min(0).max(100_000).nullable().optional(),
-          outputRate: z.number().finite().min(0).max(100_000).nullable().optional(),
+          cacheReadRate: rateInputSchema,
+          cacheWriteRate: rateInputSchema,
+          inputRate: rateInputSchema,
+          outputRate: rateInputSchema,
+          /** 长上下文阶梯：整份自定义，缺省沿用上游报价 → pi-catalog。 */
+          tiers: z.array(pricingTierInputSchema).max(10).nullable().optional(),
+          /** 峰谷配置：整份自定义，缺省沿用上游报价 → pi-catalog。 */
+          timeBased: pricingScheduleInputSchema.nullable().optional(),
           /** 模型整体倍率：与覆盖开关无关，缺省 = 1，0 = 不计费。 */
-          multiplier: z.number().finite().min(0).max(100_000).nullable().optional(),
+          multiplier: rateInputSchema,
         })
         .strict(),
     )
@@ -294,9 +333,14 @@ export const upstreamInputSchema = z.object({
       z.string().max(200),
       z
         .object({
-          inputRate: z.number().finite().min(0).max(100_000).nullable().optional(),
-          cacheReadRate: z.number().finite().min(0).max(100_000).nullable().optional(),
-          outputRate: z.number().finite().min(0).max(100_000).nullable().optional(),
+          inputRate: rateInputSchema,
+          cacheReadRate: rateInputSchema,
+          cacheWriteRate: rateInputSchema,
+          outputRate: rateInputSchema,
+          /** 长上下文阶梯（上游原样返回时整份覆盖目录配置）。 */
+          tiers: z.array(pricingTierInputSchema).max(10).nullable().optional(),
+          /** 峰谷配置（上游原样返回时整份覆盖目录配置）。 */
+          timeBased: pricingScheduleInputSchema.nullable().optional(),
           fetchedAt: z.number().int().nonnegative().nullable().optional(),
         })
         .strict(),

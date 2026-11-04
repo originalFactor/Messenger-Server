@@ -37,6 +37,9 @@ import type {
   PlanDoc,
   ProviderDoc,
   ProviderUpsertInput,
+  PricingPeakWindow,
+  PricingSchedule,
+  PricingTier,
   ProjectDoc,
   ProjectUpsertInput,
   RedemptionDoc,
@@ -1803,6 +1806,77 @@ function normalizeUpstreamApiFormat(
     : "auto";
 }
 
+/** 单条倍率：有限非负数才保留（0 = 该腿不计费）。 */
+function normalizeRateInput(value: number | null | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/** 峰值时段：UTC 星期 0–6、起止分钟合法才保留。 */
+function normalizePeakWindows(windows: PricingPeakWindow[] | null | undefined): PricingPeakWindow[] | null {
+  if (!windows) {
+    return null;
+  }
+  const valid = windows
+    .filter((window) =>
+      window
+      && Array.isArray(window.weekdays)
+      && window.weekdays.length > 0
+      && window.weekdays.every((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+      && Number.isInteger(window.startMinute)
+      && Number.isInteger(window.endMinute)
+      && window.startMinute >= 0
+      && window.endMinute <= 24 * 60
+      && window.startMinute < window.endMinute)
+    .map((window) => ({
+      weekdays: [...new Set(window.weekdays)].sort((a, b) => a - b),
+      startMinute: window.startMinute,
+      endMinute: window.endMinute,
+    }));
+  return valid.length > 0 ? valid : null;
+}
+
+/** 峰谷配置：没有合法窗口时视为未配置（避免留下「永不远谷时」的空壳）。 */
+function normalizePricingSchedule(schedule: PricingSchedule | null | undefined): PricingSchedule | null {
+  if (!schedule) {
+    return null;
+  }
+  const windows = normalizePeakWindows(schedule.peakWindows);
+  if (!windows) {
+    return null;
+  }
+  const offPeak = normalizeRateInput(schedule.offPeakMultiplier);
+  return { offPeakMultiplier: offPeak ?? 1, peakWindows: windows };
+}
+
+/** 长上下文阶梯：阈值必填正数，未填的腿留空（解析时沿用基础档）。 */
+function normalizePricingTiers(tiers: PricingTier[] | null | undefined): PricingTier[] | null {
+  if (!tiers) {
+    return null;
+  }
+  const byThreshold = new Map<number, PricingTier>();
+  for (const tier of tiers) {
+    if (!tier || !Number.isInteger(tier.inputThreshold) || tier.inputThreshold <= 0) {
+      continue;
+    }
+    const entry: PricingTier = { inputThreshold: tier.inputThreshold };
+    if (tier.inputThresholdInclusive === true) {
+      entry.inputThresholdInclusive = true;
+    }
+    const inputRate = normalizeRateInput(tier.inputRate);
+    const cacheReadRate = normalizeRateInput(tier.cacheReadRate);
+    const cacheWriteRate = normalizeRateInput(tier.cacheWriteRate);
+    const outputRate = normalizeRateInput(tier.outputRate);
+    if (inputRate !== undefined) entry.inputRate = inputRate;
+    if (cacheReadRate !== undefined) entry.cacheReadRate = cacheReadRate;
+    if (cacheWriteRate !== undefined) entry.cacheWriteRate = cacheWriteRate;
+    if (outputRate !== undefined) entry.outputRate = outputRate;
+    byThreshold.set(tier.inputThreshold, entry);
+  }
+  return byThreshold.size > 0
+    ? [...byThreshold.values()].sort((a, b) => a.inputThreshold - b.inputThreshold)
+    : null;
+}
+
 function normalizeUpstreamModelMeta(
   modelMeta: Record<string, UpstreamModelMeta> | null | undefined,
 ): Record<string, UpstreamModelMeta> | null {
@@ -1817,15 +1891,18 @@ function normalizeUpstreamModelMeta(
     if (typeof meta.override === 'boolean') {
       entry.override = meta.override;
     }
-    if (typeof meta.cacheReadRate === 'number' && Number.isFinite(meta.cacheReadRate) && meta.cacheReadRate >= 0) {
-      entry.cacheReadRate = meta.cacheReadRate;
-    }
-    if (typeof meta.inputRate === 'number' && Number.isFinite(meta.inputRate) && meta.inputRate >= 0) {
-      entry.inputRate = meta.inputRate;
-    }
-    if (typeof meta.outputRate === 'number' && Number.isFinite(meta.outputRate) && meta.outputRate >= 0) {
-      entry.outputRate = meta.outputRate;
-    }
+    const cacheReadRate = normalizeRateInput(meta.cacheReadRate);
+    const cacheWriteRate = normalizeRateInput(meta.cacheWriteRate);
+    const inputRate = normalizeRateInput(meta.inputRate);
+    const outputRate = normalizeRateInput(meta.outputRate);
+    if (cacheReadRate !== undefined) entry.cacheReadRate = cacheReadRate;
+    if (cacheWriteRate !== undefined) entry.cacheWriteRate = cacheWriteRate;
+    if (inputRate !== undefined) entry.inputRate = inputRate;
+    if (outputRate !== undefined) entry.outputRate = outputRate;
+    const tiers = normalizePricingTiers(meta.tiers);
+    if (tiers) entry.tiers = tiers;
+    const timeBased = normalizePricingSchedule(meta.timeBased);
+    if (timeBased) entry.timeBased = timeBased;
     if (typeof meta.multiplier === 'number' && Number.isFinite(meta.multiplier) && meta.multiplier >= 0) {
       entry.multiplier = meta.multiplier;
     }
@@ -1859,16 +1936,40 @@ function normalizeUpstreamModelPrices(
     const id = modelId.trim();
     if (!id || !price || !kept.has(id)) continue;
     const entry: UpstreamModelPrice = {};
-    if (typeof price.inputRate === "number" && Number.isFinite(price.inputRate) && price.inputRate > 0) {
-      entry.inputRate = price.inputRate;
+    const positive = (value: number | null | undefined): number | undefined =>
+      typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+    const inputRate = positive(price.inputRate);
+    const cacheReadRate = positive(price.cacheReadRate);
+    const cacheWriteRate = positive(price.cacheWriteRate);
+    const outputRate = positive(price.outputRate);
+    if (inputRate !== undefined) {
+      entry.inputRate = inputRate;
     }
-    if (typeof price.cacheReadRate === "number" && Number.isFinite(price.cacheReadRate) && price.cacheReadRate > 0) {
-      entry.cacheReadRate = price.cacheReadRate;
+    if (cacheReadRate !== undefined) {
+      entry.cacheReadRate = cacheReadRate;
     }
-    if (typeof price.outputRate === "number" && Number.isFinite(price.outputRate) && price.outputRate > 0) {
-      entry.outputRate = price.outputRate;
+    if (cacheWriteRate !== undefined) {
+      entry.cacheWriteRate = cacheWriteRate;
     }
-    if (entry.inputRate === undefined && entry.cacheReadRate === undefined && entry.outputRate === undefined) {
+    if (outputRate !== undefined) {
+      entry.outputRate = outputRate;
+    }
+    // 阶梯与峰谷是结构配置：没有价格腿也可以单独存在（例如「谷时 5 折」
+    // 只改系数、价格另有基础档）。
+    const tiers = normalizePricingTiers(price.tiers);
+    if (tiers) {
+      entry.tiers = tiers;
+    }
+    const timeBased = normalizePricingSchedule(price.timeBased);
+    if (timeBased) {
+      entry.timeBased = timeBased;
+    }
+    if (entry.inputRate === undefined
+      && entry.cacheReadRate === undefined
+      && entry.cacheWriteRate === undefined
+      && entry.outputRate === undefined
+      && entry.tiers === undefined
+      && entry.timeBased === undefined) {
       continue;
     }
     if (typeof price.fetchedAt === "number" && Number.isFinite(price.fetchedAt) && price.fetchedAt >= 0) {

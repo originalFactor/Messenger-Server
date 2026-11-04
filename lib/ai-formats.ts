@@ -122,7 +122,10 @@ export interface IrUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** 命中缓存的提示 token（OpenAI `cached_tokens` / Anthropic `cache_read_input_tokens`）。 */
   cachedTokens?: number;
+  /** 写入缓存的提示 token（Anthropic `cache_creation_input_tokens`）。 */
+  cacheWriteTokens?: number;
 }
 
 export interface IrToolCall {
@@ -1138,7 +1141,13 @@ export function decodeUpstreamResponse(format: ApiFormat, payload: unknown): IrR
   }
 }
 
-function usageOf(prompt: number, completion: number, total?: number, cached?: number): IrUsage {
+function usageOf(
+  prompt: number,
+  completion: number,
+  total?: number,
+  cached?: number,
+  cacheWrite?: number,
+): IrUsage {
   const promptTokens = Math.max(0, Math.trunc(prompt));
   const completionTokens = Math.max(0, Math.trunc(completion));
   return {
@@ -1146,6 +1155,7 @@ function usageOf(prompt: number, completion: number, total?: number, cached?: nu
     completionTokens,
     totalTokens: Math.max(0, Math.trunc(total ?? promptTokens + completionTokens)),
     ...(cached !== undefined ? { cachedTokens: Math.max(0, Math.trunc(cached)) } : {}),
+    ...(cacheWrite !== undefined ? { cacheWriteTokens: Math.max(0, Math.trunc(cacheWrite)) } : {}),
   };
 }
 
@@ -1276,6 +1286,7 @@ function decodeMessagesResponse(record: Json): IrResponse {
           num(usage.output_tokens) ?? 0,
           undefined,
           num(usage.cache_read_input_tokens),
+          num(usage.cache_creation_input_tokens),
         )
       : undefined,
     finishReason: normalizeFinishReason(str(record.stop_reason)),
@@ -1611,6 +1622,7 @@ class MessagesStreamDecoder implements StreamDecoder {
             num(usage.output_tokens) ?? 0,
             undefined,
             num(usage.cache_read_input_tokens),
+            num(usage.cache_creation_input_tokens),
           );
           events.push({ type: "usage", usage: this.usage });
         }
@@ -1652,7 +1664,9 @@ class MessagesStreamDecoder implements StreamDecoder {
             this.usage.promptTokens,
             num(usage.output_tokens) ?? this.usage.completionTokens,
             undefined,
-            this.usage.cachedTokens,
+            // message_delta 可能补齐缓存计数（有些网关只在末尾给出）。
+            num(usage.cache_read_input_tokens) ?? this.usage.cachedTokens,
+            num(usage.cache_creation_input_tokens) ?? this.usage.cacheWriteTokens,
           );
           events.push({ type: "usage", usage: this.usage });
         }
@@ -1945,6 +1959,9 @@ function encodeMessagesResponse(response: IrResponse, model: string): Json {
       output_tokens: usage.completionTokens,
       ...(usage.cachedTokens !== undefined
         ? { cache_read_input_tokens: usage.cachedTokens }
+        : {}),
+      ...(usage.cacheWriteTokens !== undefined
+        ? { cache_creation_input_tokens: usage.cacheWriteTokens }
         : {}),
     },
   };
@@ -2365,6 +2382,9 @@ class MessagesStreamEncoder implements StreamEncoder {
       if (event.usage.cachedTokens !== undefined) {
         this.usage.cachedTokens = event.usage.cachedTokens;
       }
+      if (event.usage.cacheWriteTokens !== undefined) {
+        this.usage.cacheWriteTokens = event.usage.cacheWriteTokens;
+      }
       return "";
     }
     if (event.type === "error") {
@@ -2381,6 +2401,9 @@ class MessagesStreamEncoder implements StreamEncoder {
           output_tokens: this.usage.completionTokens,
           ...(this.usage.cachedTokens !== undefined
             ? { cache_read_input_tokens: this.usage.cachedTokens }
+            : {}),
+          ...(this.usage.cacheWriteTokens !== undefined
+            ? { cache_creation_input_tokens: this.usage.cacheWriteTokens }
             : {}),
         },
       });

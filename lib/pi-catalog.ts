@@ -17,21 +17,25 @@
 import { z } from "zod";
 import { getDb } from "@/lib/mongo";
 import { createLogger } from "@/lib/runtime-logs";
+import type { LongContextTier, PeakWindow, RateCard, TimeBasedPricing } from "@/lib/pricing";
 
 /**
  * pi-catalog 公开模型价目表（https://pi.dev/api/models）：
  * 按供应商嵌套，条目带 cost（每百万 token 的美元价格：input / output /
- * cacheRead），用于在上游 `/v1/models` 没有报价时提供默认输入/输出/缓存
- * 读取倍率 —— 基准为 deepseek/deepseek-flash 的输出价格（其输出倍率恰为
- * 1.0），所有倍率（含该模型自身的输入倍率）都以该基准输出价为分母折算，
- * 单位在比值中抵消。
+ * cacheRead / cacheWrite，可带长上下文阶梯 `tiers` 与峰谷配置
+ * `timeBased`），用于在上游 `/v1/models` 没有报价时提供默认倍率 ——
+ * 基准为 deepseek/deepseek-flash 的输出价格（其输出倍率恰为 1.0），所有
+ * 倍率（含该模型自身的输入倍率）都以该基准输出价为分母折算，单位在比值
+ * 中抵消。
  *
- * 上线顺序：上游自己在 `/v1/models` 返回的报价（`upstreams.modelPrices`）
- * 优先，其次才是这里；两者都没有则按 1x（显式 0 = 不计费只来自自定义覆盖）。
+ * 逐腿来源：上游自己在 `/v1/models` 返回的报价（`upstreams.modelPrices`）
+ * 优先，其次这里，都没有则按 1x（显式 0 = 不计费只来自自定义覆盖）。
+ * 长上下文阶梯与峰谷配置跟随同一条来源链（各自整体取用，不与另一侧逐项
+ * 混拼，否则阈值/时段会和价格错配）。
  *
  * 上下文窗口不由服务端下发（客户端自行推导）。条目缺 cacheRead 时按该
- * 模型的输入价折算（不收缓存折扣的供应商即如此）；长上下文阶梯价（`tiers`）
- * 不参与折算，取基础档。
+ * 模型的输入价折算（不收缓存折扣的供应商即如此）；缺 cacheWrite 时按
+ * cacheRead 折算。
  *
  * 载荷在实例内存中缓存 24 小时，并每次成功拉取后落库一份快照；拉取失败
  * 时回退内存缓存，冷实例再回退数据库快照，永不抛出。
@@ -45,7 +49,7 @@ const CATALOG_TIMEOUT_MS = 10_000;
 const BASELINE_PROVIDER = "deepseek";
 const BASELINE_MODEL = "deepseek-flash";
 
-/** 基准取该模型输出价格；三种倍率统一以其为分母（输入也基于输出价，见下方归一化）。 */
+/** 基准取该模型输出价格；四种倍率统一以其为分母（输入也基于输出价，见下方归一化）。 */
 const BASELINE_RATE = "output" as const;
 
 /**
@@ -70,30 +74,48 @@ const CANONICAL_PROVIDERS: Record<string, true> = {
 };
 
 /**
- * pi-catalog 的 `cost` 是驼峰命名（cacheRead），与 models.dev 的 snake_case
- * 不同；另有 `cacheWrite` 与长上下文阶梯价 `tiers`，两者都不参与折算
- * （阶梯价取基础档）。
+ * pi-catalog 的 `cost` 是驼峰命名（cacheRead / cacheWrite），与 models.dev
+ * 的 snake_case 不同；`tiers` 是长上下文阶梯（`inputTokensAbove` 起整次
+ * 请求按该档计价），`timeBased` 是峰谷配置（与 omp 的 TimeBasedCost 同形）。
  */
+const catalogTierSchema = z.object({
+  inputTokensAbove: z.number(),
+  input: z.number(),
+  output: z.number(),
+  cacheRead: z.number(),
+  cacheWrite: z.number(),
+}).partial().required({ inputTokensAbove: true });
+
+const peakWindowSchema = z.object({
+  weekdays: z.array(z.number()).min(1),
+  startMinute: z.number(),
+  endMinute: z.number(),
+});
+
+const catalogTimeBasedSchema = z.object({
+  offPeakMultiplier: z.number(),
+  peakWindows: z.array(peakWindowSchema).default([]),
+});
+
 const catalogModelSchema = z.object({
   cost: z
     .object({
       input: z.number(),
       output: z.number(),
       cacheRead: z.number(),
+      cacheWrite: z.number(),
+      tiers: z.array(catalogTierSchema).optional(),
+      timeBased: catalogTimeBasedSchema.optional(),
     })
     .partial()
     .passthrough()
     .optional(),
 });
 
-export interface CatalogRates {
-  input: number;
-  output: number;
-  /** 缓存读取倍率（归一化到同一基准）。 */
-  cacheRead: number;
-}
+/** 一份目录条目归一化后的价目卡（基础四腿 + 长上下文阶梯 + 峰谷）。 */
+export type CatalogCard = RateCard;
 
-export type CatalogRateMap = Record<string, CatalogRates>;
+export type CatalogRateMap = Record<string, CatalogCard>;
 
 interface CatalogCache {
   fetchedAt: number;
@@ -107,6 +129,70 @@ let inflight: Promise<CatalogCache> | null = null;
 
 function round4(value: number): number {
   return Math.round(value * 10_000) / 10_000;
+}
+
+/** 峰谷窗口规范化：UTC 星期 0–6、分钟 0–1440，起止有效才保留。 */
+function normalizePeakWindows(windows: readonly PeakWindow[] | undefined): PeakWindow[] {
+  if (!windows) {
+    return [];
+  }
+  return windows
+    .filter((window) =>
+      Number.isInteger(window.startMinute)
+      && Number.isInteger(window.endMinute)
+      && window.startMinute >= 0
+      && window.endMinute <= 24 * 60
+      && window.startMinute < window.endMinute
+      && window.weekdays.length > 0
+      && window.weekdays.every((day) => Number.isInteger(day) && day >= 0 && day <= 6))
+    .map((window) => ({
+      weekdays: [...new Set(window.weekdays)].sort((a, b) => a - b),
+      startMinute: window.startMinute,
+      endMinute: window.endMinute,
+    }));
+}
+
+function normalizeTimeBased(pricing: z.infer<typeof catalogTimeBasedSchema> | undefined): TimeBasedPricing | undefined {
+  if (!pricing) {
+    return undefined;
+  }
+  const windows = normalizePeakWindows(pricing.peakWindows);
+  if (windows.length === 0) {
+    return undefined;
+  }
+  return {
+    offPeakMultiplier: Number.isFinite(pricing.offPeakMultiplier) && pricing.offPeakMultiplier >= 0
+      ? pricing.offPeakMultiplier
+      : 1,
+    peakWindows: windows,
+  };
+}
+
+/** 阶梯价规范化：阈值正数、四腿缺项按基础档补齐，按阈值升序去重。 */
+function normalizeTiers(
+  tiers: readonly z.infer<typeof catalogTierSchema>[] | undefined,
+  base: { input: number; output: number; cacheRead: number; cacheWrite: number },
+): LongContextTier[] | undefined {
+  if (!tiers || tiers.length === 0) {
+    return undefined;
+  }
+  const byThreshold = new Map<number, LongContextTier>();
+  for (const tier of tiers) {
+    if (!(tier.inputTokensAbove > 0)) {
+      continue;
+    }
+    byThreshold.set(tier.inputTokensAbove, {
+      inputThreshold: tier.inputTokensAbove,
+      input: tier.input ?? base.input,
+      output: tier.output ?? base.output,
+      cacheRead: tier.cacheRead ?? base.cacheRead,
+      cacheWrite: tier.cacheWrite ?? base.cacheWrite,
+    });
+  }
+  if (byThreshold.size === 0) {
+    return undefined;
+  }
+  return [...byThreshold.values()].sort((a, b) => a.inputThreshold - b.inputThreshold);
 }
 
 async function fetchCatalog(): Promise<CatalogCache> {
@@ -127,10 +213,8 @@ async function fetchCatalog(): Promise<CatalogCache> {
     interface CostEntry {
       provider: string;
       modelId: string;
-      input: number;
-      output: number;
-      /** pi-catalog 缺 cacheRead 时按 input 计（与输入/输出缺数据同规则）。 */
-      cacheRead: number | null;
+      card: CatalogCard;
+      /** pi-catalog 缺 cacheRead / cacheWrite 时按基础档补齐。 */
       canonical: boolean;
     }
     const entries: CostEntry[] = [];
@@ -143,22 +227,33 @@ async function fetchCatalog(): Promise<CatalogCache> {
         const cost = model.data.cost;
         if (typeof cost?.input !== "number" || typeof cost?.output !== "number") continue;
         if (cost.input <= 0 || cost.output <= 0) continue;
+        const input = cost.input;
+        const output = cost.output;
+        // 缺 cacheRead 按输入价（不收缓存折扣的供应商）；缺 cacheWrite 按
+        // cacheRead（多数供应商把缓存写入当作一次缓存读取计费，或直接免费）。
+        const cacheRead = typeof cost.cacheRead === "number" && cost.cacheRead >= 0 ? cost.cacheRead : input;
+        const cacheWrite = typeof cost.cacheWrite === "number" && cost.cacheWrite >= 0
+          ? cost.cacheWrite
+          : cacheRead;
+        const base = { input, output, cacheRead, cacheWrite };
         entries.push({
           provider: providerName,
           modelId,
-          input: cost.input,
-          output: cost.output,
-          cacheRead: typeof cost.cacheRead === "number" && cost.cacheRead > 0 ? cost.cacheRead : null,
+          card: {
+            ...base,
+            ...(normalizeTiers(cost.tiers, base) ? { tiers: normalizeTiers(cost.tiers, base) } : {}),
+            ...(normalizeTimeBased(cost.timeBased) ? { timeBased: normalizeTimeBased(cost.timeBased) } : {}),
+          },
           canonical: CANONICAL_PROVIDERS[providerName] === true,
         });
       }
     }
 
-    const pickCost = (modelId: string, preferredProvider?: string): { input: number; output: number } | null => {
+    const pickEntry = (modelId: string, preferredProvider?: string): CostEntry | null => {
       if (preferredProvider) {
         const direct = entries.find((entry) => entry.modelId === modelId && entry.provider === preferredProvider);
         if (direct) {
-          return { input: direct.input, output: direct.output };
+          return direct;
         }
       }
       const matches = entries.filter((entry) => entry.modelId === modelId);
@@ -166,37 +261,46 @@ async function fetchCatalog(): Promise<CatalogCache> {
         return null;
       }
       // 一线供应商优先（如 deepseek 官方），否则取输入价格最低的报价。
-      const chosen = matches.find((entry) => entry.canonical) ?? matches.reduce((a, b) => (b.input < a.input ? b : a));
-      return { input: chosen.input, output: chosen.output };
+      return matches.find((entry) => entry.canonical) ?? matches.reduce((a, b) => (b.card.input < a.card.input ? b : a));
     };
 
     // 基准候选链：数据源是活数据，条目会漂移，逐个回退直至命中。
-    let baseline: { input: number; output: number } | null = null;
+    let baseline: CostEntry | null = null;
     for (const candidate of [
       BASELINE_MODEL,
       `${BASELINE_PROVIDER}/${BASELINE_MODEL}`,
       "deepseek-v4.1-flash",
       `${BASELINE_PROVIDER}/deepseek-v4.1-flash`,
     ]) {
-      baseline = pickCost(candidate, candidate.includes("/") ? undefined : BASELINE_PROVIDER);
+      baseline = pickEntry(candidate, candidate.includes("/") ? undefined : BASELINE_PROVIDER);
       if (baseline) {
         break;
       }
     }
     if (baseline) {
+      const denominator = baseline.card[BASELINE_RATE];
       for (const entry of entries) {
-        // 输入、输出倍率统一以基准模型输出价格为分母：deepseek/flash 的
-        // 输出倍率恰为 1.0，其输入倍率（及一切其他倍率）按该价格折算。
-        // 缓存读取倍率同分母折算；缺 cacheRead 时按输入价计（大多数不
-        // 收缓存折扣的供应商就是这样）。
-        const base = baseline[BASELINE_RATE];
-        const cacheRead = entry.cacheRead ?? entry.input;
-        const rate: CatalogRates = {
-          input: round4(entry.input / base),
-          output: round4(entry.output / base),
-          // 缓存读取价按目录原值折算：少数供应商的缓存读取报价高于输入价
+        // 输入、输出、缓存读取、缓存写入倍率统一以基准模型输出价格为分母：
+        // deepseek/flash 的输出倍率恰为 1.0，其余腿按该价格折算。长上下文
+        // 阶梯同分母折算（否则阶梯档会与基础档差一个量级）；峰谷系数是
+        // 无量纲比值，原样保留。
+        const rate: CatalogCard = {
+          input: round4(entry.card.input / denominator),
+          output: round4(entry.card.output / denominator),
+          // 缓存价按目录原值折算：少数供应商的缓存读取报价高于输入价
           // （或把缓存写入价填在该字段），夹取会静默改价。
-          cacheRead: round4(cacheRead / base),
+          cacheRead: round4(entry.card.cacheRead / denominator),
+          cacheWrite: round4(entry.card.cacheWrite / denominator),
+          ...(entry.card.tiers
+            ? { tiers: entry.card.tiers.map((tier) => ({
+                ...tier,
+                input: round4(tier.input / denominator),
+                output: round4(tier.output / denominator),
+                cacheRead: round4(tier.cacheRead / denominator),
+                cacheWrite: round4(tier.cacheWrite / denominator),
+              })) }
+            : {}),
+          ...(entry.card.timeBased ? { timeBased: entry.card.timeBased } : {}),
         };
         rates[`${entry.provider}/${entry.modelId}`] = rate;
         const existing = rates[entry.modelId];
@@ -236,7 +340,20 @@ async function readSnapshot(): Promise<CatalogCache | null> {
     if (!doc || !doc.rates || Object.keys(doc.rates).length === 0) {
       return null;
     }
-    return { fetchedAt: doc.fetchedAt, rates: doc.rates, degraded: true };
+    // 上一版快照没有 cacheWrite 腿：补齐后再返回，否则整条解析链会出现
+    // undefined / NaN。写入免费（0）的条目保持 0，而不是回退到 cacheRead。
+    const rates: CatalogRateMap = {};
+    for (const [modelId, rate] of Object.entries(doc.rates)) {
+      rates[modelId] = {
+        input: rate.input,
+        output: rate.output,
+        cacheRead: rate.cacheRead,
+        cacheWrite: typeof rate.cacheWrite === "number" ? rate.cacheWrite : 0,
+        ...(rate.tiers ? { tiers: rate.tiers } : {}),
+        ...(rate.timeBased ? { timeBased: rate.timeBased } : {}),
+      };
+    }
+    return { fetchedAt: doc.fetchedAt, rates, degraded: true };
   } catch {
     return null;
   }

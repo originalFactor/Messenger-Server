@@ -116,25 +116,55 @@ export function ModelPlazaGrid({ models }: { models: PlazaModel[] }) {
                     </CardDescription>
                   )}
                 </CardHeader>
-                <CardContent className="grid grid-cols-3 gap-3 text-center">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium tabular-nums">
-                      {formatRateRange(model.inputRateMin, model.inputRateMax)}
+                <CardContent className="grid gap-3">
+                  <div className="grid grid-cols-4 gap-2 text-center">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium tabular-nums">
+                        {formatRateRange(model.inputRateMin, model.inputRateMax)}
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-muted-foreground">输入</div>
                     </div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">输入倍率</div>
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium tabular-nums">
-                      {formatRateRange(model.cacheReadRateMin, model.cacheReadRateMax)}
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium tabular-nums">
+                        {formatRateRange(model.cacheReadRateMin, model.cacheReadRateMax)}
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-muted-foreground">缓存读取</div>
                     </div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">缓存读取倍率</div>
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium tabular-nums">
-                      {formatRateRange(model.outputRateMin, model.outputRateMax)}
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium tabular-nums">
+                        {formatRateRange(model.cacheWriteRateMin, model.cacheWriteRateMax)}
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-muted-foreground">缓存写入</div>
                     </div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">输出倍率</div>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium tabular-nums">
+                        {formatRateRange(model.outputRateMin, model.outputRateMax)}
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-muted-foreground">输出</div>
+                    </div>
                   </div>
+                  {model.longContextCount > 0 || model.timeBasedCount > 0 ? (
+                    <div className="flex flex-wrap justify-center gap-1">
+                      {model.longContextCount > 0 ? (
+                        <Badge
+                          variant="outline"
+                          className="h-4 px-1.5 text-[10px] font-normal"
+                          title="提示总量超过阈值后整次请求按更高档位计价"
+                        >
+                          长上下文阶梯
+                        </Badge>
+                      ) : null}
+                      {model.timeBasedCount > 0 ? (
+                        <Badge
+                          variant="outline"
+                          className="h-4 px-1.5 text-[10px] font-normal"
+                          title="峰值时段按牌价，其余时间按谷时系数折扣"
+                        >
+                          峰谷计费
+                        </Badge>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
             );

@@ -153,7 +153,9 @@ export function UsageTable({
                   {showUpstreamColumn ? <TableHead>上游</TableHead> : null}
                   <TableHead>输入（未缓存）</TableHead>
                   <TableHead>缓存读取</TableHead>
+                  <TableHead>缓存写入</TableHead>
                   <TableHead>输出</TableHead>
+                  <TableHead>附加计价</TableHead>
                   <TableHead>TPS</TableHead>
                   <TableHead className="text-right">额度</TableHead>
                 </TableRow>
@@ -177,7 +179,20 @@ export function UsageTable({
                       ) : null}
                       <TableCell className="tabular-nums">{formatTokens(log.promptTokens)}</TableCell>
                       <TableCell className="tabular-nums">{formatTokens(log.cachedTokens ?? 0)}</TableCell>
+                      <TableCell className="tabular-nums text-muted-foreground">
+                        {log.cacheWriteTokens ? formatTokens(log.cacheWriteTokens) : "—"}
+                      </TableCell>
                       <TableCell className="tabular-nums">{formatTokens(log.completionTokens)}</TableCell>
+                      <TableCell className="whitespace-nowrap text-[11px] text-muted-foreground">
+                        {log.longContextThreshold
+                          ? `阶梯 >${formatTokens(log.longContextThreshold)}`
+                          : null}
+                        {log.longContextThreshold && log.timeMultiplier && log.timeMultiplier !== 1 ? " · " : null}
+                        {log.timeMultiplier && log.timeMultiplier !== 1 ? `谷时 ×${log.timeMultiplier}` : null}
+                        {!log.longContextThreshold && (log.timeMultiplier === undefined || log.timeMultiplier === 1)
+                          ? "—"
+                          : null}
+                      </TableCell>
                       <TableCell className="tabular-nums text-muted-foreground">
                         {formatTps(log.completionTokens, log.durationMs)}
                       </TableCell>

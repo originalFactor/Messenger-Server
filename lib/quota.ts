@@ -15,11 +15,13 @@
  */
 
 /**
- * 额度估算与计费。额度单位与 token 1:1。命中的缓存读取 token 走
- * cacheReadRate，其余输入 token 走 inputRate：
+ * 额度估算与计费。额度单位与 token 1:1。缓存读取/写入 token 各走自己的
+ * 倍率，其余输入 token 走 inputRate：
  *   cached = clamp(cachedTokens, 0, promptTokens)
- *   cost = max(1, ceil((prompt - cached) × inputRate
+ *   written = clamp(cacheWriteTokens, 0, promptTokens − cached)
+ *   cost = max(1, ceil((prompt − cached − written) × inputRate
  *                       + cached × cacheReadRate
+ *                       + written × cacheWriteRate
  *                       + completion × outputRate))
  * 上游未返回 usage 时按英文文本经验值（约 4 字符/token）估算。
  */
@@ -39,12 +41,15 @@ export function computeCost(
   outputRate: number | null | undefined,
   cachedTokens = 0,
   cacheReadRate: number | null | undefined = 0,
+  cacheWriteTokens = 0,
+  cacheWriteRate: number | null | undefined = 0,
 ): number {
   const ir = safeRateOrZero(inputRate);
   const or = safeRateOrZero(outputRate);
   const cr = safeRateOrZero(cacheReadRate);
-  // 三倍率置零 = 不限制 / 不计费。
-  if (ir <= 0 && or <= 0 && cr <= 0) {
+  const cw = safeRateOrZero(cacheWriteRate);
+  // 四条腿全零 = 不限制 / 不计费。
+  if (ir <= 0 && or <= 0 && cr <= 0 && cw <= 0) {
     return 0;
   }
   const prompt = Number.isFinite(promptTokens) && promptTokens > 0 ? promptTokens : 0;
@@ -52,8 +57,14 @@ export function computeCost(
   // 缓存命中 token 不可能超过提示总量；溢出视为上游统计口径异常，按 0 计。
   const rawCached = Number.isFinite(cachedTokens) && cachedTokens > 0 ? cachedTokens : 0;
   const cached = prompt > 0 ? Math.min(rawCached, prompt) : 0;
-  const billableInput = prompt - cached;
-  return Math.max(1, Math.ceil(billableInput * ir + cached * cr + completion * or));
+  // 缓存写入是提示输入里「没命中读取」的那部分，不能和读取部分重复计费。
+  const rawWritten = Number.isFinite(cacheWriteTokens) && cacheWriteTokens > 0 ? cacheWriteTokens : 0;
+  const written = prompt > 0 ? Math.min(rawWritten, prompt - cached) : 0;
+  const billableInput = prompt - cached - written;
+  return Math.max(
+    1,
+    Math.ceil(billableInput * ir + cached * cr + written * cw + completion * or),
+  );
 }
 
 /**

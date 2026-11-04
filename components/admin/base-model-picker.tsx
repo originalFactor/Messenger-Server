@@ -38,8 +38,18 @@ import {
 interface BaseModelView {
   baseModelId: string | null;
   models: string[];
-  /** 各模型当前生效的输入/缓存/输出倍率（上游报价偏好，其余按 pi-catalog 归一）。 */
-  rates: Record<string, { inputRate: number; cacheReadRate: number; outputRate: number }>;
+  /** 各模型当前生效的四腿倍率（上游报价优先，其余按 pi-catalog 归一）。 */
+  rates: Record<
+    string,
+    {
+      inputRate: number;
+      cacheReadRate: number;
+      cacheWriteRate: number;
+      outputRate: number;
+      longContextThreshold: number | null;
+      timeMultiplier: number;
+    }
+  >;
 }
 
 const NO_BASE_MODEL = "__none__";
@@ -130,7 +140,9 @@ export function BaseModelPicker() {
               return (
                 <SelectItem key={modelId} value={modelId}>
                   {modelId}
-                  {rate ? `（${rate.inputRate} / ${rate.cacheReadRate} / ${rate.outputRate}）` : ""}
+                  {rate
+                    ? `（${rate.inputRate} / ${rate.cacheReadRate} / ${rate.cacheWriteRate} / ${rate.outputRate}${rate.timeMultiplier !== 1 ? `，谷时 ×${rate.timeMultiplier}` : ""}${rate.longContextThreshold ? `，阶梯 >${rate.longContextThreshold}` : ""}）`
+                    : ""}
                 </SelectItem>
               );
             })}

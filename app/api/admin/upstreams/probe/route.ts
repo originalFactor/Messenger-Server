@@ -25,8 +25,9 @@ export const runtime = "nodejs";
  * 直接探测上游：不要求上游已保存，表单里填好 Base URL / API Key 即可
  * 拉取其 /v1/models，供「新增/编辑上游」的模型列表勾选。
  *
- * 上游若在响应里返回了 `input_rate` / `cache_read_rate` / `output_rate`
- * （倍率口径，与本站 `/v1/models` 同构），一并回传；表单保存时会带回，
+ * 上游若在响应里返回了 `input_rate` / `cache_read_rate` / `cache_write_rate`
+ * / `output_rate`（倍率口径，与本站 `/v1/models` 同构）以及 `tiers` /
+ * `time_based`（长上下文阶梯、峰谷），一并回传；表单保存时会带回，
  * 作为该上游的默认倍率（优先于 pi-catalog）。
  */
 export async function POST(request: Request) {

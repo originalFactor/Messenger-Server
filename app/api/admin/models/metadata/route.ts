@@ -22,8 +22,9 @@ export const runtime = "nodejs";
 
 /**
  * pi-catalog 模型倍率（实例内存缓存 24h）：modelId →
- * { cacheReadRate?, inputRate?, outputRate? }。倍率以 deepseek/deepseek-flash
- * 的输出价格 1.0 为基准折算；pi.dev 不可用时返回空映射。
+ * { inputRate?, cacheReadRate?, cacheWriteRate?, outputRate?, tiers?, timeBased? }。
+ * 倍率以 deepseek/deepseek-flash 的输出价格 1.0 为基准折算；pi.dev 不可用时
+ * 返回空映射。长上下文阶梯与峰谷是目录原样配置（阶梯同分母折算）。
  *
  * 上游 `/v1/models` 自报的报价不在这里 —— 它们按上游存在 `upstreams.modelPrices`，
  * 解析时优先于本目录（见 `lib/model-rates.ts`）。
@@ -38,9 +39,46 @@ export async function GET(request: Request) {
 
   const forceRefresh = new URL(request.url).searchParams.get("refresh") === "1";
   const { rates, degraded } = await getCatalogRates(forceRefresh);
-  const metadata: Record<string, { cacheReadRate: number; inputRate: number; outputRate: number }> = {};
+  const metadata: Record<
+    string,
+    {
+      inputRate: number;
+      cacheReadRate: number;
+      cacheWriteRate: number;
+      outputRate: number;
+      tiers?: Array<{
+        inputThreshold: number;
+        inputThresholdInclusive?: boolean;
+        inputRate: number;
+        cacheReadRate: number;
+        cacheWriteRate: number;
+        outputRate: number;
+      }>;
+      timeBased?: { offPeakMultiplier: number; peakWindows: Array<{ weekdays: number[]; startMinute: number; endMinute: number }> };
+    }
+  > = {};
   for (const [modelId, rate] of Object.entries(rates)) {
-    metadata[modelId] = { cacheReadRate: rate.cacheRead, inputRate: rate.input, outputRate: rate.output };
+    metadata[modelId] = {
+      inputRate: rate.input,
+      cacheReadRate: rate.cacheRead,
+      cacheWriteRate: rate.cacheWrite,
+      outputRate: rate.output,
+      ...(rate.tiers
+        ? {
+            tiers: rate.tiers.map((tier) => ({
+              inputThreshold: tier.inputThreshold,
+              ...(tier.inputThresholdInclusive !== undefined
+                ? { inputThresholdInclusive: tier.inputThresholdInclusive }
+                : {}),
+              inputRate: tier.input,
+              cacheReadRate: tier.cacheRead,
+              cacheWriteRate: tier.cacheWrite,
+              outputRate: tier.output,
+            })),
+          }
+        : {}),
+      ...(rate.timeBased ? { timeBased: rate.timeBased } : {}),
+    };
   }
   return jsonOk({ metadata, degraded });
 }

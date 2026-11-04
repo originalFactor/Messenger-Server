@@ -145,12 +145,24 @@ export interface RedemptionDoc {
 export interface UpstreamModelMeta {
   /** 覆盖开关：开启时本条自定义元数据生效，关闭时使用上游报价 → pi-catalog 元数据。 */
   override?: boolean;
-  /** 缓存读取倍率，0 = 不计费；缺省按上游报价 → pi-catalog（无数据按输入价）。 */
+  /** 缓存读取倍率，0 = 不计费；缺省按上游报价 → pi-catalog（无数据按输入价 × 折扣）。 */
   cacheReadRate?: number | null;
+  /** 缓存写入倍率，0 = 不计费；缺省按上游报价 → pi-catalog（无数据按缓存读取）。 */
+  cacheWriteRate?: number | null;
   /** 输入倍率，0 = 不计费。 */
   inputRate?: number | null;
   /** 输出倍率，0 = 不计费。 */
   outputRate?: number | null;
+  /**
+   * 长上下文阶梯（整份自定义）：提示总量超过阈值后整次请求按该档计价。
+   * 缺省则沿用上游报价 → pi-catalog 的阶梯；不与另一侧逐项混拼。
+   */
+  tiers?: PricingTier[] | null;
+  /**
+   * 峰谷配置（整份自定义）：峰值时段按牌价，其余时间乘以谷时系数。
+   * 缺省则沿用上游报价 → pi-catalog 的配置。
+   */
+  timeBased?: PricingSchedule | null;
   /**
    * 模型整体倍率（modelRate）：把上面三种 tokenType 倍率整体再乘一次，
    * 与覆盖开关无关 —— 未覆盖的模型同样可以只放大倍率而不改各 tokenType
@@ -159,18 +171,49 @@ export interface UpstreamModelMeta {
   multiplier?: number | null;
 }
 
+/** 长上下文阶梯：阈值（token）与该档的四条腿倍率。 */
+export interface PricingTier {
+  /** 提示总量阈值；超过（`inputThresholdInclusive` 时为达到）才用本档。 */
+  inputThreshold: number;
+  /** true = 阈值含等号。缺省 false。 */
+  inputThresholdInclusive?: boolean;
+  inputRate?: number | null;
+  cacheReadRate?: number | null;
+  cacheWriteRate?: number | null;
+  outputRate?: number | null;
+}
+
+/** 峰值时段：UTC 星期（周日 = 0），起始分钟含、结束分钟不含。 */
+export interface PricingPeakWindow {
+  weekdays: number[];
+  startMinute: number;
+  endMinute: number;
+}
+
+/** 峰谷计费：处于峰值时段按牌价，其余时间乘以 `offPeakMultiplier`。 */
+export interface PricingSchedule {
+  offPeakMultiplier: number;
+  peakWindows: PricingPeakWindow[];
+}
+
 /**
  * 上游自己 `/v1/models` 返回的报价（服务端维护，管理员不可手改）：
  * 字段与本服务 `/v1/models` 的 `input_rate` / `cache_read_rate` /
- * `output_rate` 同构，已经是倍率口径而不是美元价。未返回或返回 0 的
- * 字段逐项回退 pi-catalog。
+ * `cache_write_rate` / `output_rate` 同构，已经是倍率口径而不是美元价。
+ * 未返回或返回 0 的腿逐项回退 pi-catalog；`tiers` / `timeBased` 若返回
+ * 则整份覆盖目录的同名配置。
  *
  * 探测/拉取模型列表时刷新；模型从 `models` / `disabledModels` 删除时一并移除。
  */
 export interface UpstreamModelPrice {
   inputRate?: number | null;
   cacheReadRate?: number | null;
+  cacheWriteRate?: number | null;
   outputRate?: number | null;
+  /** 长上下文阶梯（上游原样返回，倍率口径）。 */
+  tiers?: PricingTier[] | null;
+  /** 峰谷配置（上游原样返回）。 */
+  timeBased?: PricingSchedule | null;
   /** 报价的拉取时间（毫秒时间戳），仅用于展示。 */
   fetchedAt?: number | null;
 }
@@ -230,17 +273,23 @@ export interface UsageLogDoc {
   userId: string;
   modelId: string;
   upstreamId?: string | null;
-  /** 未命中缓存的输入 token 数（上游 prompt_tokens − cachedTokens）。 */
+  /** 未命中缓存的输入 token 数（上游 prompt_tokens − cachedTokens − cacheWriteTokens）。 */
   promptTokens: number;
   completionTokens: number;
   /** 命中的缓存读取 token 数（0 = 无缓存命中）。 */
   cachedTokens: number;
-  /** 完整用量：未缓存输入 + 缓存读取 + 输出。 */
+  /** 写入缓存的 token 数（Anthropic 显式计费；其余协议通常为 0）。 */
+  cacheWriteTokens?: number;
+  /** 完整用量：未缓存输入 + 缓存读取 + 缓存写入 + 输出。 */
   totalTokens: number;
   /** 实际扣减的额度。 */
   cost: number;
   /** 请求耗时（毫秒）；老数据与缺失时为 null，输出 TPS 不可计算。 */
   durationMs: number | null;
+  /** 命中长上下文阶梯时的阈值（token）；未命中为 null。 */
+  longContextThreshold?: number | null;
+  /** 实际套用的峰谷系数（1 = 峰值牌价）。 */
+  timeMultiplier?: number | null;
   /** 迁移标记：该记录的 promptTokens 已剔除缓存读取部分（老数据迁移后补写）。 */
   inputExcludesCache?: boolean;
   createdAt: number;

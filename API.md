@@ -707,7 +707,8 @@ SMTP_HOST、SMTP_USER、SMTP_PASSWORD 任一未配置时整站不出信：注册
 
 返回 pi-catalog（`https://pi.dev/api/models`）按供应商压平合并后的模型倍率元数据，实例内存缓存 24 小时；pi.dev 不可用时返回空映射。
 
-- 输入/输出/缓存读取倍率以 `deepseek/deepseek-flash` 的输出价格为基准归一化（基准恰为 1.0）；`cost.cacheRead` 缺失时按该模型的输入价折算；长上下文阶梯价取基础档。
+- 输入 / 缓存读取 / 缓存写入 / 输出四条腿都以 `deepseek/deepseek-flash` 的输出价格为基准归一化（基准恰为 1.0）；`cost.cacheRead` 缺失时按该模型的输入价折算，`cost.cacheWrite` 缺失时按 `cacheRead` 折算。
+- 长上下文阶梯（`tiers`）与峰谷（`timeBased`）按目录原样下传，阶梯价格同分母折算；峰谷系数是无量纲比值，原样保留。
 - 上游自己在 `/v1/models` 里返回的报价不在此列（按上游存在 `upstreams.modelPrices`，解析时优先于本目录）。
 - 响应 `200`：`{ "metadata": { "gpt-4o": { "inputRate": 0.25, "cacheReadRate": 0.125, "outputRate": 1.0 } }, "degraded": false }`；`degraded=true` 表示使用了持久化快照或最终 1x 降级。
 - 上下文窗口不在本服务范围内（客户端自行从 models.dev `models.json` 推导）。
@@ -738,25 +739,47 @@ SMTP_HOST、SMTP_USER、SMTP_PASSWORD 任一未配置时整站不出信：注册
   "disabledModels": ["deepseek-chat"],       // 可选：表中保留但停用的模型 ID（不参与服务，仅回显）
   "multiplier": 1.5,                          // 可选：上游整体倍率（providerRate），乘到本上游全部模型的生效倍率上；缺省 = 1，0 = 不计费
   "modelMeta": {                              // 按上游自定义的模型元数据（按模型粒度）
-    "gpt-4o": { "override": true, "inputRate": 0.25, "cacheReadRate": 0.125, "outputRate": 1.0, "multiplier": 2 },
+    "gpt-4o": {                              // override 开启时以下四项生效，缺失腿回退上游报价 → pi-catalog
+      "override": true,
+      "inputRate": 0.25, "cacheReadRate": 0.125, "cacheWriteRate": 0.25, "outputRate": 1.0,
+      "multiplier": 2,
+      "tiers": [                             // 可选：长上下文阶梯（整份自定义；未写的腿沿用基础档）
+        { "inputThreshold": 128000, "inputRate": 0.5, "cacheReadRate": 0.25, "cacheWriteRate": 0.5, "outputRate": 2 }
+      ],
+      "timeBased": {                         // 可选：峰谷配置（整份自定义；UTC，周日 = 0）
+        "offPeakMultiplier": 0.5,
+        "peakWindows": [{ "weekdays": [1, 2, 3, 4, 5], "startMinute": 60, "endMinute": 540 }]
+      }
+    },
     "deepseek-chat": { "override": false }
   },
   "modelPrices": {                            // 服务端维护：上游 /v1/models 自报报价（倍率口径），探测时刷新
-    "gpt-4o": { "inputRate": 0.35, "cacheReadRate": 0.09, "outputRate": 1.1, "fetchedAt": 1700000000000 }
+    "gpt-4o": {
+      "inputRate": 0.35, "cacheReadRate": 0.09, "cacheWriteRate": 0.35, "outputRate": 1.1,
+      "tiers": [{ "inputThreshold": 128000, "inputRate": 0.7, "outputRate": 2.2 }],
+      "timeBased": { "offPeakMultiplier": 0.5, "peakWindows": [{ "weekdays": [1,2,3,4,5], "startMinute": 60, "endMinute": 540 }] },
+      "fetchedAt": 1700000000000
+    }
   },                                          // 省略 = 保留库中已有值，null = 清空
   "priority": 0,                              // 越小越优先；同模型多上游自动故障转移
   "enabled": true
 }
 ```
 
-实际倍率 = `tokenTypeRate × modelRate × providerRate`：`tokenTypeRate` 即该模型生效的输入/缓存读取/输出倍率（override 开启用自定义值、缺失回退该上游的 `/v1/models` 自报报价 → pi-catalog，关闭直接用报价 → 目录，无数据默认 1x，显式 0 = 不计费）；`modelRate` 为 `modelMeta[modelId].multiplier`（模型整体倍率，与 override 开关无关 —— 未覆盖的模型也可只放大倍率）；`providerRate` 为上游 `multiplier`。三者均缺省 = 1，`modelRate`/`providerRate` 显式 0 = 对应层级不计费。
+实际倍率 = `tokenTypeCard ÷ baseCard × modelRate × providerRate`，按四条腿（输入 / 缓存读取 / 缓存写入 / 输出）分别计算：`tokenTypeCard` 即该模型生效的四腿倍率（override 开启用自定义值、缺失腿回退该上游的 `/v1/models` 自报报价 → pi-catalog，关闭直接用报价 → 目录，无数据默认 1x，显式 0 = 不计费）；`modelRate` 为 `modelMeta[modelId].multiplier`（模型整体倍率，与 override 开关无关 —— 未覆盖的模型也可只放大倍率）；`providerRate` 为上游 `multiplier`。两者均缺省 = 1，显式 0 = 对应层级不计费。
+
+长上下文阶梯（`tiers`）与峰谷（`timeBased`）是结构配置，整份取用（自定义 → 上游 → 目录），不与另一来源逐项混拼：
+
+- 阶梯：提示总量**严格超过** `inputThreshold`（`inputThresholdInclusive: true` 时为达到）后，整次请求按该档四条腿计价；多档时取满足条件的最高阈值档。
+- 峰谷：`peakWindows` 是 UTC 时段（`weekdays` 0–6，周日 = 0；`startMinute` 含、`endMinute` 不含，各 0–1440）。落在任一峰值时段按牌价，其余时间四条腿统一乘以 `offPeakMultiplier`。`peakWindows` 为空 = 不启用周期性谷时价。
+- 计费按**本次请求**的真实用量套用：提示总量取上游报告的 `prompt_tokens`（缺省用估算），时刻取请求开始时间，因此跨过峰值边界的长请求按开始时刻计价。
 
 `POST /api/admin/upstreams/probe`：直探模式 —— 请求体 `{ "baseUrl": "https://api.example.com/v1", "apiKey": "…", "apiFormat": "auto" }`，不要求上游已保存，供「新增/编辑上游」表单直接拉取模型列表；连接失败返回 `502`。
 
-两条探测路由（直探与 `{id}/probe`）共享 `lib/upstream-probe.ts`，响应为 `{ "models": ["…"], "prices": { "<modelId>": { "inputRate": 0.35, "cacheReadRate": 0.09, "outputRate": 1.1, "fetchedAt": 1700000000000 } } }`：
+两条探测路由（直探与 `{id}/probe`）共享 `lib/upstream-probe.ts`，响应为 `{ "models": ["…"], "prices": { "<modelId>": { "inputRate": 0.35, "cacheReadRate": 0.09, "cacheWriteRate": 0.35, "outputRate": 1.1, "tiers": […], "timeBased": {…}, "fetchedAt": 1700000000000 } } }`：
 
-- `prices` 来自上游 `/v1/models` 条目里的 `input_rate` / `cache_read_rate` / `output_rate`，与本服务 `/v1/models` 输出同构（已是倍率口径，不是美元价）。上游没返回这些扩展字段时 `prices` 为空对象。
-- 字段缺省或为 `0` 都视为「上游没有报价」，解析时逐字段回退 pi-catalog。
+- `prices` 来自上游 `/v1/models` 条目里的 `input_rate` / `cache_read_rate` / `cache_write_rate` / `output_rate`（以及可选的 `tiers` / `time_based`），与本服务 `/v1/models` 输出同构（已是倍率口径，不是美元价）。上游没返回这些扩展字段时 `prices` 为空对象。
+- 价格腿缺省或为 `0` 都视为「上游没有报价」，解析时逐腿回退 pi-catalog。`tiers` / `time_based` 只要返回就整份采用（不与目录逐项混拼）。
 - `{id}/probe` 会把探测到的报价合并写回该上游的 `modelPrices`（只保留该上游仍引用 —— `models` / `disabledModels` —— 的模型）；直探不动库，由表单保存时随 `modelPrices` 回来。
 
 模型级生命周期：`models` 是可服务模型的唯一事实来源（`listUpstreamsForModel`、模型广场、`/v1/models`、`/v1` 故障转移都只读它）。「停用」= 把模型 ID 写入 `disabledModels` 同时从 `models` 移除 —— 模型不参与任何服务，但保留在编辑表格、`modelMeta` 与 `modelPrices` 中，重新勾选即可恢复；「删除」= 从 `models`、`disabledModels`、`modelMeta`、`modelPrices` 中一并移除，不可恢复。`disabledModels` 与 `models` 不相交（models 优先），未传视为空。
@@ -769,13 +792,13 @@ SMTP_HOST、SMTP_USER、SMTP_PASSWORD 任一未配置时整站不出信：注册
 
 - 上游 `/v1/models` 自报的报价按上游存放（`upstreams.modelPrices`），解析时优先于本目录；只有上游没返回（或返回 0）的字段才回退到这里。
 
-- 响应 `200`：`{ "metadata": { "gpt-4o": { "inputRate": 0.25, "cacheReadRate": 0.125, "outputRate": 1.0 }, "…": {} }, "degraded": false }`。`degraded=true` 表示使用了持久化快照或最终 1x 降级。
+- 响应 `200`：`{ "metadata": { "gpt-4o": { "inputRate": 0.25, "cacheReadRate": 0.125, "cacheWriteRate": 0.25, "outputRate": 1.0, "tiers": [{ "inputThreshold": 128000, "inputRate": 0.5, "cacheReadRate": 0.25, "cacheWriteRate": 0.5, "outputRate": 2 }], "timeBased": { "offPeakMultiplier": 0.5, "peakWindows": [{ "weekdays": [1,2,3,4,5], "startMinute": 60, "endMinute": 540 }] } }, "…": {} }, "degraded": false }`。`degraded=true` 表示使用了持久化快照或最终 1x 降级。
 
 ### GET|PUT /api/admin/models/base
 
 1x 基准模型设置（管理员）。基准模型的生效倍率即 1x，其余模型的已存倍率（含「覆盖」自定义值）按当前倍率整体重算为相对新基准的比例 —— 存量数据本身不改写，基准是解析期分母，因此随时可逆、无浮点漂移、模型间相对价格恒定。
 
-- `GET`：响应 `200` 为 `{ "baseModelId": "deepseek-chat" | null, "models": ["…"], "rates": { "<modelId>": { "inputRate": 0.25, "cacheReadRate": 0.125, "outputRate": 1.0 } } }` —— `models` 为启用上游可服务模型的并集，`rates` 为各模型当前生效的 tokenType 倍率（不含 model/provider 整体倍率）。
+- `GET`：响应 `200` 为 `{ "baseModelId": "deepseek-chat" | null, "models": ["…"], "rates": { "<modelId>": { "inputRate": 0.25, "cacheReadRate": 0.125, "cacheWriteRate": 0.25, "outputRate": 1.0, "longContextThreshold": 128000 | null, "timeMultiplier": 1 } } }` —— `models` 为启用上游可服务模型的并集，`rates` 为各模型当前生效的 tokenType 四腿倍率（不含 model/provider 整体倍率），并附带该模型是否带长上下文阶梯（`longContextThreshold`）与谷时系数（`timeMultiplier`）。
 - `PUT`：请求体 `{ "baseModelId": "<modelId>" }`（`null` = 清除基准，回到 pi-catalog 归一化口径），模型 ID 上限 200 字符；响应 `200` 为 `{ "baseModelId": "<modelId>" | null }`。
 - 错误：`400` 载荷无效、`403` 非管理员。
 - 未设基准时全部倍率按 pi-catalog 归一化口径（`deepseek/deepseek-flash` 输出价格 = 1.0），上游自报报价优先。解析实现为 `lib/model-rates.ts` 的 `resolveModelRates`，`/v1` 计费、模型广场、`/v1/models` 与控制台共用。
@@ -833,7 +856,7 @@ SMTP_HOST、SMTP_USER、SMTP_PASSWORD 任一未配置时整站不出信：注册
 
 转换覆盖：文本、图片（`data:` URI 与 URL）、函数调用/结果、推理文本、`usage`、`finish_reason`。按设计丢弃：音频/视频块、引用标注、加密思维链签名、平台专有工具（web search / maps / file search）。
 
-计费与用量记账对所有协议一致：可用模型 = 所有启用上游可服务模型的并集；额度在响应完成后按 `ceil((promptTokens − cachedTokens) × 输入倍率 + cachedTokens × 缓存读取倍率 + completionTokens × 输出倍率)` 扣减（失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`，此时无缓存命中）。`promptTokens` 为上游报告的提示总量（含缓存命中部分），`cachedTokens` 夹到 `[0, promptTokens]`。缓存读取倍率按配置原样生效，不做「不得高于输入价」的夹取。元数据解析（按模型）：该模型的 `modelMeta.override` 开启时用其自定义值（缺失字段回退该上游 `/v1/models` 自报报价 → pi-catalog），关闭时直接用上游报价 → pi-catalog；倍率无数据时默认 1x（显式配置 0 = 不计费，三倍率为 0 时本条调用免费）。上游未返回、或对某字段返回 0，都视为「没有报价」，逐字段回退目录。最终实际倍率 = `tokenTypeRate × modelRate × providerRate`：`modelRate` = `modelMeta[modelId].multiplier`（模型整体倍率），`providerRate` = `upstream.multiplier`（上游整体倍率），两者缺省 = 1、显式 0 = 不计费；设了 1x 基准模型（管理后台「1x 基准模型」）时再除以基准模型的 tokenType 倍率，使基准模型自身恒为 1x。缓存读取倍率默认来自上游 `/v1/models` 的 `cache_read_rate`，缺失时回退 pi-catalog 的 `cost.cacheRead`（缺失按输入价折算），客户端自行推导上下文窗口，服务端不再下发。
+计费与用量记账对所有协议一致：可用模型 = 所有启用上游可服务模型的并集；额度在响应完成后按 `ceil((promptTokens − cachedTokens − cacheWriteTokens) × 输入倍率 + cachedTokens × 缓存读取倍率 + cacheWriteTokens × 缓存写入倍率 + completionTokens × 输出倍率)` 扣减（失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`，此时无缓存读写）。`promptTokens` 为上游报告的提示总量（含缓存读写的部分），`cachedTokens` 夹到 `[0, promptTokens]`，`cacheWriteTokens` 夹到 `[0, promptTokens − cachedTokens]`。缓存读取倍率按配置原样生效，不做「不得高于输入价」的夹取。元数据解析（按模型）：该模型的 `modelMeta.override` 开启时用其自定义值（缺失字段回退该上游 `/v1/models` 自报报价 → pi-catalog），关闭时直接用上游报价 → pi-catalog；倍率无数据时默认 1x（显式配置 0 = 不计费，三倍率为 0 时本条调用免费）。上游未返回、或对某字段返回 0，都视为「没有报价」，逐字段回退目录。最终实际倍率 = `tokenTypeRate × modelRate × providerRate`：`modelRate` = `modelMeta[modelId].multiplier`（模型整体倍率），`providerRate` = `upstream.multiplier`（上游整体倍率），两者缺省 = 1、显式 0 = 不计费；设了 1x 基准模型（管理后台「1x 基准模型」）时逐腿除以基准模型的对应腿倍率，使基准模型自身每条腿恒为 1x（基准腿为 0 = 免费时不做除法，保持 0）。缓存读取倍率默认来自上游 `/v1/models` 的 `cache_read_rate`，缺失时回退 pi-catalog 的 `cost.cacheRead`（缺失按输入价折算）；缓存写入同理（`cache_write_rate` → `cost.cacheWrite`，缺失按缓存读取倍率折算）。缓存写入 token 只对显式报告它的上游（如 Anthropic 的 `cache_creation_input_tokens`）计入。客户端自行推导上下文窗口，服务端不再下发。
 
 `usage_logs.promptTokens` 只记未命中缓存的输入 token（上游 `prompt_tokens` − `cachedTokens`），缓存读取 token 单独记在 `cachedTokens`；`totalTokens` 仍为完整用量（未缓存输入 + 缓存读取 + 输出），用于汇总与趋势图。
 
@@ -845,7 +868,7 @@ SMTP_HOST、SMTP_USER、SMTP_PASSWORD 任一未配置时整站不出信：注册
 { "object": "list", "data": [ { "id": "gpt-4o", "object": "model", "created": 1700000000, "owned_by": "messenger-cloud", "input_rate": 0.25, "cache_read_rate": 0.125, "output_rate": 1.0 } ] }
 ```
 
-`input_rate` / `cache_read_rate` / `output_rate` 为多上游最优惠价（0 = 免费）；上下文窗口不再下发，客户端自行推导。
+`input_rate` / `cache_read_rate` / `cache_write_rate` / `output_rate` 为多上游最优惠价（0 = 免费）；带来阶梯/峰谷的模型额外下发 `tiers`（`input_tokens_above` / `input_rate` / …）与 `time_based`（`off_peak_multiplier` / `peak_windows`），客户端可据此预估实际扣费。上下文窗口不再下发，客户端自行推导。
 
 ### POST /v1/chat/completions
 

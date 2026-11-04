@@ -17,7 +17,7 @@
 import { requireAdminUser } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getCatalogRates } from "@/lib/pi-catalog";
-import { currentStoredRates } from "@/lib/model-rates";
+import { currentStoredCard } from "@/lib/model-rates";
 import { createLogger } from "@/lib/runtime-logs";
 import { getModelRateSettings, listUpstreams, setBaseModel } from "@/lib/storage";
 import { baseModelInputSchema } from "@/lib/validation";
@@ -48,18 +48,33 @@ export async function GET() {
   const modelIds = [...new Set(enabled.flatMap((upstream) => upstream.models))].sort((a, b) =>
     a.localeCompare(b),
   );
-  const rates: Record<string, { inputRate: number; cacheReadRate: number; outputRate: number }> = {};
+  const rates: Record<
+    string,
+    {
+      inputRate: number;
+      cacheReadRate: number;
+      cacheWriteRate: number;
+      outputRate: number;
+      longContextThreshold: number | null;
+      timeMultiplier: number;
+    }
+  > = {};
   for (const modelId of modelIds) {
     // 报价可能按上游不同（上游 `/v1/models` 自报时），展示取最优惠的一条；
     // 实际计费时基准分母按该次请求命中的上游各自计算，基准模型自身恒为 1x。
     const candidates = enabled.filter((candidate) => candidate.models.includes(modelId));
     const resolved = candidates.map((upstream) =>
-      currentStoredRates(modelId, undefined, defaults.rates, upstream.modelPrices?.[modelId]),
+      currentStoredCard(modelId, undefined, defaults.rates, upstream.modelPrices?.[modelId]),
     );
     rates[modelId] = {
-      inputRate: Math.min(...resolved.map((rate) => rate.inputRate)),
-      cacheReadRate: Math.min(...resolved.map((rate) => rate.cacheReadRate)),
-      outputRate: Math.min(...resolved.map((rate) => rate.outputRate)),
+      inputRate: Math.min(...resolved.map((rate) => rate.input)),
+      cacheReadRate: Math.min(...resolved.map((rate) => rate.cacheRead)),
+      cacheWriteRate: Math.min(...resolved.map((rate) => rate.cacheWrite)),
+      outputRate: Math.min(...resolved.map((rate) => rate.output)),
+      // 阶梯阈值与峰谷系数不参与「取最优惠」，按第一条上游展示即可 ——
+      // 它们是结构配置，不是价格。
+      longContextThreshold: resolved[0]?.tiers?.[0]?.inputThreshold ?? null,
+      timeMultiplier: resolved[0]?.timeBased ? resolved[0].timeBased.offPeakMultiplier : 1,
     };
   }
   return jsonOk({

@@ -13,7 +13,7 @@
 - User center (`/console/account`): nickname, avatar upload (the same blob the Messenger app reads), and e-mail rebinding
 - MongoDB-backed versioned entity synchronization with per-user monotonic watermarks and soft-delete tombstones
 - Card-key (卡密) plan system: admin-defined plans, batch card issuance, user redemption with quota and validity extension
-- Per-model rate billing consumed by the built-in AI API: each upstream's own `/v1/models` rates take precedence, with a generated pi-catalog fallback, plus per-model and per-provider overall multipliers and an admin-selectable 1x base model
+- Per-model rate billing consumed by the built-in AI API: four token legs (input / cache read / cache write / output), each upstream's own `/v1/models` rates take precedence with a generated pi-catalog fallback, plus long-context tiers, UTC peak/off-peak schedules, per-model and per-provider overall multipliers, and an admin-selectable 1x base model
 - OpenAI-compatible AI API (`/v1/models`, `/v1/chat/completions`) relaying to admin-managed upstream model services with priority failover
 - Private S3-compatible object storage for avatars
 - Authenticated public Agent Market with publish, update, import, and unpublish workflows
@@ -68,7 +68,7 @@ All documents use application-generated string IDs as MongoDB `_id` values. Time
 - `ai_models`: the model catalog consumed by the AI API (`_id` = model ID, `rate` multiplier, `enabled`).
 - `upstreams`: admin-managed upstream OpenAI-compatible services (`baseUrl` including `/v1`, `apiKey`, served `models`, `modelPrices` — the rates the upstream itself reports from `/v1/models`, refreshed by probing — `priority`, `enabled`).
 - `model_rate_settings`: single-document `baseModelId` — the 1x base model; a read-time divisor, so all effective rates rescale when it changes without rewriting stored rates.
-- `usage_logs`: one document per AI API completion (tokens and quota `cost`, upstream, request duration).
+- `usage_logs`: one document per AI API completion (uncached/cached/cache-write/output tokens, applied long-context tier and peak/off-peak factor, quota `cost`, upstream, request duration).
 - `system_bootstrap`: the `admin_bootstrap` marker that makes the first-admin grant race-safe.
 
 Messages are stored inside their owning conversation. Models are stored inside their owning provider. A delete sets `deleted: true`; tombstones remain available to delta sync clients until every live session has synced past them, at which point `purgeSettledTombstones` (`lib/sessions.ts`) removes them — the account's oldest session's `syncCursor` is the safe lower bound, fed by `GET /api/sync?ack=N`.
