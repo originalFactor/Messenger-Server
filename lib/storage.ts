@@ -2210,7 +2210,7 @@ export async function listEnabledUpstreams(): Promise<UpstreamDoc[]> {
   const db = await getDb();
   return db.collection<UpstreamDoc>("upstreams")
     .find({ enabled: true })
-    .sort({ priority: 1, _id: 1 })
+    .sort({ priority: 1, createdAt: 1, _id: 1 })
     .toArray();
 }
 

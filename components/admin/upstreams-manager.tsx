@@ -67,6 +67,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { formatPeakWindows, parsePeakWindows } from "@/lib/pricing";
 import { catalogModelDefault, rankCatalogModels } from "@/lib/model-rates";
 import type { UpstreamDoc, UpstreamModelMeta, UpstreamModelPrice } from "@/lib/types";
+import type { CatalogMetadataMap } from "@/lib/pi-catalog";
+import { resolveModelCapabilities } from "@/lib/model-capabilities";
 import { BaseModelPicker } from "@/components/admin/base-model-picker";
 
 type UpstreamApiFormatValue = "auto" | "chat" | "responses" | "messages" | "interactions";
@@ -104,8 +106,21 @@ const emptyUpstreamForm: UpstreamFormState = {
 type CatalogMeta = Record<string, UpstreamModelMeta>;
 /** 上游 `/v1/models` 自报的报价（倍率口径），探测时刷新、保存时原样带回。 */
 type PriceMap = Record<string, UpstreamModelPrice>;
+const CAPABILITY_FIELDS = [
+  { key: "displayName", label: "显示名", kind: "text" },
+  { key: "inputModalities", label: "输入模态（逗号分隔）", kind: "list" },
+  { key: "reasoning", label: "是否支持思考", kind: "boolean" },
+  { key: "reasoningEfforts", label: "Reasoning efforts（逗号分隔）", kind: "list" },
+  { key: "contextWindow", label: "上下文窗口", kind: "number" },
+  { key: "maxOutputTokens", label: "最大输出 tokens", kind: "number" },
+  { key: "supportsTemperature", label: "支持 temperature", kind: "boolean" },
+  { key: "supportsTopP", label: "支持 top_p", kind: "boolean" },
+  { key: "supportsPenalties", label: "支持 penalties", kind: "boolean" },
+] as const;
+type CapabilityKey = (typeof CAPABILITY_FIELDS)[number]["key"];
+
 /** 草稿只记录用户动过的字段；未触碰字段缺省，由生效值解析兜底。 */
-interface MetaDraft {
+interface MetaDraft extends Partial<Record<CapabilityKey, string>> {
   /** 空串 = 恢复自动匹配，undefined = 未修改。 */
   catalogModelId?: string;
   inputRate?: string;
@@ -346,19 +361,20 @@ function metaScheduleToDraft(schedule: UpstreamModelMeta["timeBased"] | undefine
 }
 
 /**
- * 单模型编辑面板：覆盖开关、四腿倍率、模型整体倍率，以及长上下文阶梯
+ * 单模型编辑面板：模型能力、四腿倍率、模型整体倍率，以及长上下文阶梯
  * （整份覆盖）与峰谷配置（谷时系数 + 时段）。
  *
  * 所有值都以字符串保存草稿，由上级在保存时统一校验；空阶梯表 = 不启用
  * 自定义阶梯（沿用上游报价 / pi-catalog），时段清空 = 不启用周期性谷时价，
- * 覆盖关闭时倍率输入框禁用并回显基础倍率。
+ * 倍率留空时继承基础值，显式 0 表示免费。
  */
 function ModelEditor({
   modelId,
   catalogModelId,
   catalog,
+  catalogCapabilities,
+  capabilities,
   open,
-  override,
   rates,
   multiplier,
   tiers,
@@ -367,14 +383,14 @@ function ModelEditor({
   inheritedSchedule,
   inheritedRates,
   onChange,
-  onOverrideChange,
   onClose,
 }: {
   modelId: string;
   catalogModelId: string;
   catalog: CatalogMeta;
+  catalogCapabilities: CatalogMetadataMap;
+  capabilities: Record<CapabilityKey, string>;
   open: boolean;
-  override: boolean;
   rates: { inputRate: string; cacheReadRate: string; cacheWriteRate: string; outputRate: string };
   multiplier: string;
   tiers: TierDraft[];
@@ -384,21 +400,21 @@ function ModelEditor({
   /** 未覆盖时表格里展示的基础倍率（只读提示）。 */
   inheritedRates: { inputRate: number; cacheReadRate: number; cacheWriteRate: number; outputRate: number };
   onChange: (patch: Partial<MetaDraft>) => void;
-  onOverrideChange: (override: boolean) => void;
   onClose: () => void;
 }) {
   const [choosingCatalog, setChoosingCatalog] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogLimit, setCatalogLimit] = useState(50);
   const catalogResults = useMemo(
-    () => choosingCatalog ? rankCatalogModels(modelId, Object.keys(catalog), catalogSearch) : [],
-    [choosingCatalog, modelId, catalog, catalogSearch],
+    () => choosingCatalog ? rankCatalogModels(modelId, Object.keys({ ...catalog, ...catalogCapabilities }), catalogSearch) : [],
+    [choosingCatalog, modelId, catalog, catalogCapabilities, catalogSearch],
   );
   const setTier = (index: number, patch: Partial<TierDraft>) =>
     onChange({ tiers: tiers.map((tier, position) => (position === index ? { ...tier, ...patch } : tier)) });
   const inheritedTierText = (inheritedTiers ?? [])
     .map((tier) => `>${tier.inputThreshold} tokens`)
     .join("、");
+  const inheritedCapabilities = resolveModelCapabilities(modelId, catalogCapabilities, { catalogModelId });
   const setRate = (field: keyof typeof rates, value: string) => onChange({ [field]: value });
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
@@ -406,8 +422,7 @@ function ModelEditor({
         <DialogHeader className="pr-8">
           <DialogTitle className="font-mono text-base">{modelId}</DialogTitle>
           <DialogDescription>
-            四腿倍率（输入 / 缓存读取 / 缓存写入 / 输出）留空 = 沿用基础倍率；覆盖关闭时直接使用上游
-            `/v1/models` 报价或 pi-catalog，开启后以下自定义值生效。
+            倍率逐项留空即沿用上游 `/v1/models` 报价或 catalog，0 表示免费。模型能力留空时继承 catalog。
           </DialogDescription>
         </DialogHeader>
 
@@ -492,7 +507,7 @@ function ModelEditor({
                 </Command>
               </PopoverContent>
             </Popover>
-            {catalogModelId && !Object.hasOwn(catalog, catalogModelId) ? (
+            {catalogModelId && !Object.hasOwn(catalog, catalogModelId) && !Object.hasOwn(catalogCapabilities, catalogModelId) ? (
               <p className="text-xs text-destructive">当前目录中未找到此目标，请更新元数据或重新选择。</p>
             ) : null}
             <p className="text-[10px] text-muted-foreground">
@@ -500,23 +515,25 @@ function ModelEditor({
             </p>
           </div>
 
-          <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
-            <div className="min-w-0">
-              <Label htmlFor={`model-override-${modelId}`} className="text-xs">
-                覆盖自定义倍率
-              </Label>
-              <p className="text-[10px] text-muted-foreground">
-                {override
-                  ? "按下方输入值计价（未填的腿沿用基础倍率）。"
-                  : `当前按基础倍率计价：${inheritedRates.inputRate} / ${inheritedRates.cacheReadRate} / ${inheritedRates.cacheWriteRate} / ${inheritedRates.outputRate}`}
-              </p>
+          <div className="grid gap-3 rounded-lg border p-3">
+            <div><Label>模型元数据</Label><p className="text-xs text-muted-foreground">留空或选择“继承”时使用 catalog；temperature / top_p / penalties 缺省开启。</p></div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {CAPABILITY_FIELDS.map((field) => {
+                const inherited = inheritedCapabilities[field.key];
+                const hint = Array.isArray(inherited) ? inherited.join(", ") : inherited == null ? "未提供" : String(inherited);
+                return (
+                  <div key={field.key} className="grid gap-1">
+                    <Label htmlFor={`model-cap-${field.key}`}>{field.label}</Label>
+                    {field.kind === "boolean" ? (
+                      <Select value={capabilities[field.key] || "inherit"} onValueChange={(value) => onChange({ [field.key]: value === "inherit" ? "" : value })}>
+                        <SelectTrigger id={`model-cap-${field.key}`} className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value="inherit">继承（{inherited === true ? "开启" : inherited === false ? "关闭" : "未知"}）</SelectItem><SelectItem value="true">开启</SelectItem><SelectItem value="false">关闭</SelectItem></SelectContent>
+                      </Select>
+                    ) : <Input id={`model-cap-${field.key}`} type={field.kind === "number" ? "number" : "text"} min={field.kind === "number" ? 1 : undefined} step={field.kind === "number" ? 1 : undefined} value={capabilities[field.key]} placeholder={hint} onChange={(event) => onChange({ [field.key]: event.target.value })} />}
+                  </div>
+                );
+              })}
             </div>
-            <Switch
-              id={`model-override-${modelId}`}
-              checked={override}
-              onCheckedChange={onOverrideChange}
-              aria-label={`覆盖 ${modelId}`}
-            />
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -535,7 +552,6 @@ function ModelEditor({
                 <Input
                   id={`model-${field}-${modelId}`}
                   inputMode="decimal"
-                  disabled={!override}
                   className="h-8 font-mono text-xs tabular-nums"
                   placeholder={String(inheritedRates[field])}
                   value={rates[field]}
@@ -729,7 +745,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   const [modelPrices, setModelPrices] = useState<PriceMap>({});
   const [editingModelMeta, setEditingModelMeta] = useState<Record<string, UpstreamModelMeta>>({});
   const [metaDrafts, setMetaDrafts] = useState<Record<string, MetaDraft>>({});
-  const [overrideDrafts, setOverrideDrafts] = useState<Record<string, boolean>>({});
+  const [catalogCapabilities, setCatalogCapabilities] = useState<CatalogMetadataMap>({});
   const [listTestingId, setListTestingId] = useState<string | null>(null);
   const [listTestResults, setListTestResults] = useState<Record<string, { ok: boolean; text: string }>>({});
   const [testingModel, setTestingModel] = useState<string | null>(null);
@@ -751,15 +767,17 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     void (async () => {
       try {
         const response = await fetch("/api/admin/models/metadata");
-        if (!response.ok) return;
+        if (!response.ok) throw new Error("模型目录获取失败");
         const payload = (await response.json()) as {
           metadata?: Record<string, UpstreamModelMeta>;
+          models?: CatalogMetadataMap;
         };
         if (!cancelled && payload.metadata) {
           setCatalogMeta(payload.metadata);
+          setCatalogCapabilities(payload.models ?? {});
         }
       } catch {
-        // 元数据仅用于展示/默认值，拉取失败静默降级（倍率按 1x 展示）。
+        if (!cancelled) toast.error("模型目录获取失败，请点击更新元数据重试。");
       }
     })();
     return () => {
@@ -779,7 +797,6 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setManualModel("");
     setEditingModelMeta({});
     setMetaDrafts({});
-    setOverrideDrafts({});
     setModelPrices({});
     setTestResults({});
     setEditingModelId(null);
@@ -808,7 +825,6 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setManualModel("");
     setEditingModelMeta(upstream.modelMeta ?? {});
     setMetaDrafts({});
-    setOverrideDrafts({});
     setModelPrices(upstream.modelPrices ?? {});
     setTestResults({});
     setEditingModelId(null);
@@ -847,7 +863,6 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     setCheckedModels(keep);
     setModelPrices((values) => omitModels(values, removed));
     setEditingModelMeta((values) => omitModels(values, removed));
-    setOverrideDrafts((values) => omitModels(values, removed));
     setMetaDrafts((values) => omitModels(values, removed));
     setTestResults((values) => omitModels(values, removed));
     setEditingModelId((current) => current && removed.has(current) ? null : current);
@@ -942,7 +957,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   }
 
   /** 从 pi-catalog 更新元数据：强制刷新服务端 24h 缓存并更新本页显示，
-   *  不改变任何模型的覆盖开关与上游自报报价。 */
+   *  不改变任何模型的自定义配置与上游自报报价。 */
   async function updateMetaFromCatalog() {
     setFormError(null);
     try {
@@ -953,13 +968,15 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       }
       const payload = (await response.json()) as {
         metadata?: Record<string, UpstreamModelMeta>;
+        models?: CatalogMetadataMap;
       };
       const metadata = payload.metadata ?? {};
       if (Object.keys(metadata).length === 0) {
-        toast.error("pi-catalog 无可用元数据（服务器可能无法访问 pi.dev）");
+        toast.error("pi-catalog 无可用元数据（服务器可能无法访问 jsDelivr）");
         return;
       }
-      setCatalogMeta((meta) => ({ ...meta, ...metadata }));
+      setCatalogMeta(metadata);
+      setCatalogCapabilities(payload.models ?? {});
       toast.success(`已从 pi-catalog 更新 ${Object.keys(metadata).length} 个模型的元数据`);
     } catch {
       setFormError("网络错误，请稍后重试。");
@@ -976,8 +993,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
    */
   /**
    * 单模型编辑面板的倍率草稿：只回显「已存自定义 / 本次草稿」的值；留空表示
-   * 沿用基础倍率（输入框占位符显示基础值）。覆盖关闭时不回显任何值 ——
-   * 那时这些输入框本来就被禁用。
+   * 沿用基础倍率（输入框占位符显示基础值）。旧 override=false 的休眠价格不回显。
    */
   function rateDraftOf(modelId: string): {
     inputRate: string;
@@ -986,7 +1002,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     outputRate: string;
   } {
     const draft = metaDrafts[modelId];
-    const stored = editingModelMeta[modelId];
+    const stored = editingModelMeta[modelId]?.override === false ? undefined : editingModelMeta[modelId];
     const pick = (draftValue: string | undefined, storedValue: number | null | undefined): string =>
       draftValue ?? (storedValue !== undefined && storedValue !== null ? String(storedValue) : "");
     return {
@@ -1008,25 +1024,12 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     return { tiers, timeBased: schedule };
   }
 
-  /** 按模型覆盖开关：行草稿 > 已存自定义 > 默认关闭（用上游报价 → pi-catalog）。 */
-  function rowOverride(modelId: string): boolean {
-    return overrideDrafts[modelId] ?? editingModelMeta[modelId]?.override ?? false;
-  }
-
-  /** 打开覆盖时重置倍率草稿，保留独立的目录目标选择。 */
-  function setRowOverride(modelId: string, override: boolean) {
-    setOverrideDrafts((drafts) => ({ ...drafts, [modelId]: override }));
-    if (override) {
-      setMetaDrafts((drafts) => {
-        if (drafts[modelId] === undefined) {
-          return drafts;
-        }
-        const next = { ...drafts };
-        const { catalogModelId, multiplier, tiers, timeBased } = drafts[modelId];
-        next[modelId] = { catalogModelId, multiplier, tiers, timeBased };
-        return next;
-      });
-    }
+  function capabilityDraftOf(modelId: string): Record<CapabilityKey, string> {
+    const stored = editingModelMeta[modelId];
+    return Object.fromEntries(CAPABILITY_FIELDS.map(({ key }) => {
+      const value = stored?.[key];
+      return [key, metaDrafts[modelId]?.[key] ?? (Array.isArray(value) ? value.join(", ") : value == null ? "" : String(value))];
+    })) as Record<CapabilityKey, string>;
   }
 
   /** 模型整体倍率（modelRate）：行草稿 > 已存自定义 > 1（不缩放）。 */
@@ -1080,8 +1083,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     const inputRate = priceInput ?? catalogInput ?? 1;
     return {
       inputRate,
-      cacheReadRate: priceRead ?? catalogRead ?? round4(inputRate * catalogReadDiscount),
-      cacheWriteRate: priceWrite ?? catalogWrite ?? round4(inputRate * catalogWriteDiscount),
+      cacheReadRate: priceRead ?? round4(inputRate * cacheReadDiscount),
+      cacheWriteRate: priceWrite ?? round4(inputRate * cacheWriteDiscount),
       outputRate: returned(price?.outputRate) ?? returned(catalog?.outputRate) ?? 1,
       cacheReadDiscount,
       cacheWriteDiscount,
@@ -1103,8 +1106,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
         || price.timeBased !== undefined);
   }
 
-  /** 生效元数据（按模型）：覆盖开启时 草稿 > 自定义 > 上游报价 > pi-catalog > 0
-   *  （0 = 不计费）；关闭时直接用「上游报价 > pi-catalog」，缺失按 1x 展示。
+  /** 生效元数据：草稿/自定义逐腿覆盖，上游报价 > catalog 为缺省来源。
+   *  留空继承，显式 0 = 免费，全部缺失时按 1x。
    *  返回值为 tokenType 四腿（未含 modelRate / providerRate）。 */
   function resolvedMeta(modelId: string): {
     inputRate: number;
@@ -1115,19 +1118,17 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     timeBased?: UpstreamModelMeta["timeBased"];
   } {
     const fallback = defaultMeta(modelId);
-    const stored = editingModelMeta[modelId];
+    const stored = editingModelMeta[modelId]?.override === false ? undefined : editingModelMeta[modelId];
+    const structure = editingModelMeta[modelId];
     const draft = metaDrafts[modelId];
     const extras = {
       tiers: draft?.tiers !== undefined
         ? draftTiersToMeta(draft.tiers) ?? fallback.tiers
-        : stored?.tiers ?? fallback.tiers,
+        : structure?.tiers ?? fallback.tiers,
       timeBased: draft?.timeBased !== undefined
         ? draftScheduleToMeta(draft.timeBased) ?? fallback.timeBased
-        : stored?.timeBased ?? fallback.timeBased,
+        : structure?.timeBased ?? fallback.timeBased,
     };
-    if (!rowOverride(modelId)) {
-      return { ...fallback, ...extras };
-    }
     const pickRate = (
       draftValue: string | undefined,
       storedValue: number | null | undefined,
@@ -1135,21 +1136,20 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     ): number => {
       if (draftValue !== undefined) {
         const parsed = parseRateInput(draftValue);
-        return parsed === "invalid" ? (storedValue ?? defaultValue) : parsed;
+        return !draftValue.trim() ? defaultValue : parsed === "invalid" ? (storedValue ?? defaultValue) : parsed;
       }
       return storedValue ?? defaultValue;
     };
     const inputRate = pickRate(draft?.inputRate, stored?.inputRate, fallback.inputRate);
     return {
       inputRate,
-      // 未填缓存价时按「实际输入价 × 折扣比例」折算（与 lib/model-rates.ts 一致），
-      // 而不是直接沿用目录里的绝对缓存倍率 —— 两套口径不同。
+      // 每条腿独立覆盖；未填写的缓存腿保留继承倍率。
       cacheReadRate: draft?.cacheReadRate !== undefined || stored?.cacheReadRate != null
         ? pickRate(draft?.cacheReadRate, stored?.cacheReadRate, fallback.cacheReadRate)
-        : inputRate * fallback.cacheReadDiscount,
+        : fallback.cacheReadRate,
       cacheWriteRate: draft?.cacheWriteRate !== undefined || stored?.cacheWriteRate != null
         ? pickRate(draft?.cacheWriteRate, stored?.cacheWriteRate, fallback.cacheWriteRate)
-        : inputRate * fallback.cacheWriteDiscount,
+        : fallback.cacheWriteRate,
       outputRate: pickRate(draft?.outputRate, stored?.outputRate, fallback.outputRate),
       // 阶梯/峰谷：草稿（整份编辑）> 已存自定义 > 上游/目录。
       ...extras,
@@ -1183,6 +1183,13 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
         (draft.cacheReadRate !== undefined && parseRateInput(draft.cacheReadRate) === "invalid") ||
         (draft.cacheWriteRate !== undefined && parseRateInput(draft.cacheWriteRate) === "invalid") ||
         (draft.outputRate !== undefined && parseRateInput(draft.outputRate) === "invalid");
+      for (const key of ["contextWindow", "maxOutputTokens"] as const) {
+        const value = draft[key]?.trim();
+        if (value && (!Number.isSafeInteger(Number(value)) || Number(value) <= 0)) {
+          setFormError(`模型 ${modelId} 的 ${key} 必须为正整数或留空。`);
+          return;
+        }
+      }
       if (badRate) {
         setFormError(`模型 ${modelId} 的倍率必须是非负数字。`);
         return;
@@ -1232,19 +1239,23 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     for (const modelId of tableModelIds) {
       const draft = metaDrafts[modelId];
       const hasDraft = draft !== undefined && Object.keys(draft).length > 0;
-      if (overrideDrafts[modelId] === undefined && editingModelMeta[modelId] === undefined && !hasDraft) {
+      if (editingModelMeta[modelId] === undefined && !hasDraft) {
         continue;
       }
       const entry: UpstreamModelMeta = {
-        override: rowOverride(modelId),
         ...(rowCatalogModelId(modelId) ? { catalogModelId: rowCatalogModelId(modelId) } : {}),
       };
-      if (entry.override) {
-        const resolved = resolvedMeta(modelId);
-        entry.cacheReadRate = resolved.cacheReadRate;
-        entry.cacheWriteRate = resolved.cacheWriteRate;
-        entry.inputRate = resolved.inputRate;
-        entry.outputRate = resolved.outputRate;
+      const rateDraft = rateDraftOf(modelId);
+      for (const field of ["inputRate", "cacheReadRate", "cacheWriteRate", "outputRate"] as const) {
+        if (rateDraft[field].trim()) entry[field] = Number(rateDraft[field]);
+      }
+      const capabilityDraft = capabilityDraftOf(modelId);
+      for (const field of CAPABILITY_FIELDS) {
+        const text = capabilityDraft[field.key].trim();
+        if (!text) continue;
+        const value = field.kind === "boolean" ? text === "true" : field.kind === "number" ? Number(text)
+          : field.kind === "list" ? [...new Set(text.split(/[,，\n]/).map((item) => item.trim()).filter(Boolean))] : text;
+        Object.assign(entry, { [field.key]: value });
       }
       // 阶梯/峰谷是整份配置：只有用户真正编辑过（草稿里有）或本来就有自定义
       // 值时才写入。打开编辑器看一眼继承来的配置不该把它固化成自定义 ——
@@ -1356,11 +1367,11 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       const fallbackCache =
         priceCache ?? (catalog?.cacheReadRate && catalog.cacheReadRate > 0 ? catalog.cacheReadRate : fallbackInput * discount);
       const meta = upstream.modelMeta?.[modelId];
-      if (meta?.override) {
+      if (meta && meta.override !== false) {
         const inputRate = meta.inputRate ?? fallbackInput;
         return {
           inputRate,
-          cacheReadRate: meta.cacheReadRate ?? inputRate * discount,
+          cacheReadRate: meta.cacheReadRate ?? fallbackCache,
           outputRate: meta.outputRate ?? fallbackOutput,
         };
       }
@@ -1827,7 +1838,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
           catalogModelId={rowCatalogModelId(editingModelId)}
           catalog={catalogMeta}
           open
-          override={rowOverride(editingModelId)}
+          catalogCapabilities={catalogCapabilities}
+          capabilities={capabilityDraftOf(editingModelId)}
           rates={rateDraftOf(editingModelId)}
           multiplier={rowMultiplier(editingModelId)}
           tiers={pricingDraft(editingModelId).tiers}
@@ -1841,7 +1853,6 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
               [editingModelId]: { ...(drafts[editingModelId] ?? {}), ...patch },
             }))
           }
-          onOverrideChange={(next) => setRowOverride(editingModelId, next)}
           onClose={() => setEditingModelId(null)}
         />
       ) : null}

@@ -733,7 +733,7 @@ Messenger Web 的模型能力查询，需有效用户会话（普通用户可用
 - 长上下文阶梯（`tiers`）与峰谷（`timeBased`）按目录原样下传，阶梯价格同分母折算；峰谷系数是无量纲比值，原样保留。
 - 上游自己在 `/v1/models` 里返回的报价不在此列（按上游存在 `upstreams.modelPrices`，解析时优先于本目录）。
 - 响应 `200`：`{ "metadata": { "gpt-4o": { "inputRate": 0.25, "cacheReadRate": 0.125, "outputRate": 1.0 } }, "degraded": false }`；`degraded=true` 表示使用了持久化快照或最终 1x 降级。
-- 上下文窗口不在本服务范围内（客户端自行从 models.dev `models.json` 推导）。
+- `metadata` 保持为倍率映射；额外的 `models` 能力映射提供上下文窗口、显示名和推理等元数据。
 - 供「更新元数据」入口与上游元数据展示使用。
 
 ### GET /api/admin/users、PATCH /api/admin/users/{id}
@@ -883,7 +883,7 @@ Messenger Web 的模型能力查询，需有效用户会话（普通用户可用
 
 转换覆盖：文本、图片（`data:` URI 与 URL）、函数调用/结果、推理文本、`usage`、`finish_reason`。按设计丢弃：音频/视频块、引用标注、加密思维链签名、平台专有工具（web search / maps / file search）。
 
-计费与用量记账对所有协议一致：可用模型 = 所有启用上游可服务模型的并集；额度在响应完成后按 `ceil((promptTokens − cachedTokens − cacheWriteTokens) × 输入倍率 + cachedTokens × 缓存读取倍率 + cacheWriteTokens × 缓存写入倍率 + completionTokens × 输出倍率)` 扣减（失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`，此时无缓存读写）。`promptTokens` 为上游报告的提示总量（含缓存读写的部分），`cachedTokens` 夹到 `[0, promptTokens]`，`cacheWriteTokens` 夹到 `[0, promptTokens − cachedTokens]`。缓存读取倍率按配置原样生效，不做「不得高于输入价」的夹取。元数据解析（按模型）：该模型的 `modelMeta.override` 开启时用其自定义值（缺失字段回退该上游 `/v1/models` 自报报价 → pi-catalog），关闭时直接用上游报价 → pi-catalog；倍率无数据时默认 1x（显式配置 0 = 不计费，三倍率为 0 时本条调用免费）。上游未返回、或对某字段返回 0，都视为「没有报价」，逐字段回退目录。最终实际倍率 = `tokenTypeRate × modelRate × providerRate`：`modelRate` = `modelMeta[modelId].multiplier`（模型整体倍率），`providerRate` = `upstream.multiplier`（上游整体倍率），两者缺省 = 1、显式 0 = 不计费；设了 1x 基准模型（管理后台「1x 基准模型」）时逐腿除以基准模型的对应腿倍率，使基准模型自身每条腿恒为 1x（基准腿为 0 = 免费时不做除法，保持 0）。缓存读取倍率默认来自上游 `/v1/models` 的 `cache_read_rate`，缺失时回退 pi-catalog 的 `cost.cacheRead`（缺失按输入价折算）；缓存写入同理（`cache_write_rate` → `cost.cacheWrite`，缺失按缓存读取倍率折算）。缓存写入 token 只对显式报告它的上游（如 Anthropic 的 `cache_creation_input_tokens`）计入。客户端自行推导上下文窗口，服务端不再下发。
+计费与用量记账对所有协议一致：可用模型 = 所有启用上游可服务模型的并集；额度在响应完成后按 `ceil((promptTokens − cachedTokens − cacheWriteTokens) × 输入倍率 + cachedTokens × 缓存读取倍率 + cacheWriteTokens × 缓存写入倍率 + completionTokens × 输出倍率)` 扣减（失败不扣费；上游未返回 usage 时按字符长度估算并记入 `usage_logs`，此时无缓存读写）。`promptTokens` 为上游报告的提示总量（含缓存读写的部分），`cachedTokens` 夹到 `[0, promptTokens]`，`cacheWriteTokens` 夹到 `[0, promptTokens − cachedTokens]`。缓存读取倍率按配置原样生效，不做「不得高于输入价」的夹取。元数据解析（按模型）：该模型的 `modelMeta` 按字段使用非空自定义值（留空回退该上游 `/v1/models` 自报报价 → pi-catalog）；旧 `override=false` 的休眠倍率继续忽略，新编辑器不再写入该开关；倍率无数据时默认 1x（显式配置 0 = 不计费，三倍率为 0 时本条调用免费）。上游未返回、或对某字段返回 0，都视为「没有报价」，逐字段回退目录。最终实际倍率 = `tokenTypeRate × modelRate × providerRate`：`modelRate` = `modelMeta[modelId].multiplier`（模型整体倍率），`providerRate` = `upstream.multiplier`（上游整体倍率），两者缺省 = 1、显式 0 = 不计费；设了 1x 基准模型（管理后台「1x 基准模型」）时逐腿除以基准模型的对应腿倍率，使基准模型自身每条腿恒为 1x（基准腿为 0 = 免费时不做除法，保持 0）。缓存读取倍率默认来自上游 `/v1/models` 的 `cache_read_rate`，缺失时回退 pi-catalog 的 `cost.cacheRead`（缺失按输入价折算）；缓存写入同理（`cache_write_rate` → `cost.cacheWrite`，缺失按缓存读取倍率折算）。缓存写入 token 只对显式报告它的上游（如 Anthropic 的 `cache_creation_input_tokens`）计入。Android/Desktop 仍可自行推导上下文窗口；模型列表同时提供下述有效能力元数据。
 
 `usage_logs.promptTokens` 只记未命中缓存的输入 token（上游 `prompt_tokens` − `cachedTokens`），缓存读取 token 单独记在 `cachedTokens`；`totalTokens` 仍为完整用量（未缓存输入 + 缓存读取 + 输出），用于汇总与趋势图。
 
@@ -895,7 +895,7 @@ Messenger Web 的模型能力查询，需有效用户会话（普通用户可用
 { "object": "list", "data": [ { "id": "gpt-4o", "object": "model", "created": 1700000000, "owned_by": "messenger-cloud", "input_rate": 0.25, "cache_read_rate": 0.125, "output_rate": 1.0 } ] }
 ```
 
-`input_rate` / `cache_read_rate` / `cache_write_rate` / `output_rate` 为多上游最优惠价（0 = 免费）；带来阶梯/峰谷的模型额外下发 `tiers`（`input_tokens_above` / `input_rate` / …）与 `time_based`（`off_peak_multiplier` / `peak_windows`），客户端可据此预估实际扣费。上下文窗口不再下发，客户端自行推导。
+`input_rate` / `cache_read_rate` / `cache_write_rate` / `output_rate` 为多上游最优惠价（0 = 免费）；带来阶梯/峰谷的模型额外下发 `tiers`（`input_tokens_above` / `input_rate` / …）与 `time_based`（`off_peak_multiplier` / `peak_windows`），客户端可据此预估实际扣费。同时下发上下文窗口、输入模态和采样支持等能力字段；Android/Desktop 仍可保留本地推导。
 
 ### POST /v1/chat/completions
 
@@ -1694,3 +1694,25 @@ Agent 编辑支持 temperature（0–2）、top_p（0–1）、frequency_penalty
 对话支持 `overrideFrequencyPenalty` / `overridePresencePenalty` 和四个可选布尔字段：`followAgentTemperature`、`followAgentTopP`、`followAgentFrequencyPenalty`、`followAgentPresencePenalty`。true 表示继承 Agent；false 时使用 override 值，null 表示不发送。标志缺省时沿用旧逻辑：override 为 null 则继承 Agent。Web 表单将继承选项与空值分开，保存通过原有会话 PUT 和同步版本事务。
 
 Web 聊天与标题请求均省略未启用/空值采样参数。配置格式转换支持 Chat Completions 的 penalties；对 Responses、Messages、Interactions 的不支持参数给出明确错误。`auto` 上游保持请求原样透传。Interactions 的 temperature/top_p 映射至 `generation_config`。
+
+### 上游模型元数据与逐字段覆盖
+
+`modelMeta[modelId]` 的四腿倍率不再需要 `override` 开关：缺省/null 继承，显式 0 免费。各腿独立继承，修改输入倍率不会固化或改写未填写的缓存倍率。旧 `override=false` 的休眠价格仍不生效；新编辑器保存后移除旧开关及休眠价格。
+
+新增可选字段（缺省/null 从 `catalogModelId` 指定的目录模型或自动匹配的 fork catalog 继承）：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `displayName` | string | 显示名，模型 ID 与路由不变 |
+| `inputModalities` | string[] | 输入模态，例如 text/image/audio/video |
+| `reasoning` | boolean | 是否支持思考；false 时有效 reasoningEfforts 为空 |
+| `reasoningEfforts` | string[] | 支持的推理档位 |
+| `contextWindow` | positive integer | 上下文 token 窗口 |
+| `maxOutputTokens` | positive integer | 最大输出 token 数 |
+| `supportsTemperature` | boolean | 目录缺省时 true |
+| `supportsTopP` | boolean | 目录缺省时 true |
+| `supportsPenalties` | boolean | 目录缺省时 true |
+
+`GET /api/admin/models/metadata` 额外返回 `models` 能力映射，原 `metadata` 倍率映射保持兼容。普通用户的 `GET /api/models/metadata?modelId=...&cloud=1` 返回该云端模型优先级最高的启用上游的有效能力；不传 cloud=1 时只按 catalog 解析，避免影响自定义 BYOK Provider。多上游按 priority、createdAt、_id 升序选择一份能力配置，不逐字段跨上游拼接。
+
+`/v1/models` 在原有倍率字段外返回 `display_name`、`input_modalities`、`reasoning`、`reasoning_efforts`、`context_window`、`max_output_tokens`、`supports_temperature`、`supports_top_p`、`supports_penalties`。Web 的内置模型标签和 reasoning 下拉框使用有效能力；聊天及标题请求省略显式标记为不支持的采样参数，reasoning=false 时省略 reasoning_effort。

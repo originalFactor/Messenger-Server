@@ -20,8 +20,8 @@
  *
  * 两层口径：
  * - 存量价目卡（stored card）长期保存在归一化空间里，与基准无关：
- *   override 开启用自定义值（缺失腿回退上游报价 → pi-catalog），关闭用
- *   上游报价 → pi-catalog，无数据默认 1x，显式 0 = 不计费。四种腿
+ *   自定义值逐腿生效（缺失腿回退上游报价 → pi-catalog），
+ *   无数据默认 1x，显式 0 = 不计费。旧 override=false 的休眠倍率保持忽略。四种腿
  *   （输入 / 缓存读取 / 缓存写入 / 输出）各自解析；长上下文阶梯与峰谷
  *   配置整份跟随同一条来源，不与另一侧逐项混拼（否则阈值/时段会和价格
  *   错配）。
@@ -291,8 +291,7 @@ function hasStructure(price: UpstreamModelPrice | undefined): boolean {
 
 /**
  * 存量价目卡（不含基准归一、不含 modelRate/providerRate 缩放）：
- * 覆盖开启取自定义值（缺失腿回退上游报价 → pi-catalog），关闭用上游报价 →
- * pi-catalog，无数据按 1x。
+ * 逐腿取非空自定义值，缺省回退上游报价 → pi-catalog，无数据按 1x。
  *
  * 长上下文阶梯与峰谷配置整份跟随来源：自定义没写就用上游的、上游没给就用
  * 目录的，绝不把两边的阈值与价格混配。
@@ -318,7 +317,13 @@ export function currentStoredCard(
   // 结构整份取用：自定义 > 上游报价（仅在它给了结构时）> 目录。
   // 自定义阶梯未填的腿沿用该模型解析出的基础档，避免只写阈值时其余腿变 0。
   const structuredPrice = hasStructure(priceCard) ? priceCard : undefined;
-  const baseLegs = { input: devInput, output: devOutput, cacheRead: devCacheRead, cacheWrite: devCacheWrite };
+  const custom = stored?.override === false ? undefined : stored;
+  const baseLegs = {
+    input: custom?.inputRate ?? devInput,
+    output: custom?.outputRate ?? devOutput,
+    cacheRead: custom?.cacheReadRate ?? devCacheRead,
+    cacheWrite: custom?.cacheWriteRate ?? devCacheWrite,
+  };
   const tiers = normalizeMetaTiers(stored?.tiers, baseLegs)
     ?? normalizePriceTiers(structuredPrice?.tiers)
     ?? catalogCard?.tiers;
@@ -330,18 +335,7 @@ export function currentStoredCard(
     ...(timeBased ? { timeBased } : {}),
   };
 
-  if (stored?.override) {
-    const input = stored.inputRate ?? devInput;
-    return {
-      input,
-      output: stored.outputRate ?? devOutput,
-      // 未自定义的缓存腿按实际输入价 × 折扣折算，而不是沿用目录的绝对值。
-      cacheRead: stored.cacheReadRate ?? round4(input * readDiscount),
-      cacheWrite: stored.cacheWriteRate ?? round4(input * writeDiscount),
-      ...extras,
-    };
-  }
-  return { input: devInput, output: devOutput, cacheRead: devCacheRead, cacheWrite: devCacheWrite, ...extras };
+  return { ...baseLegs, ...extras };
 }
 
 /** 逐腿缩放（modelRate × providerRate）；阶梯与峰谷同比例缩放。 */
@@ -482,11 +476,11 @@ export function resolveBaseContext(
       return true;
     }
     const custom = upstream.modelMeta?.[baseModelId];
-    return custom?.override === true
-      && (upstreamRate(custom.inputRate) !== undefined
-        || upstreamRate(custom.outputRate) !== undefined
-        || upstreamRate(custom.cacheReadRate) !== undefined
-        || upstreamRate(custom.cacheWriteRate) !== undefined);
+    return custom?.override !== false
+      && (upstreamRate(custom?.inputRate) !== undefined
+        || upstreamRate(custom?.outputRate) !== undefined
+        || upstreamRate(custom?.cacheReadRate) !== undefined
+        || upstreamRate(custom?.cacheWriteRate) !== undefined);
   });
   return resolvable ? { modelId: baseModelId } : null;
 }

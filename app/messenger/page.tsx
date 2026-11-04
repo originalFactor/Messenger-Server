@@ -31,9 +31,9 @@ export default async function MessengerPage({ searchParams }: { searchParams: Pr
     models: builtinModels.map((model) => ({
       id: `builtin:${model.modelId}`,
       modelId: model.modelId,
-      displayName: model.modelId,
+      displayName: model.displayName ?? model.modelId,
       isEnabled: true,
-      contextWindow: null,
+      contextWindow: model.metadata?.contextWindow ?? null,
       inputRate: model.inputRateMin,
       outputRate: model.outputRateMin,
       createdAt: 0,

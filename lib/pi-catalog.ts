@@ -197,6 +197,10 @@ export type CatalogRateMap = Record<string, CatalogCard>;
 
 /** Public model capabilities used by Messenger Web, independently of model pricing. */
 export interface CatalogModelMetadata {
+  displayName: string | null;
+  supportsTemperature: boolean;
+  supportsTopP: boolean;
+  supportsPenalties: boolean;
   contextWindow: number | null;
   maxOutputTokens: number | null;
   inputModalities: string[];
@@ -207,6 +211,10 @@ export interface CatalogModelMetadata {
 export type CatalogMetadataMap = Record<string, CatalogModelMetadata>;
 
 const modelMetadataSchema = z.object({
+  name: z.string().optional(),
+  supportsTemperature: z.boolean().optional(),
+  supportsTopP: z.boolean().optional(),
+  supportsPenalties: z.boolean().optional(),
   contextWindow: z.number().positive().nullish(),
   maxTokens: z.number().positive().nullish(),
   input: z.array(z.string()).optional(),
@@ -227,6 +235,10 @@ function extractModelMetadata(providers: Record<string, Record<string, unknown>>
       const model = parsed.data;
       const efforts = [...new Set(model.thinking?.efforts ?? [])];
       const value: CatalogModelMetadata = {
+        displayName: model.name ?? null,
+        supportsTemperature: model.supportsTemperature ?? true,
+        supportsTopP: model.supportsTopP ?? true,
+        supportsPenalties: model.supportsPenalties ?? true,
         contextWindow: model.contextWindow ?? null,
         maxOutputTokens: model.maxTokens ?? null,
         inputModalities: model.input ?? [],

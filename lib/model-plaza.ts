@@ -24,12 +24,16 @@
  * 峰谷」，不把阶梯后的价并进区间。
  */
 
+import type { CatalogModelMetadata } from "@/lib/pi-catalog";
+import { resolveModelCapabilities } from "@/lib/model-capabilities";
 import { getCatalogRates } from "@/lib/pi-catalog";
 import { type BaseModelContext, resolveBaseContext, resolveModelCard } from "@/lib/model-rates";
 import { getModelRateSettings, listEnabledUpstreams } from "@/lib/storage";
 
 export interface PlazaModel {
   modelId: string;
+  displayName: string;
+  metadata: CatalogModelMetadata;
   inputRateMin: number;
   inputRateMax: number;
   outputRateMin: number;
@@ -53,6 +57,7 @@ export async function getModelPlaza(): Promise<PlazaModel[]> {
     getModelRateSettings(),
   ]);
   const base: BaseModelContext | null = resolveBaseContext(settings.baseModelId, defaults.rates, upstreams);
+  const capabilities = new Map<string, CatalogModelMetadata>();
   const collected = new Map<
     string,
     {
@@ -66,7 +71,8 @@ export async function getModelPlaza(): Promise<PlazaModel[]> {
   >();
   for (const upstream of upstreams) {
     for (const modelId of upstream.models) {
-      // 与 /v1 代理计费同一份解析：override 语义 + modelRate × providerRate。
+      // 与 /v1 代理计费同一份解析：逐字段覆盖 + modelRate × providerRate。
+      if (!capabilities.has(modelId)) capabilities.set(modelId, resolveModelCapabilities(modelId, defaults.models, upstream.modelMeta?.[modelId]));
       const card = resolveModelCard(upstream, modelId, defaults.rates, base);
       const entry = collected.get(modelId) ?? {
         inputs: [],
@@ -92,6 +98,8 @@ export async function getModelPlaza(): Promise<PlazaModel[]> {
   return [...collected.entries()]
     .map(([modelId, entry]) => ({
       modelId,
+      displayName: capabilities.get(modelId)?.displayName ?? modelId,
+      metadata: capabilities.get(modelId)!,
       inputRateMin: Math.min(...entry.inputs),
       inputRateMax: Math.max(...entry.inputs),
       outputRateMin: Math.min(...entry.outputs),

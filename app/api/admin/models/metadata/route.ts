@@ -38,7 +38,7 @@ export async function GET(request: Request) {
   }
 
   const forceRefresh = new URL(request.url).searchParams.get("refresh") === "1";
-  const { rates, degraded } = await getCatalogRates(forceRefresh);
+  const { rates, models, degraded } = await getCatalogRates(forceRefresh);
   const metadata: Record<
     string,
     {
@@ -80,5 +80,5 @@ export async function GET(request: Request) {
       ...(rate.timeBased ? { timeBased: rate.timeBased } : {}),
     };
   }
-  return jsonOk({ metadata, degraded });
+  return jsonOk({ metadata, models, degraded });
 }

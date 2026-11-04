@@ -32,9 +32,12 @@ export function parseSamplingInputs(inputs: Record<SamplingKey, string>): Record
 }
 
 /** Empty is omitted, including after inheritance; explicit zero is preserved. */
-export function samplingRequestFields(agent: SamplingSettings, conversation?: SamplingOverrides): Record<string, number> {
+export function samplingRequestFields(agent: SamplingSettings, conversation?: SamplingOverrides, capabilities?: { supportsTemperature?: boolean; supportsTopP?: boolean; supportsPenalties?: boolean }): Record<string, number> {
   const result: Record<string, number> = {};
   for (const field of SAMPLING_FIELDS) {
+    if ((field.key === "temperature" && capabilities?.supportsTemperature === false)
+      || (field.key === "topP" && capabilities?.supportsTopP === false)
+      || ((field.key === "frequencyPenalty" || field.key === "presencePenalty") && capabilities?.supportsPenalties === false)) continue;
     const override = conversation?.[field.override];
     // Legacy conversations used null to follow Agent. Explicit false adds an omit state.
     const follows = conversation?.[field.follow] ?? (override == null);

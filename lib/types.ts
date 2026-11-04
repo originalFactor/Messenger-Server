@@ -143,10 +143,19 @@ export interface RedemptionDoc {
 }
 
 export interface UpstreamModelMeta {
-  /** 手选的 pi-catalog 完整键；缺省自动匹配，与覆盖开关无关。 */
+  /** 手选的 pi-catalog 完整键；缺省自动匹配。 */
   catalogModelId?: string | null;
-  /** 覆盖开关：开启时本条自定义元数据生效，关闭时使用上游报价 → pi-catalog 元数据。 */
+  /** Legacy only: false suppresses old dormant rates; new editors omit this flag. */
   override?: boolean;
+  displayName?: string | null;
+  inputModalities?: string[] | null;
+  reasoning?: boolean | null;
+  reasoningEfforts?: string[] | null;
+  contextWindow?: number | null;
+  maxOutputTokens?: number | null;
+  supportsTemperature?: boolean | null;
+  supportsTopP?: boolean | null;
+  supportsPenalties?: boolean | null;
   /** 缓存读取倍率，0 = 不计费；缺省按上游报价 → pi-catalog（无数据按输入价 × 折扣）。 */
   cacheReadRate?: number | null;
   /** 缓存写入倍率，0 = 不计费；缺省按上游报价 → pi-catalog（无数据按缓存读取）。 */
@@ -167,8 +176,7 @@ export interface UpstreamModelMeta {
   timeBased?: PricingSchedule | null;
   /**
    * 模型整体倍率（modelRate）：把上面三种 tokenType 倍率整体再乘一次，
-   * 与覆盖开关无关 —— 未覆盖的模型同样可以只放大倍率而不改各 tokenType
-   * 单价。缺省/非法值 = 1（不缩放），显式 0 = 该模型在此上游不计费。
+   * 独立于各 tokenType 单价，允许只放大整体倍率。缺省/非法值 = 1（不缩放），显式 0 = 该模型在此上游不计费。
    */
   multiplier?: number | null;
 }
@@ -247,7 +255,7 @@ export interface UpstreamDoc {
   apiFormat?: "chat" | "responses" | "messages" | "interactions" | "auto" | null;
   /** 该上游可服务的模型 ID 列表。 */
   models: string[];
-  /** 按上游自定义的模型元数据；仅 override 开启的条目生效，其余用上游报价 → pi-catalog 元数据。 */
+  /** 按上游逐字段自定义的模型倍率与能力；空值继承报价/catalog。 */
   modelMeta?: Record<string, UpstreamModelMeta> | null;
   /**
    * 上游 `/v1/models` 自报的模型报价（倍率口径），服务端在探测时刷新；

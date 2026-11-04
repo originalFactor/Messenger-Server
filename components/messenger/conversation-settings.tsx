@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -12,17 +12,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ReasoningEffortSelect } from "@/components/messenger/reasoning-effort-select";
 import { SAMPLING_FIELDS, parseSamplingInputs, type SamplingKey } from "@/lib/sampling";
 import { resolveTools } from "@/components/messenger/chat-wire";
+import type { CatalogModelMetadata } from "@/lib/pi-catalog";
 import type { ConversationDoc, ProviderDoc } from "@/lib/types";
 
 type Props = {
   conversation: ConversationDoc;
   providers: ProviderDoc[];
   agentModelId: string | null;
+  providerId: string;
   onClose: () => void;
   onSave: (conversation: ConversationDoc) => Promise<void>;
 };
 
-export function ConversationSettings({ conversation, providers, agentModelId, onClose, onSave }: Props) {
+export function ConversationSettings({ conversation, providers, agentModelId, providerId, onClose, onSave }: Props) {
   const [model, setModel] = useState(conversation.overrideModelId ?? "");
   const [samplingInputs, setSamplingInputs] = useState(() => Object.fromEntries(
     SAMPLING_FIELDS.map((field) => [field.key, conversation[field.override]?.toString() ?? ""]),
@@ -37,6 +39,14 @@ export function ConversationSettings({ conversation, providers, agentModelId, on
   const [saving, setSaving] = useState(false);
   const models = [...new Set(providers.flatMap((provider) => provider.models.filter((item) => item.isEnabled).map((item) => item.modelId)))];
   if (model && !models.includes(model)) models.unshift(model);
+
+  const effectiveModel = model || agentModelId;
+  const cloudModel = providerId === "builtin-messenger-cloud-ai";
+  const [capabilities, setCapabilities] = useState<{ modelId: string | null; metadata: CatalogModelMetadata | null } | null>(null);
+  const handleMetadata = useCallback((metadata: CatalogModelMetadata | null) => {
+    setCapabilities({ modelId: effectiveModel, metadata });
+  }, [effectiveModel]);
+  const modelCapabilities = capabilities?.modelId === effectiveModel ? capabilities?.metadata : null;
 
   async function save() {
     let sampling;
@@ -74,7 +84,7 @@ export function ConversationSettings({ conversation, providers, agentModelId, on
               <Label htmlFor="conversation-model">模型</Label>
               <Select value={model || "__follow__"} onValueChange={(value) => setModel(value === "__follow__" ? "" : value)}>
                 <SelectTrigger id="conversation-model" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="__follow__">跟随 Agent</SelectItem>{models.map((id) => <SelectItem key={id} value={id}>{id}</SelectItem>)}</SelectContent>
+                <SelectContent><SelectItem value="__follow__">跟随 Agent</SelectItem>{models.map((id) => <SelectItem key={id} value={id}>{providers.flatMap((provider) => provider.models).find((item) => item.modelId === id)?.displayName || id}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             {SAMPLING_FIELDS.map((field) => (
@@ -83,7 +93,7 @@ export function ConversationSettings({ conversation, providers, agentModelId, on
                 <Label className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Checkbox checked={followSampling[field.key]} onCheckedChange={(checked) => setFollowSampling({ ...followSampling, [field.key]: checked === true })} />跟随 Agent
                 </Label>
-                <Input id={`conversation-${field.key}`} type="number" step={field.step} min={field.min} max={field.max} disabled={followSampling[field.key]} value={samplingInputs[field.key]} onChange={(event) => setSamplingInputs({ ...samplingInputs, [field.key]: event.target.value })} placeholder={followSampling[field.key] ? "跟随 Agent" : "留空不发送"} />
+                <Input id={`conversation-${field.key}`} type="number" step={field.step} min={field.min} max={field.max} disabled={followSampling[field.key] || (field.key === "temperature" ? modelCapabilities?.supportsTemperature === false : field.key === "topP" ? modelCapabilities?.supportsTopP === false : modelCapabilities?.supportsPenalties === false)} value={samplingInputs[field.key]} onChange={(event) => setSamplingInputs({ ...samplingInputs, [field.key]: event.target.value })} placeholder={followSampling[field.key] ? "跟随 Agent" : "留空不发送"} />
               </div>
             ))}
             <div className="grid gap-2">
@@ -92,7 +102,7 @@ export function ConversationSettings({ conversation, providers, agentModelId, on
             </div>
             <div className="grid gap-2">
               <Label htmlFor="conversation-reasoning">Reasoning effort</Label>
-              <ReasoningEffortSelect id="conversation-reasoning" modelId={model || agentModelId} value={reasoning} onChange={setReasoning} disabled={saving} defaultLabel="跟随 Agent" />
+              <ReasoningEffortSelect id="conversation-reasoning" modelId={effectiveModel} cloud={cloudModel} onMetadata={handleMetadata} value={reasoning} onChange={setReasoning} disabled={saving} defaultLabel="跟随 Agent" />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="conversation-tools">工具</Label>

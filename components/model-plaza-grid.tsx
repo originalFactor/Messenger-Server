@@ -73,7 +73,7 @@ export function ModelPlazaGrid({ models }: { models: PlazaModel[] }) {
     if (!keyword) {
       return models;
     }
-    return models.filter((model) => model.modelId.toLowerCase().includes(keyword));
+    return models.filter((model) => (model.modelId + " " + model.displayName).toLowerCase().includes(keyword));
   }, [models, query]);
 
   if (models.length === 0) {
@@ -106,7 +106,7 @@ export function ModelPlazaGrid({ models }: { models: PlazaModel[] }) {
               <Card key={model.modelId} size="sm" className="gap-3">
                 <CardHeader>
                   <CardTitle className="font-mono text-sm leading-snug break-all" title={model.modelId}>
-                    {name}
+                    {model.displayName || name}
                   </CardTitle>
                   {vendor && (
                     <CardDescription className="font-mono text-xs">

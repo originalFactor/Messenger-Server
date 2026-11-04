@@ -20,6 +20,9 @@ import { getCatalogRates } from "@/lib/pi-catalog";
 import { resolveBaseContext, resolveModelCard } from "@/lib/model-rates";
 import { getModelRateSettings, listEnabledUpstreams } from "@/lib/storage";
 
+import { resolveModelCapabilities } from "@/lib/model-capabilities";
+import type { CatalogModelMetadata } from "@/lib/pi-catalog";
+
 export const runtime = "nodejs";
 
 /**
@@ -30,7 +33,7 @@ export const runtime = "nodejs";
  * 每个模型输出四条腿（input / cache_read / cache_write / output）的
  * 最优惠价，以及长上下文阶梯（`tiers`）与峰谷配置（`timeBased`）：
  * 后者是结构性配置，取提供该模型的最优上游那一份，客户端据此预估
- * 实际扣费。上下文窗口仍不下发（客户端自行推导）。
+ * 实际扣费。模型能力从优先级最高的启用上游逐项覆盖 catalog，随列表下发。
  */
 export async function GET(request: Request) {
   const user = await authenticateAiKey(request);
@@ -58,8 +61,10 @@ export async function GET(request: Request) {
     score: number;
   }
   const collected = new Map<string, Aggregated>();
+  const capabilities = new Map<string, CatalogModelMetadata>();
   for (const upstream of upstreams) {
     for (const modelId of upstream.models) {
+      if (!capabilities.has(modelId)) capabilities.set(modelId, resolveModelCapabilities(modelId, defaults.models, upstream.modelMeta?.[modelId]));
       const card = resolveModelCard(upstream, modelId, defaults.rates, base);
       const score = card.input + card.output;
       const existing = collected.get(modelId);
@@ -96,6 +101,15 @@ export async function GET(request: Request) {
         object: "model",
         created: now,
         owned_by: "messenger-cloud",
+        display_name: capabilities.get(modelId)?.displayName ?? modelId,
+        input_modalities: capabilities.get(modelId)?.inputModalities,
+        reasoning: capabilities.get(modelId)?.reasoning,
+        reasoning_efforts: capabilities.get(modelId)?.reasoningEfforts,
+        context_window: capabilities.get(modelId)?.contextWindow,
+        max_output_tokens: capabilities.get(modelId)?.maxOutputTokens,
+        supports_temperature: capabilities.get(modelId)?.supportsTemperature ?? true,
+        supports_top_p: capabilities.get(modelId)?.supportsTopP ?? true,
+        supports_penalties: capabilities.get(modelId)?.supportsPenalties ?? true,
         input_rate: entry.input,
         cache_read_rate: entry.cacheRead,
         cache_write_rate: entry.cacheWrite,

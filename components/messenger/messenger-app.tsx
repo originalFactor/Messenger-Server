@@ -71,6 +71,7 @@ import {
   toWireMessages,
   type StoredPart,
 } from "@/components/messenger/chat-wire";
+import type { CatalogModelMetadata } from "@/lib/pi-catalog";
 import { samplingRequestFields } from "@/lib/sampling";
 import { useRemoteDevice, type RemoteToolResult } from "@/components/messenger/remote";
 
@@ -84,6 +85,14 @@ type Props = {
   userName: string;
   userAvatarUrl: string | null;
 };
+
+async function loadModelCapabilities(modelId: string | null, cloud: boolean): Promise<CatalogModelMetadata | null> {
+  if (!modelId) return null;
+  const response = await fetch(`/api/models/metadata?modelId=${encodeURIComponent(modelId)}${cloud ? "&cloud=1" : ""}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "获取模型能力失败");
+  return data.metadata ?? null;
+}
 
 type ChatMessage = MessageEmbed & { status: "SENDING" | "SENT" | "ERROR" };
 
@@ -754,6 +763,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
 
     try {
       await saveConversation({ ...base, messages: history, updatedAt: currentTimestamp() });
+      const capabilities = await loadModelCapabilities(availableModel, provider._id === "builtin-messenger-cloud-ai");
       let finalText = "";
       // One round = one model request; a round that asks for tools runs them and goes again.
       while (!controller.signal.aborted) {
@@ -767,9 +777,9 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
             stream: true,
             messages: toWireMessages(history),
             ...(projectTools.length > 0 ? { tools: projectTools } : {}),
-            ...samplingRequestFields(agent, selected),
+            ...samplingRequestFields(agent, selected, capabilities ?? undefined),
             max_tokens: selected.overrideMaxTokens ?? agent.maxTokens ?? undefined,
-            reasoning_effort: selected.overrideReasoningEffort ?? agent.reasoningEffort ?? undefined,
+            reasoning_effort: capabilities?.reasoning === false ? undefined : selected.overrideReasoningEffort ?? agent.reasoningEffort ?? undefined,
           }),
         });
         if (!response.ok) {
@@ -836,13 +846,15 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
 
   async function generateConversationTitle(conversation: ConversationDoc, userText: string, assistantText: string, title: AgentDoc) {
     try {
+      const capabilities = await loadModelCapabilities(title.defaultModelId ?? null, true);
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           model: title.defaultModelId,
           stream: false,
-          ...samplingRequestFields(title),
+          ...samplingRequestFields(title, undefined, capabilities ?? undefined),
+          reasoning_effort: capabilities?.reasoning === false ? undefined : title.reasoningEffort ?? undefined,
           max_tokens: title.maxTokens ?? 32,
           messages: [
             { role: "system", content: title.systemPrompt || "Generate a concise conversation title." },
@@ -1091,7 +1103,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
         )}
       </main>
       {conversationSettingsOpen && selected ? (
-        <ConversationSettings key={selected._id} conversation={selected} providers={providers} agentModelId={agent?.defaultModelId ?? provider?.models.find((model) => model.isEnabled)?.modelId ?? null} onClose={() => setConversationSettingsOpen(false)} onSave={async (next) => {
+        <ConversationSettings key={selected._id} conversation={selected} providers={providers} providerId={provider?._id ?? ""} agentModelId={agent?.defaultModelId ?? provider?.models.find((model) => model.isEnabled)?.modelId ?? null} onClose={() => setConversationSettingsOpen(false)} onSave={async (next) => {
           await saveConversation(next);
           updateConversation(next);
         }} />
