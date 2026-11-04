@@ -38,8 +38,7 @@ const PROBE_TIMEOUT_MS = 15_000;
  * `{ models: [{ name: "models/…" }] }` —— 两种形状都接受，Gemini 的名称去掉
  * `models/` 前缀后即为请求所用的模型 ID。
  *
- * 地址先过 SSRF 校验：表单直探允许管理员填任意 URL，不校验就等于把服务端
- * 变成一个能访问内网的代理。
+ * 地址先校验 URL 与 HTTP(S) 协议；允许管理员配置内网上游。
  */
 export async function fetchUpstreamModelIds(
   baseUrl: string,

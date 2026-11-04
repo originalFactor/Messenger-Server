@@ -58,7 +58,7 @@ export async function testUpstreamModel(
   apiFormat?: ApiFormat,
 ): Promise<UpstreamTestResult> {
   const format = normalizeApiFormat(apiFormat, "chat");
-  // 表单直测同样能填任意地址：先过 SSRF 校验再发请求。
+  // 表单直测先校验 URL 与 HTTP(S) 协议，允许内网上游。
   try {
     await assertOutboundUrl(baseUrl);
   } catch (error) {

@@ -45,7 +45,7 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     return jsonError("Invalid upstream payload.", 400);
   }
-  // 保存前校验出站地址：中继会带着密钥请求它，不能指向内网/元数据服务。
+  // 保存前校验 URL 与 HTTP(S) 协议；允许管理员配置内网上游。
   try {
     await assertOutboundUrl(parsed.data.baseUrl);
   } catch (error) {

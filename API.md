@@ -817,7 +817,7 @@ SMTP_HOST、SMTP_USER、SMTP_PASSWORD 任一未配置时整站不出信：注册
 
 `baseUrl` 需含版本段（OpenAI 兼容为 `/v1`，Gemini 为 `/v1beta`）。模型列表探测 `GET <baseUrl>/models` 同时接受 `{data:[{id}]}` 与 `{models:[{name:"models/…"}]}` 两种形状。
 
-**出站地址校验（SSRF 防护）**：`baseUrl` 在保存（`POST`/`PUT /api/admin/upstreams`）、表单直探与直测之前都会经过 `lib/outbound-url.ts` 的 `assertOutboundUrl`：协议必须是 http(s)，主机名不能是 `localhost`/云元数据服务，且 DNS 解析出的所有地址都不得落在环回、私网（10/8、172.16/12、192.168/16）、链路本地（169.254/16、fe80::/10）、CGNAT（100.64/10）、ULA（fc00::/7）、组播或保留段（含 `::ffff:` 形式的 IPv4-mapped 地址）。被拒绝时返回 `400`。
+**出站地址校验**：`baseUrl` 在保存（`POST`/`PUT /api/admin/upstreams`）、表单直探与直测之前经过 `lib/outbound-url.ts` 的 `assertOutboundUrl`：必须为合法 HTTP(S) URL。允许内网域名、localhost、环回及私有 IP 等地址，不再按主机名或 DNS 解析结果限制目标网段。上游管理与探测/测试仍需管理员权限；非法 URL 或协议返回 `400`。
 
 转换覆盖：文本、图片（`data:` URI 与 URL）、函数调用/结果、推理文本、`usage`、`finish_reason`。按设计丢弃：音频/视频块、引用标注、加密思维链签名、平台专有工具（web search / maps / file search）。
 
