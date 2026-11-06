@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { preserveProviderModelFields } from "@/lib/provider-model-metadata";
 import { randomUUID } from "node:crypto";
 import { consumeRegistrationCode } from "@/lib/auth-tokens";
 import { type ClientSession, type Db, type Filter, MongoBulkWriteError, MongoServerError } from "mongodb";
@@ -413,7 +414,7 @@ async function getSyncVersion(userId: string): Promise<number> {
 
 // 调用方只用到 _id / userId / deleted / version（以及 Agent 的 isDefault /
 // avatarUrl / avatarVersion 及需兼容保留的 Web 采样字段），完整文档里的 messages（最多 10k 条）和
-// models 数组从不被读，所以统一投影掉，避免每次 upsert/delete 把整篇
+// models 数组仅在 Provider 写入时用于保留旧客户端不发送的扩展元数据，其余大字段投影掉，避免每次 upsert/delete 把整篇
 // 大字段从 MongoDB 拉到 serverless 实例。
 const OWNERSHIP_PROJECTIONS: Record<"agents" | "conversations" | "providers" | "projects", Record<string, 0 | 1>> = {
   agents: {
@@ -865,6 +866,9 @@ export async function upsertProvider(userId: string, provider: ProviderUpsertInp
   return withVersionedWrite(userId, async (version, session) => {
     await assertEntityOwnership<ProviderDoc>("providers", userId, provider.id, session);
     const db = await getDb();
+    const existing = await db.collection<ProviderDoc>("providers").findOne(
+      { _id: provider.id, userId }, { session, projection: { models: 1 } },
+    );
     await db.collection<ProviderDoc>("providers").updateOne(
       { _id: provider.id, userId },
       {
@@ -874,7 +878,7 @@ export async function upsertProvider(userId: string, provider: ProviderUpsertInp
           baseUrl: provider.baseUrl,
           apiKey: provider.apiKey,
           apiFormat: provider.apiFormat ?? "auto",
-          models: provider.models,
+          models: preserveProviderModelFields(provider.models, existing?.models ?? []),
           createdAt: provider.createdAt,
           updatedAt: provider.updatedAt,
           version,

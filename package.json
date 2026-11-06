@@ -11,7 +11,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "i18n:check": "node scripts/check-i18n.mjs"
+    "i18n:check": "node scripts/check-i18n.mjs",
+    "providers:check": "node scripts/check-provider-models.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1157.0",

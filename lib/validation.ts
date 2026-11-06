@@ -173,6 +173,54 @@ export const conversationSchema = z.object({
   updatedAt: z.number().int().nonnegative(),
 }).strict();
 
+/** 单条倍率输入：非负有限数，0 = 该腿不计费。 */
+const rateInputSchema = z.number().finite().min(0).max(100_000).nullable().optional();
+
+/** 长上下文阶梯条目：阈值必填，四条腿可选（缺省沿用基础档）。 */
+export const pricingTierInputSchema = z
+  .object({
+    inputThreshold: z.number().int().positive().max(100_000_000),
+    inputThresholdInclusive: z.boolean().optional(),
+    inputRate: rateInputSchema,
+    cacheReadRate: rateInputSchema,
+    cacheWriteRate: rateInputSchema,
+    outputRate: rateInputSchema,
+  })
+  .strict();
+
+/** 峰值时段：UTC 星期 0–6（周日 = 0），分钟 0–1440，起始须早于结束。 */
+export const pricingPeakWindowInputSchema = z
+  .object({
+    weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+    startMinute: z.number().int().min(0).max(1_440),
+    endMinute: z.number().int().min(0).max(1_440),
+  })
+  .strict()
+  .refine((window) => window.startMinute < window.endMinute, "A peak window must start before it ends.")
+  .refine((window) => new Set(window.weekdays).size === window.weekdays.length, "Duplicate weekdays.");
+
+/** 峰谷配置：谷时系数 + 峰值时段列表（空列表 = 无周期性谷时价）。 */
+export const pricingScheduleInputSchema = z
+  .object({
+    offPeakMultiplier: z.number().finite().min(0).max(100_000),
+    peakWindows: z.array(pricingPeakWindowInputSchema).max(24),
+  })
+  .strict();
+
+/** Optional Provider-supplied capabilities. Missing fields keep catalog inheritance. */
+export const providerModelMetadataSchema = z.object({
+  displayName: z.string().max(500).nullable().optional(),
+  contextWindow: z.number().int().nonnegative().nullable().optional(),
+  maxOutputTokens: z.number().int().positive().nullable().optional(),
+  inputModalities: z.array(z.string().trim().min(1).max(100)).max(32).optional(),
+  reasoning: z.boolean().nullable().optional(),
+  reasoningEfforts: z.array(z.string().trim().min(1).max(100)).max(32).optional(),
+  defaultReasoningEffort: z.string().max(100).nullable().optional(),
+  supportsTemperature: z.boolean().optional(),
+  supportsTopP: z.boolean().optional(),
+  supportsPenalties: z.boolean().optional(),
+}).strict();
+
 export const modelSchema = z.object({
   id: entityIdSchema,
   modelId: z.string().min(1).max(500),
@@ -183,6 +231,11 @@ export const modelSchema = z.object({
   // 模型倍率（相对基准的输入/输出倍率），0 = 免费。旧客户端不发送该键。
   inputRate: z.number().finite().min(0).nullable().optional(),
   outputRate: z.number().finite().min(0).nullable().optional(),
+  cacheReadRate: rateInputSchema,
+  cacheWriteRate: rateInputSchema,
+  tiers: z.array(pricingTierInputSchema).max(10).optional(),
+  timeBased: pricingScheduleInputSchema.optional(),
+  metadata: providerModelMetadataSchema.nullable().optional(),
   createdAt: z.number().int().nonnegative(),
 }).strict();
 
@@ -275,40 +328,6 @@ export const redeemSchema = z.object({
 }).strict();
 
 export const upstreamApiFormatSchema = z.enum(["chat", "responses", "messages", "interactions", "auto"]);
-
-/** 单条倍率输入：非负有限数，0 = 该腿不计费。 */
-const rateInputSchema = z.number().finite().min(0).max(100_000).nullable().optional();
-
-/** 长上下文阶梯条目：阈值必填，四条腿可选（缺省沿用基础档）。 */
-export const pricingTierInputSchema = z
-  .object({
-    inputThreshold: z.number().int().positive().max(100_000_000),
-    inputThresholdInclusive: z.boolean().optional(),
-    inputRate: rateInputSchema,
-    cacheReadRate: rateInputSchema,
-    cacheWriteRate: rateInputSchema,
-    outputRate: rateInputSchema,
-  })
-  .strict();
-
-/** 峰值时段：UTC 星期 0–6（周日 = 0），分钟 0–1440，起始须早于结束。 */
-export const pricingPeakWindowInputSchema = z
-  .object({
-    weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
-    startMinute: z.number().int().min(0).max(1_440),
-    endMinute: z.number().int().min(0).max(1_440),
-  })
-  .strict()
-  .refine((window) => window.startMinute < window.endMinute, "A peak window must start before it ends.")
-  .refine((window) => new Set(window.weekdays).size === window.weekdays.length, "Duplicate weekdays.");
-
-/** 峰谷配置：谷时系数 + 峰值时段列表（空列表 = 无周期性谷时价）。 */
-export const pricingScheduleInputSchema = z
-  .object({
-    offPeakMultiplier: z.number().finite().min(0).max(100_000),
-    peakWindows: z.array(pricingPeakWindowInputSchema).max(24),
-  })
-  .strict();
 
 export const upstreamInputSchema = z.object({
   name: z.string().trim().min(1).max(100),
@@ -438,3 +457,6 @@ export function getAvatarUpload(formData: FormData): AvatarUpload | null {
 
   return { file: value, extension, contentType };
 }
+
+/** User Provider discovery accepts unsaved credentials, without admin access. */
+export const providerProbeSchema = upstreamProbeSchema;

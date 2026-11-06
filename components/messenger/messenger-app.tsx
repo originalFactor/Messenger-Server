@@ -1,5 +1,7 @@
 "use client";
 
+import { applyProviderModelMetadata } from "@/lib/provider-model-metadata";
+import type { ModelEmbed } from "@/lib/types";
 import { LanguageSwitcher } from "@/components/i18n/language-switcher";
 
 /*
@@ -90,12 +92,12 @@ type Props = {
   userAvatarUrl: string | null;
 };
 
-async function loadModelCapabilities(modelId: string | null, cloud: boolean, t: Translator): Promise<CatalogModelMetadata | null> {
+async function loadModelCapabilities(modelId: string | null, cloud: boolean, t: Translator, model?: ModelEmbed): Promise<CatalogModelMetadata | null> {
   if (!modelId) return null;
   const response = await fetch(`/api/models/metadata?modelId=${encodeURIComponent(modelId)}${cloud ? "&cloud=1" : ""}`);
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || t("获取模型能力失败"));
-  return data.metadata ?? null;
+  return cloud ? data.metadata ?? null : applyProviderModelMetadata(data.metadata ?? null, model);
 }
 
 type ChatMessage = MessageEmbed & { status: "SENDING" | "SENT" | "ERROR" };
@@ -773,7 +775,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
 
     try {
       await saveConversation({ ...base, messages: history, updatedAt: currentTimestamp() });
-      const capabilities = await loadModelCapabilities(availableModel, provider._id === "builtin-messenger-cloud-ai", t);
+      const capabilities = await loadModelCapabilities(availableModel, provider._id === "builtin-messenger-cloud-ai", t, provider.models.find((item) => item.modelId === availableModel));
       let finalText = "";
       // One round = one model request; a round that asks for tools runs them and goes again.
       while (!controller.signal.aborted) {

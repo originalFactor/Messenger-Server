@@ -44,7 +44,7 @@ export function ConversationSettings({ conversation, providers, agentModelId, pr
 
   const effectiveModel = model || agentModelId;
   const cloudModel = providerId === "builtin-messenger-cloud-ai";
-  const modelMetadata = useModelMetadata(effectiveModel, cloudModel);
+  const modelMetadata = useModelMetadata(effectiveModel, cloudModel, providers.find((item) => item._id === providerId)?.models.find((item) => item.modelId === effectiveModel));
   const modelCapabilities = modelMetadata.metadata;
 
   async function save() {

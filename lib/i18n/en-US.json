@@ -721,5 +721,8 @@
   "AI 返回为空": "The AI response is empty.",
   "无法解析时段「{0}」，格式应为「1-5 09:00-18:00」。": "Unable to parse interval “{0}”. Use the format “1-5 09:00-18:00”.",
   "时段「{0}」的星期无效（0–6，0 = 周日）。": "Invalid weekdays in interval “{0}” (0–6, where 0 = Sunday).",
-  "时段「{0}」的时间无效（UTC 00:00–24:00，开始须早于结束）。": "Invalid times in interval “{0}” (UTC 00:00–24:00; start must be before end)."
+  "时段「{0}」的时间无效（UTC 00:00–24:00，开始须早于结束）。": "Invalid times in interval “{0}” (UTC 00:00–24:00; start must be before end).",
+  "拉取模型": "Fetch models",
+  "拉取模型列表失败，请检查地址和密钥。": "Unable to fetch models. Check the URL and API key.",
+  "已拉取 {0} 个模型，保存 Provider 后生效。": "Fetched {0} models. Save the Provider to apply changes."
 }

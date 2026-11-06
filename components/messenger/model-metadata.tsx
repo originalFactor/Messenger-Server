@@ -4,13 +4,15 @@ import { useTranslator } from "@/components/i18n/locale-provider";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { applyProviderModelMetadata } from "@/lib/provider-model-metadata";
+import type { ModelEmbed } from "@/lib/types";
 import type { CatalogModelMetadata } from "@/lib/pi-catalog";
 
 type MetadataResult = { metadata: CatalogModelMetadata | null; degraded: boolean };
 type LoadState = { modelId: string; cloud: boolean; result?: MetadataResult; error?: string };
 
 /** Fetch once per effective model; metadata never rewrites editable settings. */
-export function useModelMetadata(modelId: string | null | undefined, cloud: boolean) {
+export function useModelMetadata(modelId: string | null | undefined, cloud: boolean, model?: ModelEmbed) {
   const t = useTranslator();
   const router = useRouter();
   const [state, setState] = useState<LoadState | null>(null);
@@ -36,7 +38,7 @@ export function useModelMetadata(modelId: string | null | undefined, cloud: bool
   }, [modelId, cloud, router, t]);
   const current = state !== null && state.modelId === modelId && state.cloud === cloud ? state : null;
   const metadata = current?.result?.metadata;
-  return { modelId, metadata: metadata ?? null, result: current?.result, error: current?.error, loading: Boolean(modelId && !current) };
+  return { modelId, metadata: cloud ? metadata ?? null : applyProviderModelMetadata(metadata ?? null, model?.modelId === modelId ? model : undefined), result: current?.result, error: current?.error, loading: Boolean(modelId && !current) };
 }
 
 /** All capability, loading and error copy belongs beside the model chooser. */

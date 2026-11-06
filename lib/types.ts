@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { CatalogModelMetadata } from "@/lib/pi-catalog";
 import type { JWTPayload } from "jose";
 
 export type MessageRole = "system" | "user" | "assistant" | "tool";
@@ -463,6 +464,12 @@ export interface ModelEmbed {
   /** 相对基准的输入/输出倍率，0 = 免费；缺失 = 未知。 */
   inputRate?: number | null;
   outputRate?: number | null;
+  cacheReadRate?: number | null;
+  cacheWriteRate?: number | null;
+  tiers?: UpstreamModelPrice["tiers"];
+  timeBased?: UpstreamModelPrice["timeBased"];
+  /** Sparse capabilities supplied by this Provider's Messenger-extended model list. */
+  metadata?: Partial<CatalogModelMetadata> | null;
   createdAt: number;
 }
 

@@ -191,6 +191,7 @@ interface SessionClaims {
 | DELETE | `/api/agents/{id}` | 用户 | 软删除 Agent |
 | PUT | `/api/conversations/{id}` | 用户 | 新增/更新会话 |
 | DELETE | `/api/conversations/{id}` | 用户 | 软删除会话 |
+| POST | `/api/providers/probe` | 用户 | 从未保存的 Provider 配置拉取模型列表（支持 Messenger 扩展元数据） |
 | PUT | `/api/providers/{id}` | 用户 | 新增/更新 Provider |
 | DELETE | `/api/providers/{id}` | 用户 | 软删除 Provider |
 | GET | `/api/sync` | 用户 | 拉取增量同步数据 |
@@ -1720,3 +1721,14 @@ Web 聊天与标题请求均省略未启用/空值采样参数。配置格式转
 Catalog 当前来源为 `https://pi.dev/api/models`，使用其按供应商嵌套的 JSON。推理档位从 `thinkingLevelMap` 解析：null 排除档位，缺省标准档位按原名处理，xhigh/max 仅在显式配置时提供，映射值去重后用于 reasoning_efforts。`compat.supportsTemperature` 用于 temperature 能力。快照带 sourceUrl；旧来源或未标记来源的快照不参与回退，以免重新混入 omp 数据。
 
 模型显示名回退：Manual 与 catalog 均无非空显示名时，对模型 ID 应用去除 `/` 前缀、连字符转空格、每词首字母大写的规则。完整模型列表内的有效显示名重名（忽略大小写）时，所有同名项同样回退到各自规范化后的模型 ID。该派生名称不写回配置，且搜索/筛选不改变重名判定；上游列表、模型广场、`/v1/models` 和云端 metadata 查询使用同一规则。
+
+
+### POST /api/providers/probe（Web Provider 模型发现）
+
+需要用户 session。请求：`{ "baseUrl": "https://example.com/v1", "apiKey": "…", "apiFormat": "chat" }`，`apiFormat` 支持 chat/responses/messages/interactions/auto；空密钥可用于无需鉴权的服务。使用表单草稿凭据访问 `<baseUrl>/models`，不保存 Provider。返回 `{ "models": ModelEmbed[] }`，保存仍走现有 Provider PUT 和 syncVersion 事务。
+
+支持 OpenAI/Anthropic 的 `{data:[{id,…}]}` 和 Gemini 的 `{models:[{name:"models/…",…}]}`，同端点分页支持 Anthropic `has_more`/`last_id` 与 Gemini `nextPageToken`。每用户每分钟 30 次；总超时 15 秒，响应合计至多 8 MiB、5000 个模型、50 页，不跟随重定向。失败返回 400/401/429/502，不自动重试。
+
+Messenger extended 字段以 snake_case 读取，也兼容内部 camelCase：`display_name`、`context_window`、`max_output_tokens`、`input_modalities`、`reasoning`、`reasoning_efforts`、`default_reasoning_effort`、`supports_temperature`、`supports_top_p`、`supports_penalties`。能力保存于 `ModelEmbed.metadata`（稀疏字段，缺失则继承 catalog）；显示名与上下文窗口同时填充原有 `displayName` / `contextWindow`。四条倍率保存为 `inputRate` / `cacheReadRate` / `cacheWriteRate` / `outputRate`，以及可选 `tiers` / `timeBased`。明确的 0、false 和空推理档位数组保留；无效可选字段被忽略，不影响合法模型 ID。
+
+Web 拉取结果合并到草稿，保留手动添加但远端未返回的模型、本地 ID、自定义显示名和启用状态；保存后同步。旧客户端更新同一个本地 ID 且模型 ID 未变的条目时，省略的扩展字段由服务端保留，明确的 `metadata:null` 则清除能力覆盖。已拉取能力优先于 catalog，用于 Web Agent/对话设置和请求参数；built-in Provider 仍使用平台的有效模型能力。
