@@ -724,5 +724,12 @@
   "时段「{0}」的时间无效（UTC 00:00–24:00，开始须早于结束）。": "Invalid times in interval “{0}” (UTC 00:00–24:00; start must be before end).",
   "拉取模型": "Fetch models",
   "拉取模型列表失败，请检查地址和密钥。": "Unable to fetch models. Check the URL and API key.",
-  "已拉取 {0} 个模型，保存 Provider 后生效。": "Fetched {0} models. Save the Provider to apply changes."
+  "已拉取 {0} 个模型，保存 Provider 后生效。": "Fetched {0} models. Save the Provider to apply changes.",
+  "请填写有效的模型元数据和非负倍率。": "Enter valid model metadata and non-negative rates.",
+  "批量启用": "Bulk enable",
+  "模型信息留空时自动匹配 catalog；远端返回值和自定义值优先。保存 Provider 后生效。": "Blank model fields use catalog defaults; provider-supplied and custom values take priority. Save the Provider to apply changes.",
+  "批量编辑 {0} 个模型": "Bulk edit {0} models",
+  "删除 {0} 个模型？": "Delete {0} models?",
+  "将移除所选模型及其元数据和倍率，保存 Provider 后生效。": "Removes the selected models, metadata, and rates. Save the Provider to apply changes.",
+  "仅将修改过的字段应用到所选模型，其余字段保持各自原值。": "Only changed fields apply to selected models; all other fields keep their individual values."
 }

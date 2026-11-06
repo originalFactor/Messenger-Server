@@ -44,7 +44,7 @@ export function preserveProviderModelFields(models: ModelEmbed[], previous: Mode
     const old = oldById.get(model.id);
     if (!old || old.modelId !== model.modelId) return model;
     const preserved: Partial<ModelEmbed> = {};
-    for (const key of ["contextWindow", "inputRate", "outputRate", "cacheReadRate", "cacheWriteRate", "tiers", "timeBased", "metadata"] as const) {
+    for (const key of ["catalogModelId", "contextWindow", "inputRate", "outputRate", "cacheReadRate", "cacheWriteRate", "tiers", "timeBased", "metadata"] as const) {
       if (model[key] === undefined && old[key] !== undefined) Object.assign(preserved, { [key]: old[key] });
     }
     return { ...preserved, ...model };

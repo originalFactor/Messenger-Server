@@ -15,28 +15,29 @@ type LoadState = { modelId: string; cloud: boolean; result?: MetadataResult; err
 export function useModelMetadata(modelId: string | null | undefined, cloud: boolean, model?: ModelEmbed) {
   const t = useTranslator();
   const router = useRouter();
+  const requestKey = modelId ? `/api/models/metadata?modelId=${encodeURIComponent(modelId)}${cloud ? "&cloud=1" : model?.catalogModelId ? `&catalogModelId=${encodeURIComponent(model.catalogModelId)}` : ""}` : null;
   const [state, setState] = useState<LoadState | null>(null);
   useEffect(() => {
-    if (!modelId) return;
+    if (!requestKey) return;
     const controller = new AbortController();
-    void fetch(`/api/models/metadata?modelId=${encodeURIComponent(modelId)}${cloud ? "&cloud=1" : ""}`, { signal: controller.signal })
+    void fetch(requestKey, { signal: controller.signal })
       .then(async (response) => {
         const body = await response.json();
         if (response.status === 401) router.replace("/login");
         if (!response.ok) throw new Error(body.error || t("获取模型 metadata 失败"));
         if (!controller.signal.aborted) {
-          setState({ modelId, cloud, result: body as MetadataResult });
+          setState({ modelId: requestKey, cloud, result: body as MetadataResult });
         }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         const message = error instanceof Error ? error.message : t("获取模型 metadata 失败");
-        setState({ modelId, cloud, error: message });
+        setState({ modelId: requestKey, cloud, error: message });
         toast.error(message);
       });
     return () => controller.abort();
-  }, [modelId, cloud, router, t]);
-  const current = state !== null && state.modelId === modelId && state.cloud === cloud ? state : null;
+  }, [requestKey, cloud, router, t]);
+  const current = state !== null && state.modelId === requestKey && state.cloud === cloud ? state : null;
   const metadata = current?.result?.metadata;
   return { modelId, metadata: cloud ? metadata ?? null : applyProviderModelMetadata(metadata ?? null, model?.modelId === modelId ? model : undefined), result: current?.result, error: current?.error, loading: Boolean(modelId && !current) };
 }

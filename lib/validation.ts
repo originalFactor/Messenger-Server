@@ -223,6 +223,7 @@ export const providerModelMetadataSchema = z.object({
 
 export const modelSchema = z.object({
   id: entityIdSchema,
+  catalogModelId: z.string().trim().min(1).max(500).nullable().optional(),
   modelId: z.string().min(1).max(500),
   displayName: z.string(),
   isEnabled: z.boolean(),
@@ -233,8 +234,8 @@ export const modelSchema = z.object({
   outputRate: z.number().finite().min(0).nullable().optional(),
   cacheReadRate: rateInputSchema,
   cacheWriteRate: rateInputSchema,
-  tiers: z.array(pricingTierInputSchema).max(10).optional(),
-  timeBased: pricingScheduleInputSchema.optional(),
+  tiers: z.array(pricingTierInputSchema).max(10).nullable().optional(),
+  timeBased: pricingScheduleInputSchema.nullable().optional(),
   metadata: providerModelMetadataSchema.nullable().optional(),
   createdAt: z.number().int().nonnegative(),
 }).strict();

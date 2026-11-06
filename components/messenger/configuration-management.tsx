@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation";
 import { useTranslator } from "@/components/i18n/locale-provider";
 import type { Translator } from "@/lib/i18n";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, ChevronRight, FolderKanban, RefreshCw, Plus, Save, Server, Trash2, WandSparkles } from "lucide-react";
+import { Bot, Check, ChevronRight, FolderKanban, Plus, Save, Server, Trash2, WandSparkles } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -31,15 +31,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgentDoc, ModelEmbed, ProjectDoc, ProviderDoc } from "@/lib/types";
 import { ModelMetadataSummary, useModelMetadata } from "@/components/messenger/model-metadata";
+import { ProviderModelsTable } from "@/components/messenger/provider-models-table";
 import { ReasoningEffortSelect } from "@/components/messenger/reasoning-effort-select";
 import { parseSamplingInputs } from "@/lib/sampling";
-import { applyProviderModelMetadata, mergeProviderModels } from "@/lib/provider-model-metadata";
+import { mergeProviderModels } from "@/lib/provider-model-metadata";
 import type { PlazaModel } from "@/lib/model-plaza";
 
 type Props = {
@@ -248,6 +248,9 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
       displayName: model.displayName ?? model.modelId,
       isEnabled: true,
       contextWindow: model.metadata?.contextWindow ?? null,
+      metadata: model.metadata,
+      cacheReadRate: model.cacheReadRateMin,
+      cacheWriteRate: model.cacheWriteRateMin,
       inputRate: model.inputRateMin,
       outputRate: model.outputRateMin,
       createdAt: 0,
@@ -645,12 +648,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
               </CardHeader>
               <CardContent className="grid gap-3">
                 <Label>{t("可用模型（")}{builtinProvider.models.length}）</Label>
-                {builtinProvider.models.length ? builtinProvider.models.map((model) => (
-                  <div key={model.id} className="flex min-w-0 items-center justify-between gap-3 rounded-lg border p-3">
-                    <span className="min-w-0 break-all text-sm">{model.displayName || model.modelId}</span>
-                    <Badge variant="secondary" className="shrink-0">{t("可用")}</Badge>
-                  </div>
-                )) : <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">{t("平台暂未提供可用模型。")}</p>}
+                <ProviderModelsTable models={builtinProvider.models} readOnly />
               </CardContent>
             </Card>
           ) : null}
@@ -665,9 +663,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
                 </div>
                 <div className="grid gap-2"><Label>Base URL</Label><Input value={provider.baseUrl} onChange={(event) => setProvider({ ...provider, baseUrl: event.target.value })} placeholder="https://api.example.com/v1" /></div>
                 <div className="grid gap-2"><Label>API Key</Label><Input type="password" value={provider.apiKey} onChange={(event) => setProvider({ ...provider, apiKey: event.target.value })} /></div>
-                <div className="grid gap-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><Label>{t("模型")}</Label><p className="text-xs text-muted-foreground">{t("只会把启用的模型提供给聊天选择器。")}</p></div><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={() => void fetchProviderModels()} disabled={saving || probingModels}><RefreshCw className={probingModels ? "animate-spin" : undefined} />{probingModels ? t("拉取中…") : t("拉取模型")}</Button><Button type="button" variant="outline" size="sm" onClick={() => setProvider({ ...provider, models: [...provider.models, { id: crypto.randomUUID(), modelId: "", displayName: "", isEnabled: true, contextWindow: null, inputRate: null, outputRate: null, createdAt: now() }] })}><Plus /> {" "}{t("添加模型")}</Button></div></div>
-                  {provider.models.length === 0 ? <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">{t("还没有模型，请至少添加一个模型。")}</div> : provider.models.map((model, index) => <div key={model.id} className="grid gap-2 rounded-lg border bg-muted/30 p-3"><div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto_auto] sm:items-center"><Input value={model.modelId} onChange={(event) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, modelId: event.target.value, metadata: null, contextWindow: null, inputRate: null, outputRate: null, cacheReadRate: null, cacheWriteRate: null, tiers: [], timeBased: undefined } : item) })} placeholder={t("模型 ID")} /><Input value={model.displayName} onChange={(event) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, displayName: event.target.value } : item) })} placeholder={t("显示名称（可选）")} /><label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch size="sm" checked={model.isEnabled} onCheckedChange={(checked) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, isEnabled: checked } : item) })} />{t("启用")}</label><Button type="button" variant="ghost" size="icon" onClick={() => setProvider({ ...provider, models: provider.models.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 className="size-4" /></Button></div>{model.metadata ? <ModelMetadataSummary state={{ modelId: model.modelId, metadata: applyProviderModelMetadata(null, model), loading: false, result: undefined, error: undefined }} /> : null}</div>)}
-                </div>
+                <ProviderModelsTable key={provider.id} models={provider.models} disabled={saving} fetching={probingModels} onFetch={() => void fetchProviderModels()} onChange={(models) => setProvider((current) => current && current.id === provider.id ? { ...current, models } : current)} />
                 <div className="flex flex-wrap justify-between gap-2"><DeleteButton onConfirm={() => void removeCurrent()} /><Button onClick={() => void saveProvider()} disabled={saving || probingModels}><Save /> {saving ? t("保存中...") : t("保存 Provider")}</Button></div>
               </CardContent>
             </Card>

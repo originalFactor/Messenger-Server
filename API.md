@@ -1732,3 +1732,12 @@ Catalog 当前来源为 `https://pi.dev/api/models`，使用其按供应商嵌�
 Messenger extended 字段以 snake_case 读取，也兼容内部 camelCase：`display_name`、`context_window`、`max_output_tokens`、`input_modalities`、`reasoning`、`reasoning_efforts`、`default_reasoning_effort`、`supports_temperature`、`supports_top_p`、`supports_penalties`。能力保存于 `ModelEmbed.metadata`（稀疏字段，缺失则继承 catalog）；显示名与上下文窗口同时填充原有 `displayName` / `contextWindow`。四条倍率保存为 `inputRate` / `cacheReadRate` / `cacheWriteRate` / `outputRate`，以及可选 `tiers` / `timeBased`。明确的 0、false 和空推理档位数组保留；无效可选字段被忽略，不影响合法模型 ID。
 
 Web 拉取结果合并到草稿，保留手动添加但远端未返回的模型、本地 ID、自定义显示名和启用状态；保存后同步。旧客户端更新同一个本地 ID 且模型 ID 未变的条目时，省略的扩展字段由服务端保留，明确的 `metadata:null` 则清除能力覆盖。已拉取能力优先于 catalog，用于 Web Agent/对话设置和请求参数；built-in Provider 仍使用平台的有效模型能力。
+
+
+### GET /api/models/catalog（Web Provider 自动匹配目录）
+
+需要用户 session，无需管理员权限。返回 `{ rates: CatalogRateMap, models: CatalogMetadataMap, degraded: boolean }`，仅含 pi.dev 的公共 catalog 及归一化倍率，不含平台上游配置或凭据。响应 `Cache-Control: private, no-store`。`?refresh=1` 强制刷新，限制每用户每分钟 5 次；默认使用现有 24 小时缓存/持久化快照。
+
+Web Provider 模型列表与上游编辑共用模型编辑弹窗，采用模型 ID、显示名、四腿倍率与操作表格。空白字段按 catalog 自动匹配，导入/自定义值优先，自动默认值不写入同步实体。支持搜索、未配置筛选、可见范围选择与批量启用/停用/编辑/删除；仅修改批量编辑时实际触碰的字段。输入模态和推理档位继续使用多选下拉框。Built-in Provider 表格只读。
+
+`ModelEmbed.catalogModelId?: string | null` 指定精确 catalog 键；省略/null 时自动匹配。`GET /api/models/metadata?modelId=原始路由ID&catalogModelId=目录键` 返回该目标对应的默认能力，目标缺失时 `metadata=null`，不会偷偷匹配别的模型；cloud=1 仍以平台上游为准。`tiers` / `timeBased` 允许 null，表示清除覆盖并恢复目录默认。旧客户端省略这些字段时继续保留存量值，明确 null 不会被旧值恢复。目录目标仅用于能力/价格默认值，不改变对话请求的 model ID。

@@ -94,7 +94,7 @@ type Props = {
 
 async function loadModelCapabilities(modelId: string | null, cloud: boolean, t: Translator, model?: ModelEmbed): Promise<CatalogModelMetadata | null> {
   if (!modelId) return null;
-  const response = await fetch(`/api/models/metadata?modelId=${encodeURIComponent(modelId)}${cloud ? "&cloud=1" : ""}`);
+  const response = await fetch(`/api/models/metadata?modelId=${encodeURIComponent(modelId)}${cloud ? "&cloud=1" : model?.catalogModelId ? `&catalogModelId=${encodeURIComponent(model.catalogModelId)}` : ""}`);
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || t("获取模型能力失败"));
   return cloud ? data.metadata ?? null : applyProviderModelMetadata(data.metadata ?? null, model);

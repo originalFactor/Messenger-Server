@@ -456,6 +456,8 @@ export interface ConversationDoc {
 
 export interface ModelEmbed {
   id: string;
+  /** Optional explicit catalog target; null restores automatic matching. */
+  catalogModelId?: string | null;
   modelId: string;
   displayName: string;
   isEnabled: boolean;
