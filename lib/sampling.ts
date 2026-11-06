@@ -12,7 +12,7 @@ export interface SamplingSettings {
 
 export const SAMPLING_FIELDS = [
   { key: "temperature", wire: "temperature", override: "overrideTemperature", follow: "followAgentTemperature", label: "Temperature", min: 0, max: 2, step: "0.1" },
-  { key: "topP", wire: "top_p", override: "overrideTopP", follow: "followAgentTopP", label: "Top P (top_p)", min: 0, max: 1, step: "0.05" },
+  { key: "topP", wire: "top_p", override: "overrideTopP", follow: "followAgentTopP", label: "Top P", min: 0, max: 1, step: "0.05" },
   { key: "frequencyPenalty", wire: "frequency_penalty", override: "overrideFrequencyPenalty", follow: "followAgentFrequencyPenalty", label: "Frequency penalty", min: -2, max: 2, step: "0.1" },
   { key: "presencePenalty", wire: "presence_penalty", override: "overridePresencePenalty", follow: "followAgentPresencePenalty", label: "Presence penalty", min: -2, max: 2, step: "0.1" },
 ] as const;

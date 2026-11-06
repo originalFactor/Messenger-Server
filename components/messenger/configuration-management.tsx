@@ -9,7 +9,7 @@
 
 import { useTranslator } from "@/components/i18n/locale-provider";
 import type { Translator } from "@/lib/i18n";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Bot, Check, ChevronRight, FolderKanban, Plus, Save, Server, Trash2, WandSparkles } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -35,9 +35,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgentDoc, ModelEmbed, ProjectDoc, ProviderDoc } from "@/lib/types";
+import { ModelMetadataSummary, useModelMetadata } from "@/components/messenger/model-metadata";
 import { ReasoningEffortSelect } from "@/components/messenger/reasoning-effort-select";
 import { parseSamplingInputs } from "@/lib/sampling";
-import type { CatalogModelMetadata } from "@/lib/pi-catalog";
 import type { PlazaModel } from "@/lib/model-plaza";
 
 type Props = {
@@ -273,11 +273,8 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
     ? defaultAgent?.defaultModelId : agent?.defaultModelId;
 
   const cloudModel = (canFollowDefaults && agent?.followDefaultModel ? providerForModel(defaultAgent?.defaultModelId) : agent?.selectedProviderId) === BUILTIN_PROVIDER_ID;
-  const [capabilities, setCapabilities] = useState<{ modelId: string | null | undefined; cloud: boolean; metadata: CatalogModelMetadata | null } | null>(null);
-  const handleMetadata = useCallback((metadata: CatalogModelMetadata | null) => {
-    setCapabilities({ modelId: effectiveAgentModel, cloud: cloudModel, metadata });
-  }, [effectiveAgentModel, cloudModel]);
-  const modelCapabilities = capabilities?.modelId === effectiveAgentModel && capabilities?.cloud === cloudModel ? capabilities?.metadata : null;
+  const modelMetadata = useModelMetadata(tab === "agents" ? effectiveAgentModel : null, cloudModel);
+  const modelCapabilities = modelMetadata.metadata;
 
   const activeItems = tab === "agents" ? agents : tab === "providers" ? allProviders : projects;
   const visibleItems = activeItems.filter((item) => {
@@ -578,10 +575,11 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
                     </div>
                   </div>
                   <p className="text-xs text-muted-foreground">{selectedAgentProvider?.name ?? t("先选择 Provider")} · {agent.defaultModelId || t("未选择模型")}</p>
+                  <ModelMetadataSummary state={modelMetadata} />
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="grid gap-2"><Label htmlFor="agent-temperature">Temperature</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultTemperature" label={t("跟随默认")} checked={agent.followDefaultTemperature} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTemperature: checked })} /> : null}<Input id="agent-temperature" type="number" min="0" max="2" step="0.1" placeholder={t("留空不发送")} value={agent.temperature} disabled={(agent.followDefaultTemperature && canFollowDefaults) || modelCapabilities?.supportsTemperature === false} onChange={(event) => setAgent({ ...agent, temperature: event.target.value })} /></div>
-                  <div className="grid gap-2"><Label htmlFor="agent-topP">Top P (top_p)</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultTopP" label={t("跟随默认")} checked={agent.followDefaultTopP} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTopP: checked })} /> : null}<Input id="agent-topP" type="number" min="0" max="1" step="0.05" placeholder={t("留空不发送")} value={agent.topP} disabled={(agent.followDefaultTopP && canFollowDefaults) || modelCapabilities?.supportsTopP === false} onChange={(event) => setAgent({ ...agent, topP: event.target.value })} /></div>
+                  <div className="grid gap-2"><Label htmlFor="agent-topP">Top P</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultTopP" label={t("跟随默认")} checked={agent.followDefaultTopP} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTopP: checked })} /> : null}<Input id="agent-topP" type="number" min="0" max="1" step="0.05" placeholder={t("留空不发送")} value={agent.topP} disabled={(agent.followDefaultTopP && canFollowDefaults) || modelCapabilities?.supportsTopP === false} onChange={(event) => setAgent({ ...agent, topP: event.target.value })} /></div>
                   {([
                     { key: "frequencyPenalty", follow: "followDefaultFrequencyPenalty", label: "Frequency penalty" },
                     { key: "presencePenalty", follow: "followDefaultPresencePenalty", label: "Presence penalty" },
@@ -592,8 +590,8 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
                       <Input id={`agent-${field.key}`} type="number" min="-2" max="2" step="0.1" value={agent[field.key]} disabled={(agent[field.follow] && canFollowDefaults) || modelCapabilities?.supportsPenalties === false} onChange={(event) => setAgent({ ...agent, [field.key]: event.target.value })} placeholder={t("留空不发送")} />
                     </div>
                   ))}
-                  <div className="grid gap-2"><Label htmlFor="agent-maxTokens">Max tokens (max_tokens)</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultMaxTokens" label={t("跟随默认")} checked={agent.followDefaultMaxTokens} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultMaxTokens: checked })} /> : null}<Input id="agent-maxTokens" type="number" value={agent.maxTokens} disabled={agent.followDefaultMaxTokens && canFollowDefaults} onChange={(event) => setAgent({ ...agent, maxTokens: event.target.value })} placeholder={t("自动")} /></div>
-                  <div className="grid gap-2"><Label htmlFor="agent-reasoningEffort">Reasoning effort</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultReasoningEffort" label={t("跟随默认")} checked={agent.followDefaultReasoningEffort} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultReasoningEffort: checked })} /> : null}<ReasoningEffortSelect id="agent-reasoningEffort" modelId={effectiveAgentModel} cloud={cloudModel} onMetadata={handleMetadata} value={canFollowDefaults && agent.followDefaultReasoningEffort ? defaultAgent?.reasoningEffort ?? "" : agent.reasoningEffort} disabled={saving || (agent.followDefaultReasoningEffort && canFollowDefaults)} onChange={(value) => setAgent({ ...agent, reasoningEffort: value })} /></div>
+                  <div className="grid gap-2"><Label htmlFor="agent-maxTokens">Max tokens</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultMaxTokens" label={t("跟随默认")} checked={agent.followDefaultMaxTokens} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultMaxTokens: checked })} /> : null}<Input id="agent-maxTokens" type="number" value={agent.maxTokens} disabled={agent.followDefaultMaxTokens && canFollowDefaults} onChange={(event) => setAgent({ ...agent, maxTokens: event.target.value })} placeholder={t("自动")} /></div>
+                  <div className="grid gap-2"><Label htmlFor="agent-reasoningEffort">Reasoning effort</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultReasoningEffort" label={t("跟随默认")} checked={agent.followDefaultReasoningEffort} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultReasoningEffort: checked })} /> : null}<ReasoningEffortSelect id="agent-reasoningEffort" metadata={modelCapabilities} value={canFollowDefaults && agent.followDefaultReasoningEffort ? defaultAgent?.reasoningEffort ?? "" : agent.reasoningEffort} disabled={saving || (agent.followDefaultReasoningEffort && canFollowDefaults)} onChange={(value) => setAgent({ ...agent, reasoningEffort: value })} /></div>
                 </div>
                 <p className="text-xs text-muted-foreground">{t("默认 Agent 作为角色单独存在；当前默认 Agent 不能直接取消，请在其他 Agent 上选择“默认 Agent”完成转移。")}</p>
                 <div className="flex flex-wrap justify-between gap-2"><DeleteButton onConfirm={() => void removeCurrent()} /><Button onClick={() => void saveAgent()} disabled={saving}><Save /> {saving ? t("保存中...") : t("保存 Agent")}</Button></div>

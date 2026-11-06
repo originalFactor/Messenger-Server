@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslator } from "@/components/i18n/locale-provider";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -10,10 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ModelMetadataSummary, useModelMetadata } from "@/components/messenger/model-metadata";
 import { ReasoningEffortSelect } from "@/components/messenger/reasoning-effort-select";
 import { SAMPLING_FIELDS, parseSamplingInputs, type SamplingKey } from "@/lib/sampling";
 import { resolveTools } from "@/components/messenger/chat-wire";
-import type { CatalogModelMetadata } from "@/lib/pi-catalog";
 import type { ConversationDoc, ProviderDoc } from "@/lib/types";
 
 type Props = {
@@ -44,11 +44,8 @@ export function ConversationSettings({ conversation, providers, agentModelId, pr
 
   const effectiveModel = model || agentModelId;
   const cloudModel = providerId === "builtin-messenger-cloud-ai";
-  const [capabilities, setCapabilities] = useState<{ modelId: string | null; metadata: CatalogModelMetadata | null } | null>(null);
-  const handleMetadata = useCallback((metadata: CatalogModelMetadata | null) => {
-    setCapabilities({ modelId: effectiveModel, metadata });
-  }, [effectiveModel]);
-  const modelCapabilities = capabilities?.modelId === effectiveModel ? capabilities?.metadata : null;
+  const modelMetadata = useModelMetadata(effectiveModel, cloudModel);
+  const modelCapabilities = modelMetadata.metadata;
 
   async function save() {
     let sampling;
@@ -88,6 +85,7 @@ export function ConversationSettings({ conversation, providers, agentModelId, pr
                 <SelectTrigger id="conversation-model" className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent><SelectItem value="__follow__">{t("跟随 Agent")}</SelectItem>{models.map((id) => <SelectItem key={id} value={id}>{providers.flatMap((provider) => provider.models).find((item) => item.modelId === id)?.displayName || id}</SelectItem>)}</SelectContent>
               </Select>
+              <ModelMetadataSummary state={modelMetadata} />
             </div>
             {SAMPLING_FIELDS.map((field) => (
               <div key={field.key} className="grid gap-2">
@@ -98,12 +96,12 @@ export function ConversationSettings({ conversation, providers, agentModelId, pr
               </div>
             ))}
             <div className="grid gap-2">
-              <Label htmlFor="conversation-max-tokens">Max tokens (max_tokens)</Label>
+              <Label htmlFor="conversation-max-tokens">Max tokens</Label>
               <Input id="conversation-max-tokens" type="number" step="1" value={maxTokens} onChange={(event) => setMaxTokens(event.target.value)} placeholder={t("跟随 Agent")} />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="conversation-reasoning">Reasoning effort</Label>
-              <ReasoningEffortSelect id="conversation-reasoning" modelId={effectiveModel} cloud={cloudModel} onMetadata={handleMetadata} value={reasoning} onChange={setReasoning} disabled={saving} defaultLabel={t("跟随 Agent")} />
+              <ReasoningEffortSelect id="conversation-reasoning" metadata={modelCapabilities} value={reasoning} onChange={setReasoning} disabled={saving} defaultLabel={t("跟随 Agent")} />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="conversation-tools">{t("工具")}</Label>
