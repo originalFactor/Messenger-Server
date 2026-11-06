@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ import { Button } from "@/components/ui/button";
  * 没有可回退的历史时（如直接打开链接）才退回 fallbackHref。
  */
 export function BackButton({ fallbackHref = "/", children = "返回" }: { fallbackHref?: string; children?: React.ReactNode }) {
+  const t = useTranslator();
   const router = useRouter();
 
   return (
@@ -41,7 +43,7 @@ export function BackButton({ fallbackHref = "/", children = "返回" }: { fallba
       }}
     >
       <ArrowLeft />
-      {children}
+      {typeof children === "string" ? t(children) : children}
     </Button>
   );
 }

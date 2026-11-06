@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Copy, Plus } from "lucide-react";
@@ -56,6 +57,7 @@ const statusLabels: Record<CardKeyDoc["status"], string> = {
 };
 
 export function CardsManager({ plans }: { plans: PlanDoc[] }) {
+  const t = useTranslator();
   const router = useRouter();
   const [planId, setPlanId] = useState(plans[0]?._id ?? "");
   const [count, setCount] = useState("10");
@@ -99,15 +101,15 @@ export function CardsManager({ plans }: { plans: PlanDoc[] }) {
       });
       const payload = (await response.json().catch(() => null)) as { cards?: CardKeyDoc[]; error?: string } | null;
       if (!response.ok || !payload?.cards) {
-        setError(payload?.error ?? "开卡失败，请稍后重试。");
+        setError(payload?.error ?? t("开卡失败，请稍后重试。"));
         return;
       }
       setIssued(payload.cards);
-      toast.success(`成功生成 ${payload.cards.length} 张卡密`);
+      toast.success(t("成功生成 {0} 张卡密", { "0": payload.cards.length }));
       await loadCards();
       router.refresh();
     } catch {
-      setError("网络错误，请稍后重试。");
+      setError(t("网络错误，请稍后重试。"));
     } finally {
       setIssuing(false);
     }
@@ -117,9 +119,9 @@ export function CardsManager({ plans }: { plans: PlanDoc[] }) {
     if (!issued) return;
     try {
       await navigator.clipboard.writeText(issued.map((card) => card.code).join("\n"));
-      toast.success("已复制全部卡密");
+      toast.success(t("已复制全部卡密"));
     } catch {
-      setError("复制失败，请手动选择复制。");
+      setError(t("复制失败，请手动选择复制。"));
     }
   }
 
@@ -133,7 +135,7 @@ export function CardsManager({ plans }: { plans: PlanDoc[] }) {
       });
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-        setError(payload?.error ?? "停用失败。");
+        setError(payload?.error ?? t("停用失败。"));
         return;
       }
       await loadCards();
@@ -143,7 +145,7 @@ export function CardsManager({ plans }: { plans: PlanDoc[] }) {
   }
 
   async function deleteCard(card: CardKeyDoc) {
-    if (!window.confirm(`确定删除卡密 ${card.code}？`)) {
+    if (!window.confirm(t("确定删除卡密 {0}？", { "0": card.code }))) {
       return;
     }
     setActionBusy(true);
@@ -151,7 +153,7 @@ export function CardsManager({ plans }: { plans: PlanDoc[] }) {
       const response = await fetch(`/api/admin/cards/${card._id}`, { method: "DELETE" });
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-        setError(payload?.error ?? "删除失败。");
+        setError(payload?.error ?? t("删除失败。"));
         return;
       }
       await loadCards();
@@ -164,45 +166,44 @@ export function CardsManager({ plans }: { plans: PlanDoc[] }) {
     if (status === "unused") {
       return (
         <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" variant="secondary">
-          未使用
+          {" "}{t("未使用")}{" "}
         </Badge>
       );
     }
     if (status === "disabled") {
-      return <Badge variant="destructive">已停用</Badge>;
+      return <Badge variant="destructive">{t("已停用")}</Badge>;
     }
-    return <Badge variant="secondary">已兑换</Badge>;
+    return <Badge variant="secondary">{t("已兑换")}</Badge>;
   }
 
   return (
     <div className="grid gap-4">
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">批量开卡</CardTitle>
-          <CardDescription>每张卡密绑定开卡时的套餐内容，之后修改或删除套餐不影响已开出的卡。</CardDescription>
+          <CardTitle className="text-base">{t("批量开卡")}</CardTitle>
+          <CardDescription>{t("每张卡密绑定开卡时的套餐内容，之后修改或删除套餐不影响已开出的卡。")}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3">
           {plans.length === 0 ? (
-            <p className="text-sm text-muted-foreground">请先在「套餐管理」中创建套餐。</p>
+            <p className="text-sm text-muted-foreground">{t("请先在「套餐管理」中创建套餐。")}</p>
           ) : (
             <form className="flex flex-wrap items-end gap-3" onSubmit={issue}>
               <div className="grid min-w-52 gap-2">
-                <Label htmlFor="issue-plan">套餐</Label>
+                <Label htmlFor="issue-plan">{t("套餐")}</Label>
                 <Select value={planId} onValueChange={setPlanId}>
                   <SelectTrigger id="issue-plan" className="w-full">
-                    <SelectValue placeholder="选择套餐" />
+                    <SelectValue placeholder={t("选择套餐")} />
                   </SelectTrigger>
                   <SelectContent>
                     {plans.map((plan) => (
                       <SelectItem key={plan._id} value={plan._id}>
-                        {plan.name}（{formatTokens(plan.quotaTokens)} / {plan.validityDays} 天）
-                      </SelectItem>
+                        {plan.name}（{formatTokens(plan.quotaTokens, t.locale)} / {plan.validityDays} {" "}{t("天）")}{" "}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="issue-count">数量（1-500）</Label>
+                <Label htmlFor="issue-count">{t("数量（1-500）")}</Label>
                 <Input
                   id="issue-count"
                   type="number"
@@ -215,12 +216,12 @@ export function CardsManager({ plans }: { plans: PlanDoc[] }) {
                 />
               </div>
               <div className="grid min-w-52 flex-1 gap-2">
-                <Label htmlFor="issue-note">备注（选填）</Label>
+                <Label htmlFor="issue-note">{t("备注（选填）")}</Label>
                 <Input id="issue-note" value={note} onChange={(event) => setNote(event.target.value)} />
               </div>
               <Button type="submit" disabled={issuing}>
                 <Plus />
-                {issuing ? "开卡中…" : "生成卡密"}
+                {issuing ? t("开卡中…") : t("生成卡密")}
               </Button>
             </form>
           )}
@@ -229,11 +230,11 @@ export function CardsManager({ plans }: { plans: PlanDoc[] }) {
             <div className="grid gap-3 rounded-lg border bg-muted/40 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-sm font-medium">
-                  成功生成 {issued.length} 张卡密（请立即保存，仅此次完整展示）：
+                  {" "}{t("成功生成")}{" "}{issued.length} {" "}{t("张卡密（请立即保存，仅此次完整展示）：")}{" "}
                 </p>
                 <Button variant="outline" size="sm" onClick={copyIssued}>
                   <Copy />
-                  复制全部
+                  {" "}{t("复制全部")}{" "}
                 </Button>
               </div>
               <div className="max-h-44 overflow-y-auto font-mono text-xs leading-relaxed">
@@ -249,37 +250,37 @@ export function CardsManager({ plans }: { plans: PlanDoc[] }) {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <div className="grid gap-1.5">
-            <CardTitle className="text-base">卡密列表</CardTitle>
-            <CardDescription>最近 50 张。</CardDescription>
+            <CardTitle className="text-base">{t("卡密列表")}</CardTitle>
+            <CardDescription>{t("最近 50 张。")}</CardDescription>
           </div>
           <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as "all" | CardKeyDoc["status"])}>
             <SelectTrigger className="w-32">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">全部状态</SelectItem>
-              <SelectItem value="unused">未使用</SelectItem>
-              <SelectItem value="redeemed">已兑换</SelectItem>
-              <SelectItem value="disabled">已停用</SelectItem>
+              <SelectItem value="all">{t("全部状态")}</SelectItem>
+              <SelectItem value="unused">{t("未使用")}</SelectItem>
+              <SelectItem value="redeemed">{t("已兑换")}</SelectItem>
+              <SelectItem value="disabled">{t("已停用")}</SelectItem>
             </SelectContent>
           </Select>
         </CardHeader>
         <CardContent>
           {loadingCards ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">加载中…</p>
+            <p className="py-6 text-center text-sm text-muted-foreground">{t("加载中…")}</p>
           ) : cards.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">没有符合条件的卡密。</p>
+            <p className="py-6 text-center text-sm text-muted-foreground">{t("没有符合条件的卡密。")}</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>卡密</TableHead>
-                  <TableHead>套餐</TableHead>
-                  <TableHead>额度</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>备注</TableHead>
-                  <TableHead>创建时间</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
+                  <TableHead>{t("卡密")}</TableHead>
+                  <TableHead>{t("套餐")}</TableHead>
+                  <TableHead>{t("额度")}</TableHead>
+                  <TableHead>{t("状态")}</TableHead>
+                  <TableHead>{t("备注")}</TableHead>
+                  <TableHead>{t("创建时间")}</TableHead>
+                  <TableHead className="text-right">{t("操作")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -287,11 +288,11 @@ export function CardsManager({ plans }: { plans: PlanDoc[] }) {
                   <TableRow key={card._id}>
                     <TableCell className="font-mono text-xs">{card.code}</TableCell>
                     <TableCell>{card.planName}</TableCell>
-                    <TableCell className="tabular-nums">{formatTokens(card.quotaTokens)}</TableCell>
+                    <TableCell className="tabular-nums">{formatTokens(card.quotaTokens, t.locale)}</TableCell>
                     <TableCell>{statusBadge(card.status)}</TableCell>
                     <TableCell className="text-muted-foreground">{card.note || "—"}</TableCell>
                     <TableCell className="whitespace-nowrap text-muted-foreground">
-                      {formatDateTime(card.createdAt)}
+                      {formatDateTime(card.createdAt, t.locale)}
                     </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-2">
@@ -302,7 +303,7 @@ export function CardsManager({ plans }: { plans: PlanDoc[] }) {
                             disabled={actionBusy}
                             onClick={() => disableCard(card)}
                           >
-                            停用
+                            {" "}{t("停用")}{" "}
                           </Button>
                         ) : null}
                         {card.status !== "redeemed" ? (
@@ -312,7 +313,7 @@ export function CardsManager({ plans }: { plans: PlanDoc[] }) {
                             disabled={actionBusy}
                             onClick={() => deleteCard(card)}
                           >
-                            删除
+                            {" "}{t("删除")}{" "}
                           </Button>
                         ) : null}
                       </div>

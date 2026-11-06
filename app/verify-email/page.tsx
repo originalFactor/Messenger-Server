@@ -1,3 +1,4 @@
+import { getTranslator } from "@/lib/i18n/server";
 /*
  * Copyright 2026 originalFactor
  *
@@ -19,7 +20,10 @@ import { VerifyEmailForm } from "@/components/verify-email-form";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "验证邮箱" };
+export async function generateMetadata() {
+  const t = await getTranslator();
+  return { title: t("验证邮箱") };
+}
 
 export default async function VerifyEmailPage({
   searchParams,

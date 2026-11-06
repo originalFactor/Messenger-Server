@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { getTranslator } from "@/lib/i18n/server";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -65,6 +66,7 @@ async function loadUserDetail(userId: string) {
 }
 
 export default async function AdminUserDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const t = await getTranslator();
   const admin = await requireAdminUser();
   if (!admin) {
     redirect("/console");
@@ -80,87 +82,86 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
     <div className="grid gap-6">
       <div className="flex items-center gap-3">
         <Button variant="outline" size="icon" asChild>
-          <Link href="/console/admin/users" aria-label="返回用户列表">
+          <Link href="/console/admin/users" aria-label={t("返回用户列表")}>
             <ArrowLeft />
           </Link>
         </Button>
         <h1 className="text-xl font-semibold tracking-tight break-all">{user.email}</h1>
         <Badge variant={user.role === "admin" ? "default" : "secondary"}>
-          {user.role === "admin" ? "管理员" : "用户"}
+          {user.role === "admin" ? t("管理员") : t("用户")}
         </Badge>
         <Badge variant="outline">
-          {user.emailVerifiedAt ? `邮箱已验证 · ${formatDateTime(user.emailVerifiedAt)}` : "邮箱未验证"}
+          {user.emailVerifiedAt ? t("邮箱已验证 · {0}", { "0": formatDateTime(user.emailVerifiedAt, t.locale) }) : t("邮箱未验证")}
         </Badge>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-4">
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">可用额度</CardDescription>
-            <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(quota.balance)}</CardTitle>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("可用额度")}</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(quota.balance, t.locale)}</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
             {quota.available
               ? quota.expiresAt === null
-                ? "有效期不限"
-                : `最晚至 ${formatDateTime(quota.expiresAt)}`
+                ? t("有效期不限")
+                : t("最晚至 {0}", { "0": formatDateTime(quota.expiresAt, t.locale) })
               : quota.reason === "expired"
-                ? "全部套餐已过期"
-                : "暂无可用额度"}
+                ? t("全部套餐已过期")
+                : t("暂无可用额度")}
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">未过期条目</CardDescription>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("未过期条目")}</CardDescription>
             <CardTitle className="text-2xl tracking-tighter tabular-nums">
               {entitlements.filter((entry) => entry.expiresAt === null || entry.expiresAt > now).length}
             </CardTitle>
           </CardHeader>
-          <CardContent className="text-xs text-muted-foreground">共 {entitlements.length} 条</CardContent>
+          <CardContent className="text-xs text-muted-foreground">{t("共")}{" "}{entitlements.length} {" "}{t("条")}</CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">注册时间</CardDescription>
-            <CardTitle className="text-base tracking-tight tabular-nums">{formatDateTime(user.createdAt)}</CardTitle>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("注册时间")}</CardDescription>
+            <CardTitle className="text-base tracking-tight tabular-nums">{formatDateTime(user.createdAt, t.locale)}</CardTitle>
           </CardHeader>
-          <CardContent className="text-xs text-muted-foreground">用户 ID {user.id}</CardContent>
+          <CardContent className="text-xs text-muted-foreground">{t("用户 ID")}{" "}{user.id}</CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">最近登录</CardDescription>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("最近登录")}</CardDescription>
             <CardTitle className="text-base tracking-tight tabular-nums">
-              {user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "—"}
+              {user.lastLoginAt ? formatDateTime(user.lastLoginAt, t.locale) : "—"}
             </CardTitle>
           </CardHeader>
-          <CardContent className="text-xs text-muted-foreground">按条目独立计有效期</CardContent>
+          <CardContent className="text-xs text-muted-foreground">{t("按条目独立计有效期")}</CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">云同步</CardTitle>
+          <CardTitle className="text-base">{t("云同步")}</CardTitle>
           <CardDescription>
-            用户当前在云端的活跃数据（不含已删除项）
-            {sync.lastSyncAt ? ` · 最近同步 ${formatDateTime(sync.lastSyncAt)}` : " · 尚无同步数据"}
+            {" "}{t("用户当前在云端的活跃数据（不含已删除项）")}{" "}{sync.lastSyncAt ? t(" · 最近同步 {0}", { "0": formatDateTime(sync.lastSyncAt, t.locale) }) : t("· 尚无同步数据")}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <div>
-              <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">会话</p>
-              <p className="text-xl font-semibold tracking-tight tabular-nums">{formatTokens(sync.conversations)}</p>
+              <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">{t("会话")}</p>
+              <p className="text-xl font-semibold tracking-tight tabular-nums">{formatTokens(sync.conversations, t.locale)}</p>
             </div>
             <div>
-              <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">智能体</p>
-              <p className="text-xl font-semibold tracking-tight tabular-nums">{formatTokens(sync.agents)}</p>
+              <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">{t("智能体")}</p>
+              <p className="text-xl font-semibold tracking-tight tabular-nums">{formatTokens(sync.agents, t.locale)}</p>
             </div>
             <div>
-              <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">服务商</p>
-              <p className="text-xl font-semibold tracking-tight tabular-nums">{formatTokens(sync.providers)}</p>
+              <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">{t("服务商")}</p>
+              <p className="text-xl font-semibold tracking-tight tabular-nums">{formatTokens(sync.providers, t.locale)}</p>
             </div>
             <div>
-              <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">消息</p>
-              <p className="text-xl font-semibold tracking-tight tabular-nums">{formatTokens(sync.messages)}</p>
+              <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">{t("消息")}</p>
+              <p className="text-xl font-semibold tracking-tight tabular-nums">{formatTokens(sync.messages, t.locale)}</p>
             </div>
           </div>
         </CardContent>
@@ -175,24 +176,24 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">套餐条目</CardTitle>
+          <CardTitle className="text-base">{t("套餐条目")}</CardTitle>
           <CardDescription>
-            每次卡密兑换 / 管理员授予各产生一条条目，额度与有效期独立计算；消耗按先过期先用扣减。
+            {" "}{t("每次卡密兑换 / 管理员授予各产生一条条目，额度与有效期独立计算；消耗按先过期先用扣减。")}{" "}
           </CardDescription>
         </CardHeader>
         <CardContent>
           {entitlements.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">该用户还没有套餐条目。</p>
+            <p className="py-6 text-center text-sm text-muted-foreground">{t("该用户还没有套餐条目。")}</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>获得时间</TableHead>
-                  <TableHead>来源</TableHead>
-                  <TableHead>套餐</TableHead>
-                  <TableHead>剩余额度</TableHead>
-                  <TableHead>有效期至</TableHead>
-                  <TableHead className="text-right">状态</TableHead>
+                  <TableHead>{t("获得时间")}</TableHead>
+                  <TableHead>{t("来源")}</TableHead>
+                  <TableHead>{t("套餐")}</TableHead>
+                  <TableHead>{t("剩余额度")}</TableHead>
+                  <TableHead>{t("有效期至")}</TableHead>
+                  <TableHead className="text-right">{t("状态")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -200,22 +201,22 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
                   const active = entry.expiresAt === null || entry.expiresAt > now;
                   return (
                     <TableRow key={entry._id}>
-                      <TableCell className="whitespace-nowrap tabular-nums">{formatDateTime(entry.createdAt)}</TableCell>
+                      <TableCell className="whitespace-nowrap tabular-nums">{formatDateTime(entry.createdAt, t.locale)}</TableCell>
                       <TableCell>
                         <Badge variant="outline">{sourceLabels[entry.source] ?? entry.source}</Badge>
                       </TableCell>
                       <TableCell>{entry.planName ?? "—"}</TableCell>
-                      <TableCell className="tabular-nums">{formatTokens(entry.balance)}</TableCell>
+                      <TableCell className="tabular-nums">{formatTokens(entry.balance, t.locale)}</TableCell>
                       <TableCell className="whitespace-nowrap tabular-nums">
-                        {entry.expiresAt === null ? "不限" : formatDateTime(entry.expiresAt)}
+                        {entry.expiresAt === null ? t("不限") : formatDateTime(entry.expiresAt, t.locale)}
                       </TableCell>
                       <TableCell className="text-right">
                         {active ? (
                           <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" variant="secondary">
-                            生效中
+                            {" "}{t("生效中")}{" "}
                           </Badge>
                         ) : (
-                          <Badge variant="secondary">已过期</Badge>
+                          <Badge variant="secondary">{t("已过期")}</Badge>
                         )}
                       </TableCell>
                     </TableRow>

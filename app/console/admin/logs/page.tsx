@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { getTranslator } from "@/lib/i18n/server";
 import { redirect } from "next/navigation";
 import { LogsTable } from "@/components/admin/logs-table";
 import { LogsFilterBar } from "@/components/admin/logs-filter-bar";
@@ -112,6 +113,7 @@ export default async function AdminLogsPage({
     page?: string;
   }>;
 }) {
+  const t = await getTranslator();
   const admin = await requireAdminUser();
   if (!admin) {
     redirect("/console");
@@ -138,7 +140,7 @@ export default async function AdminLogsPage({
   return (
     <div className="grid gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold tracking-tight">系统日志</h1>
+        <h1 className="text-xl font-semibold tracking-tight">{t("系统日志")}</h1>
         <LogsFilterBar
           key={`${activeRange}:${from ?? ""}:${to ?? ""}:${level ?? ""}:${source ?? ""}`}
           activeRange={activeRange}

@@ -1,3 +1,5 @@
+import { createTranslator, type Translator } from "@/lib/i18n";
+
 /** Optional Web sampling parameters; numeric compatibility fields remain in cloud sync. */
 export interface SamplingSettings {
   temperature?: number | null;
@@ -18,13 +20,13 @@ export type SamplingKey = (typeof SAMPLING_FIELDS)[number]["key"];
 export type SamplingOverrides = Partial<Record<(typeof SAMPLING_FIELDS)[number]["override"], number | null>> &
   Partial<Record<(typeof SAMPLING_FIELDS)[number]["follow"], boolean>>;
 
-export function parseSamplingInputs(inputs: Record<SamplingKey, string>): Record<SamplingKey, number | null> {
+export function parseSamplingInputs(inputs: Record<SamplingKey, string>, t: Translator = createTranslator("zh-CN")): Record<SamplingKey, number | null> {
   const result = {} as Record<SamplingKey, number | null>;
   for (const field of SAMPLING_FIELDS) {
     const text = inputs[field.key].trim();
     const value = text ? Number(text) : null;
     if (value !== null && (!Number.isFinite(value) || value < field.min || value > field.max)) {
-      throw new Error(`${field.label} 需为 ${field.min}–${field.max}，或留空不发送。`);
+      throw new Error(t("{0} 需为 {1}–{2}，或留空不发送。", { "0": field.label, "1": field.min, "2": field.max }));
     }
     result[field.key] = value;
   }

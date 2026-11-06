@@ -1,3 +1,4 @@
+import { getTranslator } from "@/lib/i18n/server";
 /*
  * Copyright 2026 originalFactor
  *
@@ -19,7 +20,10 @@ import { ResetPasswordForm } from "@/components/reset-password-form";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "重置密码" };
+export async function generateMetadata() {
+  const t = await getTranslator();
+  return { title: t("重置密码") };
+}
 
 export default async function ResetPasswordPage({
   searchParams,

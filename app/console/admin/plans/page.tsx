@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { getTranslator } from "@/lib/i18n/server";
 import { redirect } from "next/navigation";
 import { PlansManager } from "@/components/admin/plans-manager";
 import { requireAdminUser } from "@/lib/auth";
@@ -22,6 +23,7 @@ import { listPlans } from "@/lib/storage";
 export const dynamic = "force-dynamic";
 
 export default async function AdminPlansPage() {
+  const t = await getTranslator();
   const admin = await requireAdminUser();
   if (!admin) {
     redirect("/console");
@@ -31,7 +33,7 @@ export default async function AdminPlansPage() {
 
   return (
     <div className="grid gap-6">
-      <h1 className="text-xl font-semibold tracking-tight">套餐管理</h1>
+      <h1 className="text-xl font-semibold tracking-tight">{t("套餐管理")}</h1>
       <PlansManager plans={plans} />
     </div>
   );

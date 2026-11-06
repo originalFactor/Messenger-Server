@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
@@ -69,6 +70,7 @@ const emptyForm: PlanFormState = {
 };
 
 export function PlansManager({ plans }: { plans: PlanDoc[] }) {
+  const t = useTranslator();
   const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<PlanFormState>(emptyForm);
@@ -110,11 +112,11 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
       sortOrder: Number(form.sortOrder) || 0,
     };
     if (!Number.isFinite(payload.quotaTokens) || payload.quotaTokens <= 0) {
-      setError("额度必须是正整数。");
+      setError(t("额度必须是正整数。"));
       return;
     }
     if (!Number.isFinite(payload.validityDays) || payload.validityDays <= 0) {
-      setError("有效天数必须是正整数。");
+      setError(t("有效天数必须是正整数。"));
       return;
     }
 
@@ -128,20 +130,20 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
       });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        setError(body?.error ?? "保存失败，请稍后重试。");
+        setError(body?.error ?? t("保存失败，请稍后重试。"));
         return;
       }
       setShowForm(false);
       router.refresh();
     } catch {
-      setError("网络错误，请稍后重试。");
+      setError(t("网络错误，请稍后重试。"));
     } finally {
       setBusy(false);
     }
   }
 
   async function remove(plan: PlanDoc) {
-    if (!window.confirm(`确定删除套餐「${plan.name}」？已发出的卡密仍可按开出时的内容兑换。`)) {
+    if (!window.confirm(t("确定删除套餐「{0}」？已发出的卡密仍可按开出时的内容兑换。", { "0": plan.name }))) {
       return;
     }
     setBusy(true);
@@ -149,7 +151,7 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
       const response = await fetch(`/api/admin/plans/${plan._id}`, { method: "DELETE" });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        setError(body?.error ?? "删除失败。");
+        setError(body?.error ?? t("删除失败。"));
         return;
       }
       router.refresh();
@@ -163,23 +165,23 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
       <div>
         <Button onClick={startCreate}>
           <Plus />
-          新建套餐
+          {" "}{t("新建套餐")}{" "}
         </Button>
       </div>
 
       {showForm ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">{editingId ? "编辑套餐" : "新建套餐"}</CardTitle>
+            <CardTitle className="text-base">{editingId ? t("编辑套餐") : t("新建套餐")}</CardTitle>
             <CardDescription>
-              额度在兑换时一次性充入；有效期自兑换时刻（或现有有效期之后）起算。
+              {" "}{t("额度在兑换时一次性充入；有效期自兑换时刻（或现有有效期之后）起算。")}{" "}
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
             <form className="grid gap-4" onSubmit={submit}>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="grid gap-2">
-                  <Label htmlFor="plan-name">名称</Label>
+                  <Label htmlFor="plan-name">{t("名称")}</Label>
                   <Input
                     id="plan-name"
                     required
@@ -188,7 +190,7 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="plan-quota">额度（tokens）</Label>
+                  <Label htmlFor="plan-quota">{t("额度（tokens）")}</Label>
                   <Input
                     id="plan-quota"
                     required
@@ -199,7 +201,7 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="plan-validity">有效期（天）</Label>
+                  <Label htmlFor="plan-validity">{t("有效期（天）")}</Label>
                   <Input
                     id="plan-validity"
                     required
@@ -210,7 +212,7 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="plan-price">价格文案（选填）</Label>
+                  <Label htmlFor="plan-price">{t("价格文案（选填）")}</Label>
                   <Input
                     id="plan-price"
                     placeholder="￥9.9"
@@ -219,7 +221,7 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="plan-sort">排序</Label>
+                  <Label htmlFor="plan-sort">{t("排序")}</Label>
                   <Input
                     id="plan-sort"
                     type="number"
@@ -229,19 +231,19 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="plan-enabled">启用</Label>
+                  <Label htmlFor="plan-enabled">{t("启用")}</Label>
                   <Select value={form.enabled} onValueChange={(value) => setForm({ ...form, enabled: value })}>
                     <SelectTrigger id="plan-enabled" className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="1">启用</SelectItem>
-                      <SelectItem value="0">停用</SelectItem>
+                      <SelectItem value="1">{t("启用")}</SelectItem>
+                      <SelectItem value="0">{t("停用")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="grid gap-2 sm:col-span-2 lg:col-span-3">
-                  <Label htmlFor="plan-desc">描述（选填）</Label>
+                  <Label htmlFor="plan-desc">{t("描述（选填）")}</Label>
                   <Input
                     id="plan-desc"
                     value={form.description}
@@ -252,10 +254,10 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
               <div className="flex gap-2">
                 <Button type="submit" disabled={busy}>
-                  {editingId ? "保存" : "创建"}
+                  {editingId ? t("保存") : t("创建")}
                 </Button>
                 <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
-                  取消
+                  {" "}{t("取消")}{" "}
                 </Button>
               </div>
             </form>
@@ -267,19 +269,19 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
         <CardContent className="pt-6">
           {plans.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
-              还没有套餐，点击「新建套餐」创建第一个。
+              {" "}{t("还没有套餐，点击「新建套餐」创建第一个。")}{" "}
             </p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>名称</TableHead>
-                  <TableHead>额度</TableHead>
-                  <TableHead>有效期</TableHead>
-                  <TableHead>价格文案</TableHead>
-                  <TableHead>排序</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
+                  <TableHead>{t("名称")}</TableHead>
+                  <TableHead>{t("额度")}</TableHead>
+                  <TableHead>{t("有效期")}</TableHead>
+                  <TableHead>{t("价格文案")}</TableHead>
+                  <TableHead>{t("排序")}</TableHead>
+                  <TableHead>{t("状态")}</TableHead>
+                  <TableHead className="text-right">{t("操作")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -291,22 +293,22 @@ export function PlansManager({ plans }: { plans: PlanDoc[] }) {
                         <div className="text-xs text-muted-foreground">{plan.description}</div>
                       ) : null}
                     </TableCell>
-                    <TableCell className="tabular-nums">{formatTokens(plan.quotaTokens)}</TableCell>
-                    <TableCell className="tabular-nums">{plan.validityDays} 天</TableCell>
+                    <TableCell className="tabular-nums">{formatTokens(plan.quotaTokens, t.locale)}</TableCell>
+                    <TableCell className="tabular-nums">{plan.validityDays} {" "}{t("天")}</TableCell>
                     <TableCell>{plan.price || "—"}</TableCell>
                     <TableCell className="tabular-nums">{plan.sortOrder}</TableCell>
                     <TableCell>
                       <Badge variant={plan.enabled ? "default" : "secondary"}>
-                        {plan.enabled ? "启用" : "停用"}
+                        {plan.enabled ? t("启用") : t("停用")}
                       </Badge>
                     </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-2">
                         <Button variant="outline" size="sm" onClick={() => startEdit(plan)}>
-                          编辑
+                          {" "}{t("编辑")}{" "}
                         </Button>
                         <Button variant="destructive" size="sm" onClick={() => remove(plan)} disabled={busy}>
-                          删除
+                          {" "}{t("删除")}{" "}
                         </Button>
                       </div>
                     </TableCell>

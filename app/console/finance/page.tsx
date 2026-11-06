@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { getTranslator } from "@/lib/i18n/server";
 import { redirect } from "next/navigation";
 import { RedeemForm } from "@/components/console/redeem-form";
 import {
@@ -38,6 +39,7 @@ import { listRedemptions } from "@/lib/storage";
 export const dynamic = "force-dynamic";
 
 export default async function ConsoleFinancePage() {
+  const t = await getTranslator();
   const session = await requireUserSession();
   if (!session) {
     redirect("/login");
@@ -47,38 +49,38 @@ export default async function ConsoleFinancePage() {
 
   return (
     <div className="grid gap-6">
-      <h1 className="text-xl font-semibold tracking-tight">财务</h1>
+      <h1 className="text-xl font-semibold tracking-tight">{t("财务")}</h1>
 
       <RedeemForm />
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">历史兑换记录</CardTitle>
-          <CardDescription>最近的 50 条兑换记录。</CardDescription>
+          <CardTitle className="text-base">{t("历史兑换记录")}</CardTitle>
+          <CardDescription>{t("最近的 50 条兑换记录。")}</CardDescription>
         </CardHeader>
         <CardContent>
           {redemptions.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">还没有兑换记录。</p>
+            <p className="py-6 text-center text-sm text-muted-foreground">{t("还没有兑换记录。")}</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>时间</TableHead>
-                  <TableHead>卡密</TableHead>
-                  <TableHead>套餐</TableHead>
-                  <TableHead>额度</TableHead>
-                  <TableHead className="text-right">有效期至</TableHead>
+                  <TableHead>{t("时间")}</TableHead>
+                  <TableHead>{t("卡密")}</TableHead>
+                  <TableHead>{t("套餐")}</TableHead>
+                  <TableHead>{t("额度")}</TableHead>
+                  <TableHead className="text-right">{t("有效期至")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {redemptions.map((redemption) => (
                   <TableRow key={redemption._id}>
-                    <TableCell className="whitespace-nowrap">{formatDateTime(redemption.createdAt)}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatDateTime(redemption.createdAt, t.locale)}</TableCell>
                     <TableCell className="font-mono text-xs">{redemption.cardCode}</TableCell>
                     <TableCell>{redemption.planName}</TableCell>
-                    <TableCell className="tabular-nums">+{formatTokens(redemption.quotaTokens)}</TableCell>
+                    <TableCell className="tabular-nums">+{formatTokens(redemption.quotaTokens, t.locale)}</TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {formatDateTime(redemption.createdAt + redemption.validityDays * 24 * 60 * 60 * 1000)}
+                      {formatDateTime(redemption.createdAt + redemption.validityDays * 24 * 60 * 60 * 1000, t.locale)}
                     </TableCell>
                   </TableRow>
                 ))}

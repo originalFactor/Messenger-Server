@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { getTranslator } from "@/lib/i18n/server";
 import { redirect } from "next/navigation";
 import { CardsManager } from "@/components/admin/cards-manager";
 import { requireAdminUser } from "@/lib/auth";
@@ -22,6 +23,7 @@ import { listPlans } from "@/lib/storage";
 export const dynamic = "force-dynamic";
 
 export default async function AdminCardsPage() {
+  const t = await getTranslator();
   const admin = await requireAdminUser();
   if (!admin) {
     redirect("/console");
@@ -31,7 +33,7 @@ export default async function AdminCardsPage() {
 
   return (
     <div className="grid gap-6">
-      <h1 className="text-xl font-semibold tracking-tight">开卡</h1>
+      <h1 className="text-xl font-semibold tracking-tight">{t("开卡")}</h1>
       <CardsManager plans={plans} />
     </div>
   );

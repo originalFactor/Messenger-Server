@@ -1,5 +1,7 @@
 "use client";
 
+import { LanguageSwitcher } from "@/components/i18n/language-switcher";
+
 /*
  * Copyright 2026 originalFactor
  *
@@ -15,6 +17,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import { useTranslator } from "@/components/i18n/locale-provider";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -65,6 +68,7 @@ export interface ConsoleShellProps {
 }
 
 export function ConsoleShell({ email, displayName, avatarUrl, role, children }: ConsoleShellProps) {
+  const t = useTranslator();
   const pathname = usePathname();
   const router = useRouter();
 
@@ -95,13 +99,13 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
         </SidebarHeader>
         <SidebarContent>
           <SidebarGroup>
-            <SidebarGroupLabel>用户功能区</SidebarGroupLabel>
+            <SidebarGroupLabel>{t("用户功能区")}</SidebarGroupLabel>
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={isActive("/console")}>
                   <Link href="/console">
                     <LayoutDashboard />
-                    <span>概览</span>
+                    <span>{t("概览")}</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -109,7 +113,7 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
                 <SidebarMenuButton asChild isActive={isActive("/console/account")}>
                   <Link href="/console/account">
                     <UserRound />
-                    <span>用户中心</span>
+                    <span>{t("用户中心")}</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -125,7 +129,7 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
                 <SidebarMenuButton asChild isActive={isActive("/console/finance")}>
                   <Link href="/console/finance">
                     <Wallet />
-                    <span>财务</span>
+                    <span>{t("财务")}</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -133,7 +137,7 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
                 <SidebarMenuButton asChild isActive={isActive("/models")}>
                   <Link href="/models">
                     <Boxes />
-                    <span>模型广场</span>
+                    <span>{t("模型广场")}</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -142,13 +146,13 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
 
           {role === "admin" ? (
             <SidebarGroup>
-              <SidebarGroupLabel>管理功能区</SidebarGroupLabel>
+              <SidebarGroupLabel>{t("管理功能区")}</SidebarGroupLabel>
               <SidebarMenu>
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={pathname === "/console/admin"}>
                     <Link href="/console/admin">
                       <Globe />
-                      <span>全站概览</span>
+                      <span>{t("全站概览")}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -156,7 +160,7 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
                   <SidebarMenuButton asChild isActive={isActive("/console/admin/usage")}>
                     <Link href="/console/admin/usage">
                       <Activity />
-                      <span>调用记录</span>
+                      <span>{t("调用记录")}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -164,7 +168,7 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
                   <SidebarMenuButton asChild isActive={isActive("/console/admin/plans")}>
                     <Link href="/console/admin/plans">
                       <Layers />
-                      <span>套餐管理</span>
+                      <span>{t("套餐管理")}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -172,7 +176,7 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
                   <SidebarMenuButton asChild isActive={isActive("/console/admin/cards")}>
                     <Link href="/console/admin/cards">
                       <CreditCard />
-                      <span>开卡</span>
+                      <span>{t("开卡")}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -180,7 +184,7 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
                   <SidebarMenuButton asChild isActive={isActive("/console/admin/upstreams")}>
                     <Link href="/console/admin/upstreams">
                       <Server />
-                      <span>上游管理</span>
+                      <span>{t("上游管理")}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -188,7 +192,7 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
                   <SidebarMenuButton asChild isActive={isActive("/console/admin/users")}>
                     <Link href="/console/admin/users">
                       <Users />
-                      <span>用户管理</span>
+                      <span>{t("用户管理")}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -196,7 +200,7 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
                   <SidebarMenuButton asChild isActive={isActive("/console/admin/logs")}>
                     <Link href="/console/admin/logs">
                       <ScrollText />
-                      <span>系统日志</span>
+                      <span>{t("系统日志")}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -216,13 +220,13 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
               </span>
               {role === "admin" ? (
                 <Badge variant="outline" className="shrink-0">
-                  管理员
+                  {" "}{t("管理员")}{" "}
                 </Badge>
               ) : null}
             </Link>
             <Button variant="outline" size="sm" onClick={handleLogout}>
               <LogOut />
-              退出登录
+              {" "}{t("退出登录")}{" "}
             </Button>
           </div>
         </SidebarFooter>
@@ -232,7 +236,8 @@ export function ConsoleShell({ email, displayName, avatarUrl, role, children }: 
         <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
           <SidebarTrigger className="-ml-1" />
           <Separator orientation="vertical" className="mr-1 data-[orientation=vertical]:h-4" />
-          <span className="text-sm text-muted-foreground">控制台</span>
+          <div className="ml-auto"><LanguageSwitcher /></div>
+          <span className="text-sm text-muted-foreground">{t("控制台")}</span>
         </header>
         <div className="mx-auto w-full max-w-5xl min-w-0 flex-1 p-4 sm:p-6">{children}</div>
       </SidebarInset>

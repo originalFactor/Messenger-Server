@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -30,6 +31,7 @@ import {
 import { Input } from "@/components/ui/input";
 
 export function ApiKeyCard({ apiKey }: { apiKey: string }) {
+  const t = useTranslator();
   const router = useRouter();
   const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -41,16 +43,16 @@ export function ApiKeyCard({ apiKey }: { apiKey: string }) {
   async function copyKey() {
     try {
       await navigator.clipboard.writeText(apiKey);
-      toast.success("已复制到剪贴板");
+      toast.success(t("已复制到剪贴板"));
     } catch {
-      setError("复制失败，请手动选择复制。");
+      setError(t("复制失败，请手动选择复制。"));
     }
   }
 
   async function regenerate() {
     if (
       hasKey &&
-      !window.confirm("重置后旧密钥将立即失效，已登录的 Messenger 也需要重新登录才能继续使用。确定重置？")
+      !window.confirm(t("重置后旧密钥将立即失效，已登录的 Messenger 也需要重新登录才能继续使用。确定重置？"))
     ) {
       return;
     }
@@ -60,14 +62,14 @@ export function ApiKeyCard({ apiKey }: { apiKey: string }) {
       const response = await fetch("/api/console/api-key", { method: "POST" });
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-        setError(payload?.error ?? "重置失败，请稍后重试。");
+        setError(payload?.error ?? t("重置失败，请稍后重试。"));
         return;
       }
       setRevealed(true);
-      toast.success(hasKey ? "密钥已重置" : "密钥已生成");
+      toast.success(hasKey ? t("密钥已重置") : t("密钥已生成"));
       router.refresh();
     } catch {
-      setError("网络错误，请稍后重试。");
+      setError(t("网络错误，请稍后重试。"));
     } finally {
       setBusy(false);
     }
@@ -76,12 +78,9 @@ export function ApiKeyCard({ apiKey }: { apiKey: string }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">AI API 密钥</CardTitle>
+        <CardTitle className="text-base">{t("AI API 密钥")}</CardTitle>
         <CardDescription>
-          Messenger 应用登录后会自动配好内置 AI 服务，无需手动填写此密钥。也可接入其他客户端，
-          同一接口地址（本站 <code className="font-mono text-xs">/v1</code>）同时支持
-          OpenAI Chat Completions、OpenAI Responses（Codex）、Anthropic Messages（Claude Code）
-          与 Gemini Interactions 四种协议。
+          {" "}{t("Messenger 应用登录后会自动配好内置 AI 服务，无需手动填写此密钥。也可接入其他客户端， 同一接口地址（本站")}{" "}<code className="font-mono text-xs">/v1</code>{t("）同时支持 OpenAI Chat Completions、OpenAI Responses（Codex）、Anthropic Messages（Claude Code） 与 Gemini Interactions 四种协议。")}{" "}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
@@ -89,22 +88,22 @@ export function ApiKeyCard({ apiKey }: { apiKey: string }) {
           <div className="flex flex-wrap items-center gap-2">
             <Input readOnly value={revealed ? apiKey : masked} className="max-w-md font-mono text-xs" />
             <Button variant="outline" size="sm" onClick={() => setRevealed((value) => !value)}>
-              {revealed ? "隐藏" : "显示"}
+              {revealed ? t("隐藏") : t("显示")}
             </Button>
             <Button variant="outline" size="sm" onClick={copyKey}>
-              复制
+              {" "}{t("复制")}{" "}
             </Button>
             <Button variant="destructive" size="sm" onClick={regenerate} disabled={busy}>
-              {busy ? "重置中…" : "重置密钥"}
+              {busy ? t("重置中…") : t("重置密钥")}
             </Button>
           </div>
         ) : (
           <div>
             <p className="mb-3 text-sm text-muted-foreground">
-              当前账号还没有 AI API 密钥，生成后即可在 Messenger 中使用云 AI 服务。
+              {" "}{t("当前账号还没有 AI API 密钥，生成后即可在 Messenger 中使用云 AI 服务。")}{" "}
             </p>
             <Button onClick={regenerate} disabled={busy}>
-              {busy ? "生成中…" : "生成密钥"}
+              {busy ? t("生成中…") : t("生成密钥")}
             </Button>
           </div>
         )}

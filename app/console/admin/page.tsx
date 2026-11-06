@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { getTranslator } from "@/lib/i18n/server";
 import { redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -38,6 +39,7 @@ import { getSiteOverview, getSyncOverview } from "@/lib/storage";
 export const dynamic = "force-dynamic";
 
 export default async function AdminOverviewPage() {
+  const t = await getTranslator();
   const admin = await requireAdminUser();
   if (!admin) {
     redirect("/console");
@@ -47,90 +49,89 @@ export default async function AdminOverviewPage() {
 
   return (
     <div className="grid gap-6">
-      <h1 className="text-xl font-semibold tracking-tight">全站概览</h1>
+      <h1 className="text-xl font-semibold tracking-tight">{t("全站概览")}</h1>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">用户总数</CardDescription>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("用户总数")}</CardDescription>
             <CardTitle className="text-2xl tracking-tighter tabular-nums">{overview.users.total}</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
-            管理员 {overview.users.admins} · 近 24h 新增 {overview.users.newToday}
+            {" "}{t("管理员")}{" "}{overview.users.admins} {" "}{t("· 近 24h 新增")}{" "}{overview.users.newToday}
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">近 24h 用量</CardDescription>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("近 24h 用量")}</CardDescription>
             <CardTitle className="text-2xl tracking-tighter tabular-nums">{overview.usage.today.requests}</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
-            {formatTokens(overview.usage.today.tokens)} tokens · 消耗 {formatTokens(overview.usage.today.cost)}
+            {formatTokens(overview.usage.today.tokens, t.locale)} {" "}{t("tokens · 消耗")}{" "}{formatTokens(overview.usage.today.cost, t.locale)}
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">近 7 天用量</CardDescription>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("近 7 天用量")}</CardDescription>
             <CardTitle className="text-2xl tracking-tighter tabular-nums">{overview.usage.week.requests}</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
-            {formatTokens(overview.usage.week.tokens)} tokens · 消耗 {formatTokens(overview.usage.week.cost)}
+            {formatTokens(overview.usage.week.tokens, t.locale)} {" "}{t("tokens · 消耗")}{" "}{formatTokens(overview.usage.week.cost, t.locale)}
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">卡密</CardDescription>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("卡密")}</CardDescription>
             <CardTitle className="text-2xl tracking-tighter tabular-nums">{overview.cards.total}</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
-            未用 {overview.cards.unused} · 已用 {overview.cards.redeemed} · 停用 {overview.cards.disabled}
+            {" "}{t("未用")}{" "}{overview.cards.unused} {" "}{t("· 已用")}{" "}{overview.cards.redeemed} {" "}{t("· 停用")}{" "}{overview.cards.disabled}
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">套餐</CardDescription>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("套餐")}</CardDescription>
             <CardTitle className="text-2xl tracking-tighter tabular-nums">
               {overview.plans.enabled}/{overview.plans.total}
             </CardTitle>
           </CardHeader>
-          <CardContent className="text-xs text-muted-foreground">启用中 / 总数</CardContent>
+          <CardContent className="text-xs text-muted-foreground">{t("启用中 / 总数")}</CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">上游</CardDescription>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("上游")}</CardDescription>
             <CardTitle className="text-2xl tracking-tighter tabular-nums">
               {overview.upstreams.enabled}/{overview.upstreams.total}
             </CardTitle>
           </CardHeader>
-          <CardContent className="text-xs text-muted-foreground">启用中 / 总数</CardContent>
+          <CardContent className="text-xs text-muted-foreground">{t("启用中 / 总数")}</CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">云同步</CardDescription>
-            <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(sync.conversations)}</CardTitle>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("云同步")}</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(sync.conversations, t.locale)}</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
-            同步用户 {sync.syncUsers} · 会话 · 智能体 {formatTokens(sync.agents)} · 服务商 {formatTokens(sync.providers)} ·
-            消息 {formatTokens(sync.messages)}
-            {sync.lastSyncAt ? ` · 最近同步 ${formatDateTime(sync.lastSyncAt)}` : ""}
+            {" "}{t("同步用户")}{" "}{sync.syncUsers} {" "}{t("· 会话 · 智能体")}{" "}{formatTokens(sync.agents, t.locale)} {" "}{t("· 服务商")}{" "}{formatTokens(sync.providers, t.locale)} {" "}{t("· 消息")}{" "}{formatTokens(sync.messages, t.locale)}
+            {sync.lastSyncAt ? t(" · 最近同步 {0}", { "0": formatDateTime(sync.lastSyncAt, t.locale) }) : ""}
           </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">最新注册用户</CardTitle>
+          <CardTitle className="text-base">{t("最新注册用户")}</CardTitle>
         </CardHeader>
         <CardContent>
           {overview.recentUsers.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">暂无用户。</p>
+            <p className="py-6 text-center text-sm text-muted-foreground">{t("暂无用户。")}</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>邮箱</TableHead>
-                  <TableHead>角色</TableHead>
-                  <TableHead className="text-right">注册时间</TableHead>
+                  <TableHead>{t("邮箱")}</TableHead>
+                  <TableHead>{t("角色")}</TableHead>
+                  <TableHead className="text-right">{t("注册时间")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -139,11 +140,11 @@ export default async function AdminOverviewPage() {
                     <TableCell className="max-w-52 truncate">{user.email}</TableCell>
                     <TableCell>
                       <Badge variant={user.role === "admin" ? "default" : "secondary"}>
-                        {user.role === "admin" ? "管理员" : "用户"}
+                        {user.role === "admin" ? t("管理员") : t("用户")}
                       </Badge>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-right text-muted-foreground">
-                      {formatDateTime(user.createdAt)}
+                      {formatDateTime(user.createdAt, t.locale)}
                     </TableCell>
                   </TableRow>
                 ))}

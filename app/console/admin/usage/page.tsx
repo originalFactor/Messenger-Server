@@ -13,6 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import { getTranslator } from "@/lib/i18n/server";
+import type { Translator } from "@/lib/i18n";
 import { redirect } from "next/navigation";
 import { UsageTrendChart } from "@/components/console/usage-trend-chart";
 import { UsageTable } from "@/components/admin/usage-table";
@@ -153,6 +155,7 @@ async function loadSiteUsageData(
   untilTs: number | undefined,
   bucketMs: number,
   page: number,
+  t: Translator,
 ) {
   // 当前页明细（20 条）+ 总数 + 曲线聚合（整个所选范围）并行拉取；
   // 上游列表用于把曲线/明细里的 upstreamId 解析成可读名称。
@@ -172,7 +175,7 @@ async function loadSiteUsageData(
     ts: bucket.ts,
     id: bucket.upstreamId === null
       ? null
-      : (upstreamNames.get(bucket.upstreamId) ?? "已删除"),
+      : (upstreamNames.get(bucket.upstreamId) ?? t("已删除")),
     tokens: bucket.tokens,
   }));
 
@@ -191,6 +194,7 @@ export default async function AdminUsagePage({
 }: {
   searchParams: Promise<{ range?: string; from?: string; to?: string; page?: string }>;
 }) {
+  const t = await getTranslator();
   const admin = await requireAdminUser();
   if (!admin) {
     redirect("/console");
@@ -216,12 +220,13 @@ export default async function AdminUsagePage({
     untilTs,
     bucketMs,
     requestedPage,
+    t,
   );
 
   return (
     <div className="grid gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold tracking-tight">调用记录</h1>
+        <h1 className="text-xl font-semibold tracking-tight">{t("调用记录")}</h1>
         <UsageRangePicker
           key={`${activeRange}:${from ?? ""}:${to ?? ""}`}
           activeRange={activeRange}
@@ -236,7 +241,7 @@ export default async function AdminUsagePage({
           windowMs={windowMs}
           now={now}
           sinceTs={sinceTs}
-          dimensionLabel="模型"
+          dimensionLabel={t("模型")}
           rangeLabel={rangeLabel}
         />
         <UsageTrendChart
@@ -244,7 +249,7 @@ export default async function AdminUsagePage({
           windowMs={windowMs}
           now={now}
           sinceTs={sinceTs}
-          dimensionLabel="上游"
+          dimensionLabel={t("上游")}
           rangeLabel={rangeLabel}
         />
       </div>

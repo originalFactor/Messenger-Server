@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -63,6 +64,7 @@ export function UsageRangePicker({
   /** 分页/查询参数附加的目标路径；用户概览页传 `/console`。 */
   basePath?: string;
 }) {
+  const t = useTranslator();
   const router = useRouter();
   // 初始展开：URL 已是自定义。导航后父页 key 变化会重建本组件，因此
   // 仅需在初始化时看 `activeRange === "custom"`。
@@ -99,7 +101,7 @@ export function UsageRangePicker({
     }
     // date input 的值恒为 YYYY-MM-DD，可直接字典序比较日期先后。
     if (fromValue !== "" && toValue !== "" && fromValue > toValue) {
-      setError("开始日期不能晚于结束日期。");
+      setError(t("开始日期不能晚于结束日期。"));
       return;
     }
     setError(null);
@@ -116,7 +118,7 @@ export function UsageRangePicker({
   return (
     <div className="flex flex-wrap items-end gap-2">
       <div className="grid gap-1">
-        <Label htmlFor="usage-range" className="text-xs text-muted-foreground">时间范围</Label>
+        <Label htmlFor="usage-range" className="text-xs text-muted-foreground">{t("时间范围")}</Label>
         <Select value={selectValue} onValueChange={onRangeChange}>
           <SelectTrigger id="usage-range" size="sm" className="w-36">
             <SelectValue />
@@ -124,7 +126,7 @@ export function UsageRangePicker({
           <SelectContent>
             {PRESET_ITEMS.map((item) => (
               <SelectItem key={item.value} value={item.value}>
-                {item.label}
+                {t(item.label)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -134,7 +136,7 @@ export function UsageRangePicker({
       {customOpen ? (
         <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
           <div className="grid gap-1">
-            <Label htmlFor="usage-from" className="text-xs text-muted-foreground">开始</Label>
+            <Label htmlFor="usage-from" className="text-xs text-muted-foreground">{t("开始")}</Label>
             <Input
               id="usage-from"
               type="date"
@@ -144,7 +146,7 @@ export function UsageRangePicker({
             />
           </div>
           <div className="grid gap-1">
-            <Label htmlFor="usage-to" className="text-xs text-muted-foreground">结束</Label>
+            <Label htmlFor="usage-to" className="text-xs text-muted-foreground">{t("结束")}</Label>
             <Input
               id="usage-to"
               type="date"
@@ -154,7 +156,7 @@ export function UsageRangePicker({
             />
           </div>
           <Button type="submit" size="sm" variant="outline">
-            查询
+            {" "}{t("查询")}{" "}
           </Button>
           {error !== null ? (
             <p className="text-xs text-destructive">{error}</p>

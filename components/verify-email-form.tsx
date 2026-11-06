@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,7 @@ type State =
  * 令牌是一次性的，重复提交只会拿到「已失效」。
  */
 export function VerifyEmailForm({ token }: { token: string }) {
+  const t = useTranslator();
   const [state, setState] = useState<State>(() => (token === "" ? { kind: "missing" } : { kind: "pending" }));
   const submitted = useRef(false);
 
@@ -78,41 +80,41 @@ export function VerifyEmailForm({ token }: { token: string }) {
   return (
     <Card className="w-full max-w-sm">
       <CardHeader className="items-center text-center">
-        <CardTitle className="text-xl">邮箱验证</CardTitle>
+        <CardTitle className="text-xl">{t("邮箱验证")}</CardTitle>
         <CardDescription>
           {state.kind === "verified"
-            ? "验证成功"
+            ? t("验证成功")
             : state.kind === "pending"
-              ? "正在验证…"
+              ? t("正在验证…")
               : state.kind === "missing"
-                ? "链接不完整"
-                : "验证未完成"}
+                ? t("链接不完整")
+                : t("验证未完成")}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4 text-sm text-muted-foreground">
         {state.kind === "verified" ? (
           <>
-            <p>你的邮箱已验证，现在可以正常接收找回密码等账户邮件。</p>
+            <p>{t("你的邮箱已验证，现在可以正常接收找回密码等账户邮件。")}</p>
             <Button asChild>
-              <Link href="/console">进入控制台</Link>
+              <Link href="/console">{t("进入控制台")}</Link>
             </Button>
           </>
         ) : null}
-        {state.kind === "pending" ? <p>请稍候，不要关闭页面。</p> : null}
+        {state.kind === "pending" ? <p>{t("请稍候，不要关闭页面。")}</p> : null}
         {state.kind === "missing" ? (
           <>
-            <p>这个链接没有带上验证令牌，可能没有被完整复制。</p>
+            <p>{t("这个链接没有带上验证令牌，可能没有被完整复制。")}</p>
             <Button asChild variant="outline">
-              <Link href="/console">进入控制台重新发送</Link>
+              <Link href="/console">{t("进入控制台重新发送")}</Link>
             </Button>
           </>
         ) : null}
         {state.kind === "failed" ? (
           <>
-            <p>{state.message}</p>
-            <p>登录后在控制台可以重新发送验证邮件。</p>
+            <p>{t(state.message)}</p>
+            <p>{t("登录后在控制台可以重新发送验证邮件。")}</p>
             <Button asChild>
-              <Link href="/login">去登录</Link>
+              <Link href="/login">{t("去登录")}</Link>
             </Button>
           </>
         ) : null}

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { getTranslator } from "@/lib/i18n/server";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { LogDetailTable } from "@/components/admin/log-detail-table";
@@ -111,7 +112,7 @@ function pageHref(
   return `/console/admin/logs?${params.toString()}`;
 }
 
-export function LogsTable({
+export async function LogsTable({
   rows,
   total,
   page,
@@ -121,28 +122,28 @@ export function LogsTable({
   from,
   to,
 }: LogsTableProps) {
+  const t = await getTranslator();
   const totalPages = total === 0 ? 1 : Math.ceil(total / pageSize);
   const pages = pageWindow(page, totalPages);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">系统运行日志</CardTitle>
+        <CardTitle className="text-base">{t("系统运行日志")}</CardTitle>
         <CardDescription>
-          每页 {pageSize} 条，按时间倒序；共 {total} 条 / {totalPages} 页。级别取日志严重度，来源取触发模块；
-          点击任意一行查看详情；请求信息与原始上下文仅在有数据时显示。
+          {" "}{t("每页")}{" "}{pageSize} {" "}{t("条，按时间倒序；共")}{" "}{total} {" "}{t("条 /")}{" "}{totalPages} {" "}{t("页。级别取日志严重度，来源取触发模块； 点击任意一行查看详情；请求信息与原始上下文仅在有数据时显示。")}{" "}
         </CardDescription>
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">所选筛选条件下暂无日志记录。</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">{t("所选筛选条件下暂无日志记录。")}</p>
         ) : (
           // 表格与详情模态窗在客户端组件里（行点击要状态）；这里只做服务端
           // 的格式化：时间按服务器时区渲染，`details` 折成文本后再过边界。
           <LogDetailTable
             rows={rows.map((log) => ({
               id: log._id,
-              timeLabel: formatDateTime(log.createdAt),
+              timeLabel: formatDateTime(log.createdAt, t.locale),
               level: log.level,
               source: log.source,
               message: stripAnsi(log.message),
@@ -159,7 +160,7 @@ export function LogsTable({
             <Button asChild variant="outline" size="sm" disabled={page <= 1}>
               <Link href={pageHref(Math.max(1, page - 1), level, source, from, to)} scroll={false} aria-disabled={page <= 1}>
                 <ChevronLeft className="size-4" />
-                上一页
+                {" "}{t("上一页")}{" "}
               </Link>
             </Button>
             {pages.map((p, index) =>
@@ -180,8 +181,7 @@ export function LogsTable({
             )}
             <Button asChild variant="outline" size="sm" disabled={page >= totalPages}>
               <Link href={pageHref(Math.min(totalPages, page + 1), level, source, from, to)} scroll={false} aria-disabled={page >= totalPages}>
-                下一页
-                <ChevronRight className="size-4" />
+                {" "}{t("下一页")}{" "}<ChevronRight className="size-4" />
               </Link>
             </Button>
           </div>

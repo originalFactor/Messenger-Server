@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -27,6 +28,7 @@ import { Button } from "@/components/ui/button";
  * 重发按钮走登录态接口，服务端会按 IP + 账号限流。
  */
 export function EmailVerificationBanner({ email }: { email: string }) {
+  const t = useTranslator();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [dismissed, setDismissed] = useState(false);
@@ -39,17 +41,17 @@ export function EmailVerificationBanner({ email }: { email: string }) {
         | { error?: string; alreadyVerified?: boolean }
         | null;
       if (!response.ok) {
-        toast.error(payload?.error ?? "发送失败，请稍后重试。");
+        toast.error(payload?.error ?? t("发送失败，请稍后重试。"));
         return;
       }
       if (payload?.alreadyVerified) {
-        toast.success("邮箱已验证");
+        toast.success(t("邮箱已验证"));
         router.refresh();
         return;
       }
-      toast.success("验证邮件已发送，请查收");
+      toast.success(t("验证邮件已发送，请查收"));
     } catch {
-      toast.error("网络错误，请稍后重试。");
+      toast.error(t("网络错误，请稍后重试。"));
     } finally {
       setBusy(false);
     }
@@ -61,17 +63,17 @@ export function EmailVerificationBanner({ email }: { email: string }) {
 
   return (
     <Alert className="mb-4">
-      <AlertTitle>邮箱尚未验证</AlertTitle>
+      <AlertTitle>{t("邮箱尚未验证")}</AlertTitle>
       <AlertDescription>
         <span className="mb-2 block">
-          请验证邮箱 {email}，以便在忘记密码时找回账号。点击下方按钮接收验证链接。
+          {" "}{t("请验证邮箱")}{" "}{email}{t("，以便在忘记密码时找回账号。点击下方按钮接收验证链接。")}{" "}
         </span>
         <span className="flex flex-wrap gap-2">
           <Button size="sm" onClick={resend} disabled={busy}>
-            {busy ? "发送中…" : "重新发送验证邮件"}
+            {busy ? t("发送中…") : t("重新发送验证邮件")}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setDismissed(true)}>
-            暂时忽略
+            {" "}{t("暂时忽略")}{" "}
           </Button>
         </span>
       </AlertDescription>

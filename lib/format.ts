@@ -14,8 +14,11 @@
  * limitations under the License.
  */
 
+import type { Locale } from "@/lib/i18n";
+
 /** 额度/token 展示：万、亿缩写。 */
-export function formatTokens(tokens: number): string {
+export function formatTokens(tokens: number, locale: Locale = "zh-CN"): string {
+  if (locale === "en-US") return new Intl.NumberFormat(locale, { notation: "compact", maximumFractionDigits: 1 }).format(tokens);
   if (tokens >= 100_000_000) {
     return `${(tokens / 100_000_000).toFixed(tokens % 100_000_000 === 0 ? 0 : 1)} 亿`;
   }
@@ -34,21 +37,23 @@ export function formatPlanPrice(price: string): string {
   return `￥${price.trim().replace(/^[¥￥$]+\s*/, "")}`;
 }
 
-const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
-
-export function formatDateTime(ts: number): string {
-  return dateTimeFormatter.format(new Date(ts));
+function dateTimeFormatter(locale: Locale) {
+  return new Intl.DateTimeFormat(locale, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
-export function formatDate(ts: number): string {
-  const formatter = new Intl.DateTimeFormat("zh-CN", {
+export function formatDateTime(ts: number, locale: Locale = "zh-CN"): string {
+  return dateTimeFormatter(locale).format(new Date(ts));
+}
+
+export function formatDate(ts: number, locale: Locale = "zh-CN"): string {
+  const formatter = new Intl.DateTimeFormat(locale, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

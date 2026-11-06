@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { getTranslator } from "@/lib/i18n/server";
 import { redirect } from "next/navigation";
 import { UsersManager } from "@/components/admin/users-manager";
 import { requireAdminUser } from "@/lib/auth";
@@ -22,6 +23,7 @@ import { listUsers } from "@/lib/storage";
 export const dynamic = "force-dynamic";
 
 export default async function AdminUsersPage() {
+  const t = await getTranslator();
   const admin = await requireAdminUser();
   if (!admin) {
     redirect("/console");
@@ -31,7 +33,7 @@ export default async function AdminUsersPage() {
 
   return (
     <div className="grid gap-6">
-      <h1 className="text-xl font-semibold tracking-tight">用户管理</h1>
+      <h1 className="text-xl font-semibold tracking-tight">{t("用户管理")}</h1>
       <UsersManager users={users} />
     </div>
   );

@@ -14,26 +14,34 @@
  * limitations under the License.
  */
 
+import { getLocale, getTranslator } from "@/lib/i18n/server";
+import { LocaleProvider } from "@/components/i18n/locale-provider";
 import type { Metadata } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: {
-    default: "Messenger Cloud",
-    template: "%s · Messenger Cloud",
-  },
-  description: "Messenger 云同步与 AI 服务平台",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslator();
+  return {
+    title: {
+      default: "Messenger Cloud",
+      template: "%s · Messenger Cloud",
+    },
+    description: t("Messenger 云同步与 AI 服务平台"),
+  };
+}
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const locale = await getLocale();
   return (
-    <html lang="zh-CN" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+    <html lang={locale} className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body className="font-sans antialiased">
-        {children}
-        <Toaster />
+        <LocaleProvider locale={locale}>
+          {children}
+          <Toaster />
+        </LocaleProvider>
       </body>
     </html>
   );

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { getTranslator } from "@/lib/i18n/server";
 import { redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { EmailCard } from "@/components/console/email-card";
@@ -25,10 +26,14 @@ import { getUserById } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "用户中心" };
+export async function generateMetadata() {
+  const t = await getTranslator();
+  return { title: t("用户中心") };
+}
 
 /** 用户中心：头像 / 昵称 / 登录邮箱。三者的写入端点各不相同（见各组件注释）。 */
 export default async function ConsoleAccountPage() {
+  const t = await getTranslator();
   const session = await requireUserSession();
   if (!session) {
     redirect("/login");
@@ -42,13 +47,13 @@ export default async function ConsoleAccountPage() {
   return (
     <div className="grid gap-6">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold tracking-tight">用户中心</h1>
+        <h1 className="text-xl font-semibold tracking-tight">{t("用户中心")}</h1>
         <Badge variant={user.role === "admin" ? "default" : "secondary"}>
-          {user.role === "admin" ? "管理员" : "用户"}
+          {user.role === "admin" ? t("管理员") : t("用户")}
         </Badge>
         <span className="text-xs text-muted-foreground">
-          注册于 {formatDateTime(user.createdAt)}
-          {user.lastLoginAt ? ` · 最近登录 ${formatDateTime(user.lastLoginAt)}` : ""}
+          {" "}{t("注册于")}{" "}{formatDateTime(user.createdAt, t.locale)}
+          {user.lastLoginAt ? t(" · 最近登录 {0}", { "0": formatDateTime(user.lastLoginAt, t.locale) }) : ""}
         </span>
       </div>
 

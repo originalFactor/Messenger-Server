@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { getTranslator } from "@/lib/i18n/server";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -108,7 +109,7 @@ function pageHref(range: string, page: number, from: string | undefined, to: str
   return `${basePath}?${params.toString()}`;
 }
 
-export function UsageTable({
+export async function UsageTable({
   rows,
   total,
   page,
@@ -126,9 +127,10 @@ export function UsageTable({
   description?: string;
   basePath?: string;
 }) {
+  const t = await getTranslator();
   const totalPages = total === 0 ? 1 : Math.ceil(total / pageSize);
   const pages = pageWindow(page, totalPages);
-  const summary = description
+  const summary = t(description)
     .replace("{pageSize}", String(pageSize))
     .replace("{total}", String(total))
     .replace("{totalPages}", String(totalPages));
@@ -136,28 +138,28 @@ export function UsageTable({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">{title}</CardTitle>
+        <CardTitle className="text-base">{t(title)}</CardTitle>
         <CardDescription>{summary}</CardDescription>
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">该时间范围内暂无调用记录。</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">{t("该时间范围内暂无调用记录。")}</p>
         ) : (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>时间</TableHead>
-                  {showCallerColumn ? <TableHead>调用方账号</TableHead> : null}
-                  <TableHead>模型</TableHead>
-                  {showUpstreamColumn ? <TableHead>上游</TableHead> : null}
-                  <TableHead>输入（未缓存）</TableHead>
-                  <TableHead>缓存读取</TableHead>
-                  <TableHead>缓存写入</TableHead>
-                  <TableHead>输出</TableHead>
-                  <TableHead>附加计价</TableHead>
+                  <TableHead>{t("时间")}</TableHead>
+                  {showCallerColumn ? <TableHead>{t("调用方账号")}</TableHead> : null}
+                  <TableHead>{t("模型")}</TableHead>
+                  {showUpstreamColumn ? <TableHead>{t("上游")}</TableHead> : null}
+                  <TableHead>{t("输入（未缓存）")}</TableHead>
+                  <TableHead>{t("缓存读取")}</TableHead>
+                  <TableHead>{t("缓存写入")}</TableHead>
+                  <TableHead>{t("输出")}</TableHead>
+                  <TableHead>{t("附加计价")}</TableHead>
                   <TableHead>TPS</TableHead>
-                  <TableHead className="text-right">额度</TableHead>
+                  <TableHead className="text-right">{t("额度")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -165,11 +167,11 @@ export function UsageTable({
                   // 上游被删（upstreamName 缺失）时不再回退显示裸 id，
                   // 统一显示「已删除」让运维一眼分辨；无 upstreamId 的老记录用「—」。
                   const upstreamLabel = log.upstreamId
-                    ? (log.upstreamName ?? "已删除")
+                    ? (log.upstreamName ?? t("已删除"))
                     : "—";
                   return (
                     <TableRow key={log._id}>
-                      <TableCell className="whitespace-nowrap">{formatDateTime(log.createdAt)}</TableCell>
+                      <TableCell className="whitespace-nowrap">{formatDateTime(log.createdAt, t.locale)}</TableCell>
                       {showCallerColumn ? (
                         <TableCell className="max-w-52 truncate">{log.email ?? "—"}</TableCell>
                       ) : null}
@@ -177,18 +179,18 @@ export function UsageTable({
                       {showUpstreamColumn ? (
                         <TableCell className="max-w-40 truncate">{upstreamLabel}</TableCell>
                       ) : null}
-                      <TableCell className="tabular-nums">{formatTokens(log.promptTokens)}</TableCell>
-                      <TableCell className="tabular-nums">{formatTokens(log.cachedTokens ?? 0)}</TableCell>
+                      <TableCell className="tabular-nums">{formatTokens(log.promptTokens, t.locale)}</TableCell>
+                      <TableCell className="tabular-nums">{formatTokens(log.cachedTokens ?? 0, t.locale)}</TableCell>
                       <TableCell className="tabular-nums text-muted-foreground">
-                        {log.cacheWriteTokens ? formatTokens(log.cacheWriteTokens) : "—"}
+                        {log.cacheWriteTokens ? formatTokens(log.cacheWriteTokens, t.locale) : "—"}
                       </TableCell>
-                      <TableCell className="tabular-nums">{formatTokens(log.completionTokens)}</TableCell>
+                      <TableCell className="tabular-nums">{formatTokens(log.completionTokens, t.locale)}</TableCell>
                       <TableCell className="whitespace-nowrap text-[11px] text-muted-foreground">
                         {log.longContextThreshold
-                          ? `阶梯 >${formatTokens(log.longContextThreshold)}`
+                          ? t("阶梯 >{0}", { "0": formatTokens(log.longContextThreshold, t.locale) })
                           : null}
                         {log.longContextThreshold && log.timeMultiplier && log.timeMultiplier !== 1 ? " · " : null}
-                        {log.timeMultiplier && log.timeMultiplier !== 1 ? `谷时 ×${log.timeMultiplier}` : null}
+                        {log.timeMultiplier && log.timeMultiplier !== 1 ? t("谷时 ×{0}", { "0": log.timeMultiplier }) : null}
                         {!log.longContextThreshold && (log.timeMultiplier === undefined || log.timeMultiplier === 1)
                           ? "—"
                           : null}
@@ -210,7 +212,7 @@ export function UsageTable({
             <Button asChild variant="outline" size="sm" disabled={page <= 1}>
               <Link href={pageHref(range, Math.max(1, page - 1), from, to, basePath)} scroll={false} aria-disabled={page <= 1}>
                 <ChevronLeft className="size-4" />
-                上一页
+                {" "}{t("上一页")}{" "}
               </Link>
             </Button>
             {pages.map((p, index) =>
@@ -231,8 +233,7 @@ export function UsageTable({
             )}
             <Button asChild variant="outline" size="sm" disabled={page >= totalPages}>
               <Link href={pageHref(range, Math.min(totalPages, page + 1), from, to, basePath)} scroll={false} aria-disabled={page >= totalPages}>
-                下一页
-                <ChevronRight className="size-4" />
+                {" "}{t("下一页")}{" "}<ChevronRight className="size-4" />
               </Link>
             </Button>
           </div>

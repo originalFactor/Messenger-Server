@@ -16,6 +16,8 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
+import type { Translator } from "@/lib/i18n";
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -46,15 +48,15 @@ function roundRate(rate: number): number {
   return Number(rate.toPrecision(2));
 }
 
-function formatRate(rate: number): string {
+function formatRate(rate: number, t: Translator): string {
   const rounded = roundRate(rate);
-  return rounded <= 0 ? "免费" : rateFormatter.format(rounded);
+  return rounded <= 0 ? t("免费") : rateFormatter.format(rounded);
 }
 
-function formatRateRange(min: number, max: number): string {
+function formatRateRange(min: number, max: number, t: Translator): string {
   const lo = roundRate(min);
   const hi = roundRate(max);
-  return lo === hi ? formatRate(lo) : `${formatRate(lo)} ~ ${formatRate(hi)}`;
+  return lo === hi ? formatRate(lo, t) : `${formatRate(lo, t)} ~ ${formatRate(hi, t)}`;
 }
 
 /** 拆出目录里的前缀供应商（deepseek/deepseek-flash → deepseek），无前缀只显示裸 ID。 */
@@ -66,6 +68,7 @@ function splitModelId(modelId: string): { vendor?: string; name: string } {
 }
 
 export function ModelPlazaGrid({ models }: { models: PlazaModel[] }) {
+  const t = useTranslator();
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
@@ -77,7 +80,7 @@ export function ModelPlazaGrid({ models }: { models: PlazaModel[] }) {
   }, [models, query]);
 
   if (models.length === 0) {
-    return <p className="py-12 text-center text-sm text-muted-foreground">暂无可用模型，请稍后再来。</p>;
+    return <p className="py-12 text-center text-sm text-muted-foreground">{t("暂无可用模型，请稍后再来。")}</p>;
   }
 
   return (
@@ -88,16 +91,16 @@ export function ModelPlazaGrid({ models }: { models: PlazaModel[] }) {
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索模型名称或 ID"
-            aria-label="搜索模型"
+            placeholder={t("搜索模型名称或 ID")}
+            aria-label={t("搜索模型")}
             className="pl-8"
           />
         </div>
-        <p className="text-xs tabular-nums text-muted-foreground">共 {filtered.length} 个模型</p>
+        <p className="text-xs tabular-nums text-muted-foreground">{t("共")}{" "}{filtered.length} {" "}{t("个模型")}</p>
       </div>
 
       {filtered.length === 0 ? (
-        <p className="py-12 text-center text-sm text-muted-foreground">没有匹配的模型，换个关键词试试。</p>
+        <p className="py-12 text-center text-sm text-muted-foreground">{t("没有匹配的模型，换个关键词试试。")}</p>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((model) => {
@@ -120,27 +123,27 @@ export function ModelPlazaGrid({ models }: { models: PlazaModel[] }) {
                   <div className="grid grid-cols-4 gap-2 text-center">
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium tabular-nums">
-                        {formatRateRange(model.inputRateMin, model.inputRateMax)}
+                        {formatRateRange(model.inputRateMin, model.inputRateMax, t)}
                       </div>
-                      <div className="mt-0.5 text-[10px] text-muted-foreground">输入</div>
+                      <div className="mt-0.5 text-[10px] text-muted-foreground">{t("输入")}</div>
                     </div>
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium tabular-nums">
-                        {formatRateRange(model.cacheReadRateMin, model.cacheReadRateMax)}
+                        {formatRateRange(model.cacheReadRateMin, model.cacheReadRateMax, t)}
                       </div>
-                      <div className="mt-0.5 text-[10px] text-muted-foreground">缓存读取</div>
+                      <div className="mt-0.5 text-[10px] text-muted-foreground">{t("缓存读取")}</div>
                     </div>
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium tabular-nums">
-                        {formatRateRange(model.cacheWriteRateMin, model.cacheWriteRateMax)}
+                        {formatRateRange(model.cacheWriteRateMin, model.cacheWriteRateMax, t)}
                       </div>
-                      <div className="mt-0.5 text-[10px] text-muted-foreground">缓存写入</div>
+                      <div className="mt-0.5 text-[10px] text-muted-foreground">{t("缓存写入")}</div>
                     </div>
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium tabular-nums">
-                        {formatRateRange(model.outputRateMin, model.outputRateMax)}
+                        {formatRateRange(model.outputRateMin, model.outputRateMax, t)}
                       </div>
-                      <div className="mt-0.5 text-[10px] text-muted-foreground">输出</div>
+                      <div className="mt-0.5 text-[10px] text-muted-foreground">{t("输出")}</div>
                     </div>
                   </div>
                   {model.longContextCount > 0 || model.timeBasedCount > 0 ? (
@@ -149,18 +152,18 @@ export function ModelPlazaGrid({ models }: { models: PlazaModel[] }) {
                         <Badge
                           variant="outline"
                           className="h-4 px-1.5 text-[10px] font-normal"
-                          title="提示总量超过阈值后整次请求按更高档位计价"
+                          title={t("提示总量超过阈值后整次请求按更高档位计价")}
                         >
-                          长上下文阶梯
+                          {" "}{t("长上下文阶梯")}{" "}
                         </Badge>
                       ) : null}
                       {model.timeBasedCount > 0 ? (
                         <Badge
                           variant="outline"
                           className="h-4 px-1.5 text-[10px] font-normal"
-                          title="峰值时段按牌价，其余时间按谷时系数折扣"
+                          title={t("峰值时段按牌价，其余时间按谷时系数折扣")}
                         >
-                          峰谷计费
+                          {" "}{t("峰谷计费")}{" "}
                         </Badge>
                       ) : null}
                     </div>

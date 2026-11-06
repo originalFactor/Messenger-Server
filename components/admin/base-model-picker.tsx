@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -55,6 +56,7 @@ interface BaseModelView {
 const NO_BASE_MODEL = "__none__";
 
 export function BaseModelPicker() {
+  const t = useTranslator();
   const router = useRouter();
   const [view, setView] = useState<BaseModelView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -66,7 +68,7 @@ export function BaseModelPicker() {
       try {
         const response = await fetch("/api/admin/models/base");
         if (!response.ok) {
-          if (!cancelled) setError("基准模型配置加载失败。");
+          if (!cancelled) setError(t("基准模型配置加载失败。"));
           return;
         }
         const payload = (await response.json()) as BaseModelView;
@@ -75,13 +77,13 @@ export function BaseModelPicker() {
           setError(null);
         }
       } catch {
-        if (!cancelled) setError("网络错误，请稍后重试。");
+        if (!cancelled) setError(t("网络错误，请稍后重试。"));
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
 
   async function setBaseModel(baseModelId: string) {
     setBusy(true);
@@ -94,19 +96,19 @@ export function BaseModelPicker() {
       });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        setError(body?.error ?? "保存失败，请稍后重试。");
+        setError(body?.error ?? t("保存失败，请稍后重试。"));
         return;
       }
       const payload = (await response.json()) as { baseModelId: string | null };
       setView((current) => (current ? { ...current, baseModelId: payload.baseModelId } : current));
       toast.success(
         payload.baseModelId
-          ? `基准模型已切换为 ${payload.baseModelId}，全部模型价格已按新基准重算`
-          : "已清除基准模型，价格恢复 pi-catalog 口径",
+          ? t("基准模型已切换为 {0}，全部模型价格已按新基准重算", { "0": payload.baseModelId })
+          : t("已清除基准模型，价格恢复 pi-catalog 口径"),
       );
       router.refresh();
     } catch {
-      setError("网络错误，请稍后重试。");
+      setError(t("网络错误，请稍后重试。"));
     } finally {
       setBusy(false);
     }
@@ -118,10 +120,9 @@ export function BaseModelPicker() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">1x 基准模型</CardTitle>
+        <CardTitle className="text-base">{t("1x 基准模型")}</CardTitle>
         <CardDescription>
-          选定一个模型作为基准（其价格记为 1.0）。切换基准时，全部已保存的模型价格
-          （含覆盖自定义值）会按新基准整体重算，模型和来源的整体倍率不受影响。
+          {" "}{t("选定一个模型作为基准（其价格记为 1.0）。切换基准时，全部已保存的模型价格 （含覆盖自定义值）会按新基准整体重算，模型和来源的整体倍率不受影响。")}{" "}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-2">
@@ -131,17 +132,17 @@ export function BaseModelPicker() {
           disabled={busy || models.length === 0}
         >
           <SelectTrigger className="sm:w-96">
-            <SelectValue placeholder={models.length === 0 ? "暂无可选模型" : "选择基准模型"} />
+            <SelectValue placeholder={models.length === 0 ? t("暂无可选模型") : t("选择基准模型")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={NO_BASE_MODEL}>不设基准（按 pi-catalog 价格）</SelectItem>
+            <SelectItem value={NO_BASE_MODEL}>{t("不设基准（按 pi-catalog 价格）")}</SelectItem>
             {models.map((modelId) => {
               const rate = view?.rates[modelId];
               return (
                 <SelectItem key={modelId} value={modelId}>
                   {modelId}
                   {rate
-                    ? `（${rate.inputRate} / ${rate.cacheReadRate} / ${rate.cacheWriteRate} / ${rate.outputRate}${rate.timeMultiplier !== 1 ? `，谷时 ×${rate.timeMultiplier}` : ""}${rate.longContextThreshold ? `，阶梯 >${rate.longContextThreshold}` : ""}）`
+                    ? `（${rate.inputRate} / ${rate.cacheReadRate} / ${rate.cacheWriteRate} / ${rate.outputRate}${rate.timeMultiplier !== 1 ? t("，谷时 ×{0}", { "0": rate.timeMultiplier }) : ""}${rate.longContextThreshold ? t("，阶梯 >{0}", { "0": rate.longContextThreshold }) : ""}）`
                     : ""}
                 </SelectItem>
               );
@@ -150,11 +151,11 @@ export function BaseModelPicker() {
         </Select>
         {current ? (
           <p className="text-xs text-muted-foreground">
-            当前基准：<span className="font-mono">{current}</span>，其价格即 1.0。
+            {" "}{t("当前基准：")}<span className="font-mono">{current}</span>{t("，其价格即 1.0。")}{" "}
           </p>
         ) : (
           <p className="text-xs text-muted-foreground">
-            未设基准：全部价格按 pi-catalog 口径（deepseek-flash 输出 = 1.0），有上游自报报价时以上游为准。
+            {" "}{t("未设基准：全部价格按 pi-catalog 口径（deepseek-flash 输出 = 1.0），有上游自报报价时以上游为准。")}{" "}
           </p>
         )}
         {error ? <p className="text-sm text-destructive">{error}</p> : null}

@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -78,6 +79,7 @@ export function LogsFilterBar({
   from?: string;
   to?: string;
 }) {
+  const t = useTranslator();
   const router = useRouter();
   const [customOpen, setCustomOpen] = useState(activeRange === "custom");
   const [fromValue, setFromValue] = useState(from ?? "");
@@ -144,7 +146,7 @@ export function LogsFilterBar({
       return;
     }
     if (fromValue !== "" && toValue !== "" && fromValue > toValue) {
-      setError("开始日期不能晚于结束日期。");
+      setError(t("开始日期不能晚于结束日期。"));
       return;
     }
     setError(null);
@@ -154,7 +156,7 @@ export function LogsFilterBar({
   return (
     <div className="flex flex-wrap items-end gap-2">
       <div className="grid gap-1">
-        <Label htmlFor="logs-level" className="text-xs text-muted-foreground">级别</Label>
+        <Label htmlFor="logs-level" className="text-xs text-muted-foreground">{t("级别")}</Label>
         <Select value={activeLevel ?? "all"} onValueChange={onLevelChange}>
           <SelectTrigger id="logs-level" size="sm" className="w-32">
             <SelectValue />
@@ -162,7 +164,7 @@ export function LogsFilterBar({
           <SelectContent>
             {LEVEL_ITEMS.map((item) => (
               <SelectItem key={item.value} value={item.value}>
-                {item.label}
+                {t(item.label)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -170,7 +172,7 @@ export function LogsFilterBar({
       </div>
 
       <div className="grid gap-1">
-        <Label htmlFor="logs-source" className="text-xs text-muted-foreground">来源</Label>
+        <Label htmlFor="logs-source" className="text-xs text-muted-foreground">{t("来源")}</Label>
         <Select value={activeSource ?? "all"} onValueChange={onSourceChange}>
           <SelectTrigger id="logs-source" size="sm" className="w-32">
             <SelectValue />
@@ -178,7 +180,7 @@ export function LogsFilterBar({
           <SelectContent>
             {SOURCE_ITEMS.map((item) => (
               <SelectItem key={item.value} value={item.value}>
-                {item.label}
+                {t(item.label)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -186,7 +188,7 @@ export function LogsFilterBar({
       </div>
 
       <div className="grid gap-1">
-        <Label htmlFor="logs-range" className="text-xs text-muted-foreground">时间范围</Label>
+        <Label htmlFor="logs-range" className="text-xs text-muted-foreground">{t("时间范围")}</Label>
         <Select value={activeRange} onValueChange={onRangeChange}>
           <SelectTrigger id="logs-range" size="sm" className="w-36">
             <SelectValue />
@@ -194,7 +196,7 @@ export function LogsFilterBar({
           <SelectContent>
             {PRESET_ITEMS.map((item) => (
               <SelectItem key={item.value} value={item.value}>
-                {item.label}
+                {t(item.label)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -204,7 +206,7 @@ export function LogsFilterBar({
       {customOpen ? (
         <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
           <div className="grid gap-1">
-            <Label htmlFor="logs-from" className="text-xs text-muted-foreground">开始</Label>
+            <Label htmlFor="logs-from" className="text-xs text-muted-foreground">{t("开始")}</Label>
             <Input
               id="logs-from"
               type="date"
@@ -214,7 +216,7 @@ export function LogsFilterBar({
             />
           </div>
           <div className="grid gap-1">
-            <Label htmlFor="logs-to" className="text-xs text-muted-foreground">结束</Label>
+            <Label htmlFor="logs-to" className="text-xs text-muted-foreground">{t("结束")}</Label>
             <Input
               id="logs-to"
               type="date"
@@ -224,7 +226,7 @@ export function LogsFilterBar({
             />
           </div>
           <Button type="submit" size="sm" variant="outline">
-            查询
+            {" "}{t("查询")}{" "}
           </Button>
           {error !== null ? (
             <p className="text-xs text-destructive">{error}</p>

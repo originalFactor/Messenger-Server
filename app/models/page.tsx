@@ -1,3 +1,4 @@
+import { LanguageSwitcher } from "@/components/i18n/language-switcher";
 /*
  * Copyright 2026 originalFactor
  *
@@ -14,15 +15,19 @@
  * limitations under the License.
  */
 
+import { getTranslator } from "@/lib/i18n/server";
 import Link from "next/link";
 import { BackButton } from "@/components/back-button";
 import { ModelPlazaGrid } from "@/components/model-plaza-grid";
 import { getModelPlaza, type PlazaModel } from "@/lib/model-plaza";
 
 export const dynamic = "force-dynamic";
-export const metadata = {
-  title: "模型广场 - Messenger Cloud",
+export async function generateMetadata() {
+  const t = await getTranslator();
+  return {
+  title: t("模型广场 - Messenger Cloud"),
 };
+}
 
 interface PlazaPageData {
   models: PlazaModel[];
@@ -41,6 +46,7 @@ async function loadPlaza(): Promise<PlazaPageData> {
 }
 
 export default async function ModelPlazaPage() {
+  const t = await getTranslator();
   const { models, failed } = await loadPlaza();
 
   return (
@@ -52,21 +58,20 @@ export default async function ModelPlazaPage() {
             <img src="/logo.svg" alt="" className="size-5 rounded-md" />
             Messenger Cloud
           </Link>
-          <BackButton />
+          <div className="flex items-center gap-2"><LanguageSwitcher /><BackButton /></div>
         </div>
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-12">
         <div className="mb-8">
-          <h1 className="text-2xl font-semibold tracking-tight">模型广场</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("模型广场")}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            这里是当前可用的全部模型及其价格。输入、输出和缓存读取分别计价。
-            同一模型若由多个来源提供且价格不同，显示为区间，按实际服务的来源结算。
+            {" "}{t("这里是当前可用的全部模型及其价格。输入、输出和缓存读取分别计价。 同一模型若由多个来源提供且价格不同，显示为区间，按实际服务的来源结算。")}{" "}
           </p>
         </div>
 
         {failed ? (
-          <p className="py-12 text-center text-sm text-muted-foreground">模型数据加载失败，请稍后刷新重试。</p>
+          <p className="py-12 text-center text-sm text-muted-foreground">{t("模型数据加载失败，请稍后刷新重试。")}</p>
         ) : (
           <ModelPlazaGrid models={models} />
         )}

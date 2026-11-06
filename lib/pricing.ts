@@ -14,9 +14,11 @@
  * limitations under the License.
  */
 
+import { createTranslator, type Translator } from "@/lib/i18n";
+
 /**
  * 计价原语：四种 token 腿（输入 / 缓存读取 / 缓存写入 / 输出）、长上下文
- * 阶梯价与峰谷（时段）计费。依赖为零，服务端（倍率解析、计费、探测）与
+ * 阶梯价与峰谷（时段）计费。服务端（倍率解析、计费、探测）与
  * 控制台共用同一套语义，避免展示口径与实际扣费漂移。
  *
  * 时间一律用 UTC：峰谷时段按 UTC 分钟表示（0–1440，起始含、结束不含），
@@ -245,7 +247,7 @@ export function effectiveRates(
  * 星期写 `0-6`（0 = 周日）、`1-5` 或 `1,3,5`；时间为 UTC `HH:MM`。
  * 空文本 = 无周期性谷时价。非法行返回 `{ error }`，便于表单就地报错。
  */
-export function parsePeakWindows(text: string): { windows: PeakWindow[] } | { error: string } {
+export function parsePeakWindows(text: string, t: Translator = createTranslator("zh-CN")): { windows: PeakWindow[] } | { error: string } {
   const windows: PeakWindow[] = [];
   const lines = text
     .split("\n")
@@ -254,17 +256,17 @@ export function parsePeakWindows(text: string): { windows: PeakWindow[] } | { er
   for (const line of lines) {
     const match = /^([0-6](?:\s*[-,]\s*[0-6])*)\s+(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/.exec(line);
     if (!match) {
-      return { error: `无法解析时段「${line}」，格式应为「1-5 09:00-18:00」。` };
+      return { error: t("无法解析时段「{0}」，格式应为「1-5 09:00-18:00」。", { "0": line }) };
     }
     const weekdays = parseWeekdays(match[1]);
     if (!weekdays) {
-      return { error: `时段「${line}」的星期无效（0–6，0 = 周日）。` };
+      return { error: t("时段「{0}」的星期无效（0–6，0 = 周日）。", { "0": line }) };
     }
     const startMinute = Number(match[2]) * 60 + Number(match[3]);
     const endMinute = Number(match[4]) * 60 + Number(match[5]);
     const window = { weekdays, startMinute, endMinute };
     if (!isValidPeakWindow(window)) {
-      return { error: `时段「${line}」的时间无效（UTC 00:00–24:00，开始须早于结束）。` };
+      return { error: t("时段「{0}」的时间无效（UTC 00:00–24:00，开始须早于结束）。", { "0": line }) };
     }
     windows.push(window);
   }

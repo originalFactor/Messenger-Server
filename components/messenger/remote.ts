@@ -16,6 +16,8 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
+import type { Translator } from "@/lib/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /** Same budget as the Rust core: a call that is still waiting after this is cancelled. */
@@ -59,16 +61,16 @@ function loadDeviceId(): string {
   return fresh;
 }
 
-async function postRelay(path: "tool-call" | "tool-cancel", payload: unknown): Promise<string | null> {
+async function postRelay(path: "tool-call" | "tool-cancel", payload: unknown, t?: Translator): Promise<string | null> {
   const response = await fetch(`/api/remote/${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
   if (response.ok) return null;
-  if (response.status === 409) return "项目所属设备不在线。";
+  if (response.status === 409) return t ? t("项目所属设备不在线。") : "项目所属设备不在线。";
   const detail = (await response.json().catch(() => null)) as { error?: string } | null;
-  return detail?.error ?? `中转请求失败（${response.status}）。`;
+  return detail?.error ?? (t ? t("中转请求失败（{0}）。", { "0": response.status }) : `中转请求失败（${response.status}）。`);
 }
 
 /**
@@ -77,6 +79,9 @@ async function postRelay(path: "tool-call" | "tool-cancel", payload: unknown): P
  * devices; the LLM request and message persistence stay in the browser.
  */
 export function useRemoteDevice() {
+  const t = useTranslator();
+  const translatorRef = useRef(t);
+  useEffect(() => { translatorRef.current = t; }, [t]);
   const [connected, setConnected] = useState(false);
   const [devices, setDevices] = useState<string[]>([]);
   const deviceIdRef = useRef<string | null>(null);
@@ -97,14 +102,14 @@ export function useRemoteDevice() {
     source.onerror = () => {
       setConnected(false);
       setDevices([]);
-      settleAll("与中转服务的连接已断开。");
+      settleAll(translatorRef.current("与中转服务的连接已断开。"));
     };
     source.addEventListener("presence", (event) => {
       try {
         const online = (JSON.parse((event as MessageEvent<string>).data) as { devices?: string[] }).devices ?? [];
         setConnected(true);
         setDevices(online);
-        settleAll("项目所属设备已离线。", (entry) => !online.includes(entry.target));
+        settleAll(translatorRef.current("项目所属设备已离线。"), (entry) => !online.includes(entry.target));
       } catch {
         // Ignore a malformed frame; the next presence event corrects the set.
       }
@@ -121,7 +126,7 @@ export function useRemoteDevice() {
 
     return () => {
       source.close();
-      settleAll("与中转服务的连接已断开。");
+      settleAll(translatorRef.current("与中转服务的连接已断开。"));
       setConnected(false);
       setDevices([]);
     };
@@ -130,13 +135,13 @@ export function useRemoteDevice() {
   const callTool = useCallback((request: RemoteToolRequest) => new Promise<RemoteToolResult>((resolve) => {
     const fromDeviceId = deviceIdRef.current;
     if (!fromDeviceId) {
-      resolve(failure("尚未连接到中转服务。"));
+      resolve(failure(t("尚未连接到中转服务。")));
       return;
     }
     const pending = pendingRef.current;
     const callId = crypto.randomUUID();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const onAbort = () => settle(failure("已取消。"), true);
+    const onAbort = () => settle(failure(t("已取消。")), true);
     function settle(result: RemoteToolResult, cancelRemote = false) {
       if (!pending.has(callId)) return;
       pending.delete(callId);
@@ -148,7 +153,7 @@ export function useRemoteDevice() {
       resolve(result);
     }
     pending.set(callId, { target: request.targetDeviceId, settle });
-    timer = setTimeout(() => settle(failure("工具调用超时（10 分钟）。"), true), TOOL_TIMEOUT_MS);
+    timer = setTimeout(() => settle(failure(t("工具调用超时（10 分钟）。")), true), TOOL_TIMEOUT_MS);
     if (request.signal?.aborted) {
       onAbort();
       return;
@@ -163,13 +168,13 @@ export function useRemoteDevice() {
       conversationId: request.conversationId,
       name: request.name,
       argumentsJson: request.argumentsJson,
-    }).then(
+    }, t).then(
       (error) => {
         if (error) settle(failure(error));
       },
-      (error: unknown) => settle(failure(error instanceof Error ? error.message : "中转请求失败。")),
+      (error: unknown) => settle(failure(error instanceof Error ? error.message : t("中转请求失败。"))),
     );
-  }), []);
+  }), [t]);
 
   return { connected, devices, callTool };
 }

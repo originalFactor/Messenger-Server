@@ -5,6 +5,7 @@
  * you may not use this file except in compliance with the License.
  */
 
+import { getTranslator } from "@/lib/i18n/server";
 import { redirect } from "next/navigation";
 import { requireUserSession } from "@/lib/auth";
 import { getModelPlaza } from "@/lib/model-plaza";
@@ -15,6 +16,7 @@ import type { ProviderDoc } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 export default async function MessengerPage({ searchParams }: { searchParams: Promise<{ settings?: string }> }) {
+  const t = await getTranslator();
   const session = await requireUserSession();
   if (!session) redirect("/login");
 
@@ -24,7 +26,7 @@ export default async function MessengerPage({ searchParams }: { searchParams: Pr
   const builtinProvider: ProviderDoc = {
     _id: "builtin-messenger-cloud-ai",
     userId: session.sub,
-    name: "Messenger Cloud AI（内置）",
+    name: t("Messenger Cloud AI（内置）"),
     baseUrl: "",
     apiKey: "",
     apiFormat: "chat",

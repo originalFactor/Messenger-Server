@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -49,6 +50,7 @@ interface CardPreview {
 }
 
 export function RedeemForm() {
+  const t = useTranslator();
   const router = useRouter();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -72,13 +74,13 @@ export function RedeemForm() {
         card?: CardPreview;
       } | null;
       if (!response.ok || !payload?.card) {
-        setError(payload?.error ?? "查询失败，请稍后重试。");
+        setError(payload?.error ?? t("查询失败，请稍后重试。"));
         return;
       }
       setPreview(payload.card);
       setDialogOpen(true);
     } catch {
-      setError("网络错误，请稍后重试。");
+      setError(t("网络错误，请稍后重试。"));
     } finally {
       setBusy(false);
     }
@@ -103,14 +105,14 @@ export function RedeemForm() {
       } | null;
       if (!response.ok || !payload?.redemption) {
         setDialogOpen(false);
-        setError(payload?.error ?? "兑换失败，请稍后重试。");
+        setError(payload?.error ?? t("兑换失败，请稍后重试。"));
         return;
       }
       const { planName, quotaTokens, validityDays } = payload.redemption;
       const balance = payload.quota?.balance;
       toast.success(
-        `兑换成功：${planName}，+${formatTokens(quotaTokens)} 额度，有效期 ${validityDays} 天` +
-          (balance === undefined ? "" : `，当前余额 ${formatTokens(balance)}`),
+        t("兑换成功：{0}，+{1} 额度，有效期 {2} 天", { "0": planName, "1": formatTokens(quotaTokens, t.locale), "2": validityDays }) +
+          (balance === undefined ? "" : t("，当前余额 {0}", { "0": formatTokens(balance, t.locale) })),
       );
       setDialogOpen(false);
       setPreview(null);
@@ -118,7 +120,7 @@ export function RedeemForm() {
       router.refresh();
     } catch {
       setDialogOpen(false);
-      setError("网络错误，请稍后重试。");
+      setError(t("网络错误，请稍后重试。"));
     } finally {
       setRedeeming(false);
     }
@@ -127,13 +129,13 @@ export function RedeemForm() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">兑换卡密</CardTitle>
-        <CardDescription>兑换前会先显示卡密信息，确认后额度立即到账，有效期从当前有效期之后顺延。</CardDescription>
+        <CardTitle className="text-base">{t("兑换卡密")}</CardTitle>
+        <CardDescription>{t("兑换前会先显示卡密信息，确认后额度立即到账，有效期从当前有效期之后顺延。")}</CardDescription>
       </CardHeader>
       <CardContent>
         <form className="flex flex-wrap items-end gap-3" onSubmit={handleSubmit}>
           <div className="grid min-w-60 flex-1 gap-2">
-            <Label htmlFor="card-code">卡密</Label>
+            <Label htmlFor="card-code">{t("卡密")}</Label>
             <Input
               id="card-code"
               required
@@ -144,7 +146,7 @@ export function RedeemForm() {
             />
           </div>
           <Button type="submit" disabled={busy}>
-            {busy ? "查询中…" : "兑换"}
+            {busy ? t("查询中…") : t("兑换")}
           </Button>
         </form>
         {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
@@ -153,35 +155,35 @@ export function RedeemForm() {
       <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>确认兑换此卡密？</AlertDialogTitle>
+            <AlertDialogTitle>{t("确认兑换此卡密？")}</AlertDialogTitle>
             <AlertDialogDescription>
-              请核对以下卡密信息，兑换后不可撤销。
+              {" "}{t("请核对以下卡密信息，兑换后不可撤销。")}{" "}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {preview ? (
             <dl className="grid gap-2 rounded-md border bg-muted/40 p-4 text-sm">
               <div className="flex items-center justify-between gap-4">
-                <dt className="text-muted-foreground">卡密</dt>
+                <dt className="text-muted-foreground">{t("卡密")}</dt>
                 <dd className="font-mono text-xs">{preview.code}</dd>
               </div>
               <div className="flex items-center justify-between gap-4">
-                <dt className="text-muted-foreground">套餐</dt>
+                <dt className="text-muted-foreground">{t("套餐")}</dt>
                 <dd>{preview.planName}</dd>
               </div>
               <div className="flex items-center justify-between gap-4">
-                <dt className="text-muted-foreground">额度</dt>
-                <dd className="tabular-nums">+{formatTokens(preview.quotaTokens)}</dd>
+                <dt className="text-muted-foreground">{t("额度")}</dt>
+                <dd className="tabular-nums">+{formatTokens(preview.quotaTokens, t.locale)}</dd>
               </div>
               <div className="flex items-center justify-between gap-4">
-                <dt className="text-muted-foreground">有效期</dt>
-                <dd className="tabular-nums">{preview.validityDays} 天</dd>
+                <dt className="text-muted-foreground">{t("有效期")}</dt>
+                <dd className="tabular-nums">{preview.validityDays} {" "}{t("天")}</dd>
               </div>
             </dl>
           ) : null}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={redeeming}>取消</AlertDialogCancel>
+            <AlertDialogCancel disabled={redeeming}>{t("取消")}</AlertDialogCancel>
             <AlertDialogAction disabled={redeeming} onClick={handleConfirm}>
-              {redeeming ? "兑换中…" : "确认兑换"}
+              {redeeming ? t("兑换中…") : t("确认兑换")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

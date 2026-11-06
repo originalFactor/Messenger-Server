@@ -7,6 +7,8 @@
  * you may not use this file except in compliance with the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
+import type { Translator } from "@/lib/i18n";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bot, Check, ChevronRight, FolderKanban, Plus, Save, Server, Trash2, WandSparkles } from "lucide-react";
 import { toast } from "sonner";
@@ -97,10 +99,10 @@ function now() {
 
 const BUILTIN_PROVIDER_ID = "builtin-messenger-cloud-ai";
 
-function newAgent(): AgentDraft {
+function newAgent(t: Translator): AgentDraft {
   return {
     id: crypto.randomUUID(),
-    name: "新 Agent",
+    name: t("新 Agent"),
     systemPrompt: "You are a helpful assistant.",
     description: "",
     role: "chat",
@@ -153,10 +155,10 @@ function agentDraft(agent: AgentDoc, providerId = ""): AgentDraft {
   };
 }
 
-function newProvider(): ProviderDraft {
+function newProvider(t: Translator): ProviderDraft {
   return {
     id: crypto.randomUUID(),
-    name: "新 Provider",
+    name: t("新 Provider"),
     baseUrl: "https://api.openai.com/v1",
     apiKey: "",
     apiFormat: "chat",
@@ -177,8 +179,8 @@ function providerDraft(provider: ProviderDoc): ProviderDraft {
   };
 }
 
-function newProject(): ProjectDraft {
-  return { id: crypto.randomUUID(), name: "新项目", workspace: "", createdAt: now() };
+function newProject(t: Translator): ProjectDraft {
+  return { id: crypto.randomUUID(), name: t("新项目"), workspace: "", createdAt: now() };
 }
 
 function projectDraft(project: ProjectDoc): ProjectDraft {
@@ -200,19 +202,20 @@ function FollowToggle({ id, label, checked, onCheckedChange }: { id: string; lab
 }
 
 function DeleteButton({ onConfirm }: { onConfirm: () => void }) {
+  const t = useTranslator();
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant="destructive"><Trash2 /> 删除</Button>
+        <Button variant="destructive"><Trash2 /> {" "}{t("删除")}</Button>
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>确定删除这个配置吗？</AlertDialogTitle>
-          <AlertDialogDescription>删除会同步到你的所有设备。</AlertDialogDescription>
+          <AlertDialogTitle>{t("确定删除这个配置吗？")}</AlertDialogTitle>
+          <AlertDialogDescription>{t("删除会同步到你的所有设备。")}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>取消</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={onConfirm}>删除</AlertDialogAction>
+          <AlertDialogCancel>{t("取消")}</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={onConfirm}>{t("删除")}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -220,6 +223,7 @@ function DeleteButton({ onConfirm }: { onConfirm: () => void }) {
 }
 
 export function ConfigurationManagement({ initialAgents, initialProviders, initialProjects, builtinModels, onChange }: Props) {
+  const t = useTranslator();
   const [tab, setTab] = useState<Tab>("agents");
   const [agents, setAgents] = useState(initialAgents);
   const [providers, setProviders] = useState(initialProviders);
@@ -231,7 +235,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
   const builtinProvider = useMemo<ProviderDoc>(() => ({
     _id: BUILTIN_PROVIDER_ID,
     userId: "",
-    name: "Messenger Cloud AI（内置）",
+    name: t("Messenger Cloud AI（内置）"),
     baseUrl: "",
     apiKey: "",
     apiFormat: "chat",
@@ -249,13 +253,13 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
     updatedAt: 0,
     version: 0,
     deleted: false,
-  }), [builtinModels]);
+  }), [builtinModels, t]);
   const initialAllProviders = [builtinProvider, ...initialProviders];
   const providerForModel = (modelId: string | null | undefined) =>
     initialAllProviders.find((item) => item.models.some((model) => model.modelId === modelId))?._id ?? "";
-  const [agent, setAgent] = useState<AgentDraft | null>(() => initialAgents[0] ? agentDraft(initialAgents[0], providerForModel(initialAgents[0].defaultModelId)) : newAgent());
+  const [agent, setAgent] = useState<AgentDraft | null>(() => initialAgents[0] ? agentDraft(initialAgents[0], providerForModel(initialAgents[0].defaultModelId)) : newAgent(t));
   const [provider, setProvider] = useState<ProviderDraft | null>(() => providerDraft(builtinProvider));
-  const [project, setProject] = useState<ProjectDraft | null>(() => initialProjects[0] ? projectDraft(initialProjects[0]) : newProject());
+  const [project, setProject] = useState<ProjectDraft | null>(() => initialProjects[0] ? projectDraft(initialProjects[0]) : newProject(t));
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -291,21 +295,21 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
   }
 
   function addItem() {
-    if (tab === "agents") setAgent(newAgent());
-    if (tab === "providers") setProvider(newProvider());
-    if (tab === "projects") setProject(newProject());
+    if (tab === "agents") setAgent(newAgent(t));
+    if (tab === "providers") setProvider(newProvider(t));
+    if (tab === "projects") setProject(newProject(t));
   }
 
   async function saveAgent() {
     if (!agent) return;
     let sampling;
-    try { sampling = parseSamplingInputs(agent); } catch (error) {
-      toast.error(error instanceof Error ? error.message : "采样参数无效");
+    try { sampling = parseSamplingInputs(agent, t); } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("采样参数无效"));
       return;
     }
     const maxTokens = agent.maxTokens ? Number(agent.maxTokens) : null;
     if (!agent.name.trim() || !agent.systemPrompt.trim()) {
-      toast.error("请填写有效的 Agent 名称、提示词和采样参数。");
+      toast.error(t("请填写有效的 Agent 名称、提示词和采样参数。"));
       return;
     }
     const previousAgent = agents.find((item) => item._id === agent.id);
@@ -348,7 +352,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
           updatedAt: now(),
         }),
       });
-      if (!response.ok) throw new Error(await readError(response, "保存 Agent 失败"));
+      if (!response.ok) throw new Error(await readError(response, t("保存 Agent 失败")));
       const previous = agents.find((item) => item._id === agent.id);
       const updated: AgentDoc = {
         _id: agent.id,
@@ -401,9 +405,9 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
           : [...current, updated];
       });
       setAgent(agentDraft(updated, agent.selectedProviderId));
-      toast.success("Agent 已保存");
+      toast.success(t("Agent 已保存"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存 Agent 失败");
+      toast.error(error instanceof Error ? error.message : t("保存 Agent 失败"));
     } finally {
       setSaving(false);
     }
@@ -412,7 +416,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
   async function saveProvider() {
     if (!provider || provider.id === BUILTIN_PROVIDER_ID) return;
     if (!provider.name.trim() || !provider.baseUrl.trim() || !provider.apiKey.trim() || provider.models.some((model) => !model.modelId.trim())) {
-      toast.error("请填写 Provider 名称、地址和 API Key。");
+      toast.error(t("请填写 Provider 名称、地址和 API Key。"));
       return;
     }
     setSaving(true);
@@ -422,14 +426,14 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...provider, name: provider.name.trim(), baseUrl: provider.baseUrl.trim(), apiKey: provider.apiKey.trim(), updatedAt: now() }),
       });
-      if (!response.ok) throw new Error(await readError(response, "保存 Provider 失败"));
+      if (!response.ok) throw new Error(await readError(response, t("保存 Provider 失败")));
       const previous = providers.find((item) => item._id === provider.id);
       const updated: ProviderDoc = { ...provider, _id: provider.id, name: provider.name.trim(), baseUrl: provider.baseUrl.trim(), apiKey: provider.apiKey.trim(), updatedAt: now(), version: previous?.version ?? 0, deleted: false, userId: previous?.userId ?? "" };
       setProviders((current) => current.some((item) => item._id === updated._id) ? current.map((item) => item._id === updated._id ? updated : item) : [...current, updated]);
       setProvider(providerDraft(updated));
-      toast.success("Provider 已保存");
+      toast.success(t("Provider 已保存"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存 Provider 失败");
+      toast.error(error instanceof Error ? error.message : t("保存 Provider 失败"));
     } finally {
       setSaving(false);
     }
@@ -438,7 +442,7 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
   async function saveProject() {
     if (!project) return;
     if (!project.name.trim()) {
-      toast.error("请输入项目名称。");
+      toast.error(t("请输入项目名称。"));
       return;
     }
     setSaving(true);
@@ -448,13 +452,13 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...project, name: project.name.trim(), workspace: project.workspace.trim(), updatedAt: now() }),
       });
-      if (!response.ok) throw new Error(await readError(response, "保存项目失败"));
+      if (!response.ok) throw new Error(await readError(response, t("保存项目失败")));
       const updated: ProjectDoc = { ...project, _id: project.id, name: project.name.trim(), workspace: project.workspace.trim(), updatedAt: now(), version: 0, deleted: false, userId: "" };
       setProjects((current) => current.some((item) => item._id === updated._id) ? current.map((item) => item._id === updated._id ? updated : item) : [...current, updated]);
       setProject(projectDraft(updated));
-      toast.success("项目已保存");
+      toast.success(t("项目已保存"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存项目失败");
+      toast.error(error instanceof Error ? error.message : t("保存项目失败"));
     } finally {
       setSaving(false);
     }
@@ -466,11 +470,11 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
     const resource = tab === "agents" ? "agents" : tab === "providers" ? "providers" : "projects";
     try {
       const response = await fetch(`/api/${resource}/${current.id}`, { method: "DELETE" });
-      if (!response.ok) throw new Error(await readError(response, "删除失败"));
+      if (!response.ok) throw new Error(await readError(response, t("删除失败")));
       if (tab === "agents") {
         const next = agents.filter((item) => item._id !== current.id);
         setAgents(next);
-        setAgent(next[0] ? agentDraft(next[0]) : newAgent());
+        setAgent(next[0] ? agentDraft(next[0]) : newAgent(t));
       } else if (tab === "providers") {
         const next = providers.filter((item) => item._id !== current.id);
         setProviders(next);
@@ -478,25 +482,25 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
       } else {
         const next = projects.filter((item) => item._id !== current.id);
         setProjects(next);
-        setProject(next[0] ? projectDraft(next[0]) : newProject());
+        setProject(next[0] ? projectDraft(next[0]) : newProject(t));
       }
-      toast.success("已删除");
+      toast.success(t("已删除"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "删除失败");
+      toast.error(error instanceof Error ? error.message : t("删除失败"));
     }
   }
 
   const tabMeta = {
-    agents: { label: "Agents", description: "定义不同的角色、系统提示词和默认模型。", icon: Bot },
-    providers: { label: "Providers", description: "管理 API 地址、密钥和可用模型。", icon: Server },
-    projects: { label: "Projects", description: "为工作流保留共享的项目工作区。", icon: FolderKanban },
+    agents: { label: "Agents", description: t("定义不同的角色、系统提示词和默认模型。"), icon: Bot },
+    providers: { label: "Providers", description: t("管理 API 地址、密钥和可用模型。"), icon: Server },
+    projects: { label: "Projects", description: t("为工作流保留共享的项目工作区。"), icon: FolderKanban },
   }[tab];
   const viewingBuiltinProvider = tab === "providers" && provider?.id === BUILTIN_PROVIDER_ID;
   const isNew = !activeItems.some((item) => item._id === (tab === "agents" ? agent?.id : tab === "providers" ? provider?.id : project?.id));
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[9rem_minmax(0,1fr)] gap-3 sm:grid-cols-[15rem_minmax(0,1fr)] sm:gap-5">
-      <aside className="flex min-h-0 min-w-0 flex-col gap-3 border-r pr-3 sm:pr-5" aria-label="配置导航">
+      <aside className="flex min-h-0 min-w-0 flex-col gap-3 border-r pr-3 sm:pr-5" aria-label={t("配置导航")}>
         <Tabs value={tab} onValueChange={(value) => { setTab(value as Tab); setQuery(""); }} orientation="vertical">
           <TabsList className="h-auto w-full flex-col items-stretch">
             {(["agents", "providers", "projects"] as const).map((item) => {
@@ -515,17 +519,17 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
             })}
           </TabsList>
         </Tabs>
-        <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="筛选..." aria-label="筛选配置" className="h-9" />
+        <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("筛选...")} aria-label={t("筛选配置")} className="h-9" />
         <ScrollArea type="always" className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
           <div className="grid gap-1 pr-3">
-            {visibleItems.length === 0 ? <p className="p-2 text-xs text-muted-foreground">{query ? "没有匹配的配置" : "暂无配置，请在右侧新建。"}</p> : null}
+            {visibleItems.length === 0 ? <p className="p-2 text-xs text-muted-foreground">{query ? t("没有匹配的配置") : t("暂无配置，请在右侧新建。")}</p> : null}
             {visibleItems.map((item) => {
               const active = (tab === "agents" ? agent?.id : tab === "providers" ? provider?.id : project?.id) === item._id;
               return (
                 <Button key={item._id} variant={active ? "secondary" : "ghost"} aria-pressed={active} className="h-auto min-w-0 justify-start px-2 py-3" onClick={() => selectItem(item)}>
                   <span className="min-w-0 flex-1 text-left">
                     <span className="block truncate">{item.name}</span>
-                    <span className="mt-1 block truncate text-xs font-normal text-muted-foreground">{tab === "providers" ? item._id === BUILTIN_PROVIDER_ID ? `内置云服务 · ${builtinProvider.models.length} 个模型` : (item as ProviderDoc).baseUrl : tab === "projects" ? (item as ProjectDoc).workspace || "未设置工作区" : (item as AgentDoc).defaultModelId || "未设置模型"}</span>
+                    <span className="mt-1 block truncate text-xs font-normal text-muted-foreground">{tab === "providers" ? item._id === BUILTIN_PROVIDER_ID ? t("内置云服务 · {0} 个模型", { "0": builtinProvider.models.length }) : (item as ProviderDoc).baseUrl : tab === "projects" ? (item as ProjectDoc).workspace || t("未设置工作区") : (item as AgentDoc).defaultModelId || t("未设置模型")}</span>
                   </span>
                   <ChevronRight className="size-4 shrink-0" />
                 </Button>
@@ -534,65 +538,65 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
           </div>
         </ScrollArea>
       </aside>
-      <section className="flex min-h-0 min-w-0 flex-col gap-4" aria-label="配置编辑">
+      <section className="flex min-h-0 min-w-0 flex-col gap-4" aria-label={t("配置编辑")}>
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-xl font-semibold tracking-tight">{viewingBuiltinProvider ? "查看" : isNew ? "新增" : "编辑"} {tabMeta.label.slice(0, -1)}</h2>
+            <h2 className="text-xl font-semibold tracking-tight">{viewingBuiltinProvider ? t("查看") : isNew ? t("新增") : t("编辑")} {tabMeta.label.slice(0, -1)}</h2>
             <p className="text-xs text-muted-foreground">{tabMeta.description}</p>
           </div>
-          <Button onClick={addItem} size="sm"><Plus /> 新建</Button>
+          <Button onClick={addItem} size="sm"><Plus /> {" "}{t("新建")}</Button>
         </div>
         <ScrollArea type="always" className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
           <div className="min-w-0 space-y-4 pr-3 pb-2">
           {tab === "agents" && agent ? (
             <Card>
-              <CardHeader><CardTitle className="flex items-center gap-2">{isNew ? "新增" : "编辑"} Agent {agent.role === "default" ? <Badge><Check className="size-3" /> 默认</Badge> : null} {agent.role === "title" ? <Badge variant="secondary"><WandSparkles className="size-3" /> 标题生成</Badge> : null}</CardTitle><CardDescription>保存后会通过同步服务分发到其他设备。</CardDescription></CardHeader>
+              <CardHeader><CardTitle className="flex items-center gap-2">{isNew ? t("新增") : t("编辑")} Agent {agent.role === "default" ? <Badge><Check className="size-3" /> {" "}{t("默认")}</Badge> : null} {agent.role === "title" ? <Badge variant="secondary"><WandSparkles className="size-3" /> {" "}{t("标题生成")}</Badge> : null}</CardTitle><CardDescription>{t("保存后会通过同步服务分发到其他设备。")}</CardDescription></CardHeader>
               <CardContent className="grid gap-5">
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="grid gap-2"><Label>名称</Label><Input value={agent.name} disabled={agent.role === "default"} onChange={(event) => setAgent({ ...agent, name: event.target.value })} /></div>
-                  <div className="grid gap-2"><Label>角色</Label><Select value={agent.role} disabled={agent.role === "default"} onValueChange={(value) => setAgent({ ...agent, role: value as AgentDraft["role"] })}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="default">默认 Agent</SelectItem><SelectItem value="chat">聊天 Agent</SelectItem><SelectItem value="title">标题生成 Agent</SelectItem></SelectContent></Select></div>
+                  <div className="grid gap-2"><Label>{t("名称")}</Label><Input value={agent.name} disabled={agent.role === "default"} onChange={(event) => setAgent({ ...agent, name: event.target.value })} /></div>
+                  <div className="grid gap-2"><Label>{t("角色")}</Label><Select value={agent.role} disabled={agent.role === "default"} onValueChange={(value) => setAgent({ ...agent, role: value as AgentDraft["role"] })}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="default">{t("默认 Agent")}</SelectItem><SelectItem value="chat">{t("聊天 Agent")}</SelectItem><SelectItem value="title">{t("标题生成 Agent")}</SelectItem></SelectContent></Select></div>
                 </div>
-                <div className="grid gap-2"><Label>描述</Label><Input value={agent.description} onChange={(event) => setAgent({ ...agent, description: event.target.value })} placeholder="可选" /></div>
-                <div className="grid gap-2"><Label>System prompt</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultSystemPrompt" label="跟随默认" checked={agent.followDefaultSystemPrompt} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultSystemPrompt: checked })} /> : null}<Textarea value={agent.systemPrompt} disabled={agent.followDefaultSystemPrompt && canFollowDefaults} onChange={(event) => setAgent({ ...agent, systemPrompt: event.target.value })} className="min-h-32" /></div>
+                <div className="grid gap-2"><Label>{t("描述")}</Label><Input value={agent.description} onChange={(event) => setAgent({ ...agent, description: event.target.value })} placeholder={t("可选")} /></div>
+                <div className="grid gap-2"><Label>System prompt</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultSystemPrompt" label={t("跟随默认")} checked={agent.followDefaultSystemPrompt} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultSystemPrompt: checked })} /> : null}<Textarea value={agent.systemPrompt} disabled={agent.followDefaultSystemPrompt && canFollowDefaults} onChange={(event) => setAgent({ ...agent, systemPrompt: event.target.value })} className="min-h-32" /></div>
                 <div className="grid gap-3 rounded-lg border p-3">
-                  <Label>模型</Label>
-                  {canFollowDefaults ? <FollowToggle id="agent-followDefaultModel" label="跟随默认" checked={agent.followDefaultModel} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultModel: checked })} /> : null}
+                  <Label>{t("模型")}</Label>
+                  {canFollowDefaults ? <FollowToggle id="agent-followDefaultModel" label={t("跟随默认")} checked={agent.followDefaultModel} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultModel: checked })} /> : null}
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="grid gap-2">
                       <Label htmlFor="agent-provider">Provider</Label>
                       <Select value={agent.selectedProviderId} disabled={agent.followDefaultModel && canFollowDefaults} onValueChange={(value) => setAgent({ ...agent, selectedProviderId: value, defaultModelId: "" })}>
-                        <SelectTrigger id="agent-provider" className="w-full"><SelectValue placeholder="选择 Provider" /></SelectTrigger>
+                        <SelectTrigger id="agent-provider" className="w-full"><SelectValue placeholder={t("选择 Provider")} /></SelectTrigger>
                         <SelectContent>{allProviders.map((item) => <SelectItem key={item._id} value={item._id}>{item.name}</SelectItem>)}</SelectContent>
                       </Select>
                     </div>
                     <div className="grid gap-2">
-                      <Label htmlFor="agent-model">模型</Label>
+                      <Label htmlFor="agent-model">{t("模型")}</Label>
                       <Select value={agent.defaultModelId} disabled={agent.followDefaultModel && canFollowDefaults} onValueChange={(value) => setAgent({ ...agent, defaultModelId: value })}>
-                        <SelectTrigger id="agent-model" className="w-full"><SelectValue placeholder={selectedAgentModels.length ? "选择模型" : "该 Provider 暂无模型"} /></SelectTrigger>
+                        <SelectTrigger id="agent-model" className="w-full"><SelectValue placeholder={selectedAgentModels.length ? t("选择模型") : t("该 Provider 暂无模型")} /></SelectTrigger>
                         <SelectContent>{selectedAgentModels.map((model) => <SelectItem key={model.modelId} value={model.modelId}>{model.displayName || model.modelId}</SelectItem>)}</SelectContent>
                       </Select>
                     </div>
                   </div>
-                  <p className="text-xs text-muted-foreground">{selectedAgentProvider?.name ?? "先选择 Provider"} · {agent.defaultModelId || "未选择模型"}</p>
+                  <p className="text-xs text-muted-foreground">{selectedAgentProvider?.name ?? t("先选择 Provider")} · {agent.defaultModelId || t("未选择模型")}</p>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="grid gap-2"><Label htmlFor="agent-temperature">Temperature</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultTemperature" label="跟随默认" checked={agent.followDefaultTemperature} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTemperature: checked })} /> : null}<Input id="agent-temperature" type="number" min="0" max="2" step="0.1" placeholder="留空不发送" value={agent.temperature} disabled={(agent.followDefaultTemperature && canFollowDefaults) || modelCapabilities?.supportsTemperature === false} onChange={(event) => setAgent({ ...agent, temperature: event.target.value })} /></div>
-                  <div className="grid gap-2"><Label htmlFor="agent-topP">Top P (top_p)</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultTopP" label="跟随默认" checked={agent.followDefaultTopP} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTopP: checked })} /> : null}<Input id="agent-topP" type="number" min="0" max="1" step="0.05" placeholder="留空不发送" value={agent.topP} disabled={(agent.followDefaultTopP && canFollowDefaults) || modelCapabilities?.supportsTopP === false} onChange={(event) => setAgent({ ...agent, topP: event.target.value })} /></div>
+                  <div className="grid gap-2"><Label htmlFor="agent-temperature">Temperature</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultTemperature" label={t("跟随默认")} checked={agent.followDefaultTemperature} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTemperature: checked })} /> : null}<Input id="agent-temperature" type="number" min="0" max="2" step="0.1" placeholder={t("留空不发送")} value={agent.temperature} disabled={(agent.followDefaultTemperature && canFollowDefaults) || modelCapabilities?.supportsTemperature === false} onChange={(event) => setAgent({ ...agent, temperature: event.target.value })} /></div>
+                  <div className="grid gap-2"><Label htmlFor="agent-topP">Top P (top_p)</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultTopP" label={t("跟随默认")} checked={agent.followDefaultTopP} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultTopP: checked })} /> : null}<Input id="agent-topP" type="number" min="0" max="1" step="0.05" placeholder={t("留空不发送")} value={agent.topP} disabled={(agent.followDefaultTopP && canFollowDefaults) || modelCapabilities?.supportsTopP === false} onChange={(event) => setAgent({ ...agent, topP: event.target.value })} /></div>
                   {([
                     { key: "frequencyPenalty", follow: "followDefaultFrequencyPenalty", label: "Frequency penalty" },
                     { key: "presencePenalty", follow: "followDefaultPresencePenalty", label: "Presence penalty" },
                   ] as const).map((field) => (
                     <div key={field.key} className="grid gap-2">
-                      <Label htmlFor={`agent-${field.key}`}>{field.label}</Label>
-                      {canFollowDefaults ? <FollowToggle id={`agent-${field.follow}`} label="跟随默认" checked={agent[field.follow]} onCheckedChange={(checked) => setAgent({ ...agent, [field.follow]: checked })} /> : null}
-                      <Input id={`agent-${field.key}`} type="number" min="-2" max="2" step="0.1" value={agent[field.key]} disabled={(agent[field.follow] && canFollowDefaults) || modelCapabilities?.supportsPenalties === false} onChange={(event) => setAgent({ ...agent, [field.key]: event.target.value })} placeholder="留空不发送" />
+                      <Label htmlFor={`agent-${field.key}`}>{t(field.label)}</Label>
+                      {canFollowDefaults ? <FollowToggle id={`agent-${field.follow}`} label={t("跟随默认")} checked={agent[field.follow]} onCheckedChange={(checked) => setAgent({ ...agent, [field.follow]: checked })} /> : null}
+                      <Input id={`agent-${field.key}`} type="number" min="-2" max="2" step="0.1" value={agent[field.key]} disabled={(agent[field.follow] && canFollowDefaults) || modelCapabilities?.supportsPenalties === false} onChange={(event) => setAgent({ ...agent, [field.key]: event.target.value })} placeholder={t("留空不发送")} />
                     </div>
                   ))}
-                  <div className="grid gap-2"><Label htmlFor="agent-maxTokens">Max tokens (max_tokens)</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultMaxTokens" label="跟随默认" checked={agent.followDefaultMaxTokens} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultMaxTokens: checked })} /> : null}<Input id="agent-maxTokens" type="number" value={agent.maxTokens} disabled={agent.followDefaultMaxTokens && canFollowDefaults} onChange={(event) => setAgent({ ...agent, maxTokens: event.target.value })} placeholder="自动" /></div>
-                  <div className="grid gap-2"><Label htmlFor="agent-reasoningEffort">Reasoning effort</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultReasoningEffort" label="跟随默认" checked={agent.followDefaultReasoningEffort} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultReasoningEffort: checked })} /> : null}<ReasoningEffortSelect id="agent-reasoningEffort" modelId={effectiveAgentModel} cloud={cloudModel} onMetadata={handleMetadata} value={canFollowDefaults && agent.followDefaultReasoningEffort ? defaultAgent?.reasoningEffort ?? "" : agent.reasoningEffort} disabled={saving || (agent.followDefaultReasoningEffort && canFollowDefaults)} onChange={(value) => setAgent({ ...agent, reasoningEffort: value })} /></div>
+                  <div className="grid gap-2"><Label htmlFor="agent-maxTokens">Max tokens (max_tokens)</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultMaxTokens" label={t("跟随默认")} checked={agent.followDefaultMaxTokens} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultMaxTokens: checked })} /> : null}<Input id="agent-maxTokens" type="number" value={agent.maxTokens} disabled={agent.followDefaultMaxTokens && canFollowDefaults} onChange={(event) => setAgent({ ...agent, maxTokens: event.target.value })} placeholder={t("自动")} /></div>
+                  <div className="grid gap-2"><Label htmlFor="agent-reasoningEffort">Reasoning effort</Label>{canFollowDefaults ? <FollowToggle id="agent-followDefaultReasoningEffort" label={t("跟随默认")} checked={agent.followDefaultReasoningEffort} onCheckedChange={(checked) => setAgent({ ...agent, followDefaultReasoningEffort: checked })} /> : null}<ReasoningEffortSelect id="agent-reasoningEffort" modelId={effectiveAgentModel} cloud={cloudModel} onMetadata={handleMetadata} value={canFollowDefaults && agent.followDefaultReasoningEffort ? defaultAgent?.reasoningEffort ?? "" : agent.reasoningEffort} disabled={saving || (agent.followDefaultReasoningEffort && canFollowDefaults)} onChange={(value) => setAgent({ ...agent, reasoningEffort: value })} /></div>
                 </div>
-                <p className="text-xs text-muted-foreground">默认 Agent 作为角色单独存在；当前默认 Agent 不能直接取消，请在其他 Agent 上选择“默认 Agent”完成转移。</p>
-                <div className="flex flex-wrap justify-between gap-2"><DeleteButton onConfirm={() => void removeCurrent()} /><Button onClick={() => void saveAgent()} disabled={saving}><Save /> {saving ? "保存中..." : "保存 Agent"}</Button></div>
+                <p className="text-xs text-muted-foreground">{t("默认 Agent 作为角色单独存在；当前默认 Agent 不能直接取消，请在其他 Agent 上选择“默认 Agent”完成转移。")}</p>
+                <div className="flex flex-wrap justify-between gap-2"><DeleteButton onConfirm={() => void removeCurrent()} /><Button onClick={() => void saveAgent()} disabled={saving}><Save /> {saving ? t("保存中...") : t("保存 Agent")}</Button></div>
               </CardContent>
             </Card>
           ) : null}
@@ -600,46 +604,46 @@ export function ConfigurationManagement({ initialAgents, initialProviders, initi
           {viewingBuiltinProvider ? (
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">{builtinProvider.name}<Badge variant="secondary">内置</Badge></CardTitle>
-                <CardDescription>通过 Messenger Cloud 提供模型，无需配置地址和 API Key。模型由平台管理，可在 Agent 的模型设置中选择。</CardDescription>
+                <CardTitle className="flex items-center gap-2">{builtinProvider.name}<Badge variant="secondary">{t("内置")}</Badge></CardTitle>
+                <CardDescription>{t("通过 Messenger Cloud 提供模型，无需配置地址和 API Key。模型由平台管理，可在 Agent 的模型设置中选择。")}</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-3">
-                <Label>可用模型（{builtinProvider.models.length}）</Label>
+                <Label>{t("可用模型（")}{builtinProvider.models.length}）</Label>
                 {builtinProvider.models.length ? builtinProvider.models.map((model) => (
                   <div key={model.id} className="flex min-w-0 items-center justify-between gap-3 rounded-lg border p-3">
                     <span className="min-w-0 break-all text-sm">{model.displayName || model.modelId}</span>
-                    <Badge variant="secondary" className="shrink-0">可用</Badge>
+                    <Badge variant="secondary" className="shrink-0">{t("可用")}</Badge>
                   </div>
-                )) : <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">平台暂未提供可用模型。</p>}
+                )) : <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">{t("平台暂未提供可用模型。")}</p>}
               </CardContent>
             </Card>
           ) : null}
 
           {tab === "providers" && provider && !viewingBuiltinProvider ? (
             <Card>
-              <CardHeader><CardTitle>{isNew ? "新增" : "编辑"} Provider</CardTitle><CardDescription>API Key 仅用于同步和 AI 请求，不会展示给其他用户。</CardDescription></CardHeader>
+              <CardHeader><CardTitle>{isNew ? t("新增") : t("编辑")} Provider</CardTitle><CardDescription>{t("API Key 仅用于同步和 AI 请求，不会展示给其他用户。")}</CardDescription></CardHeader>
               <CardContent className="grid gap-5">
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="grid gap-2"><Label>名称</Label><Input value={provider.name} onChange={(event) => setProvider({ ...provider, name: event.target.value })} /></div>
-                  <div className="grid gap-2"><Label>协议</Label><Select value={provider.apiFormat} onValueChange={(value) => setProvider({ ...provider, apiFormat: value as ProviderDraft["apiFormat"] })}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{(["chat", "responses", "messages", "interactions", "auto"] as const).map((format) => <SelectItem key={format} value={format}>{format}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="grid gap-2"><Label>{t("名称")}</Label><Input value={provider.name} onChange={(event) => setProvider({ ...provider, name: event.target.value })} /></div>
+                  <div className="grid gap-2"><Label>{t("协议")}</Label><Select value={provider.apiFormat} onValueChange={(value) => setProvider({ ...provider, apiFormat: value as ProviderDraft["apiFormat"] })}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{(["chat", "responses", "messages", "interactions", "auto"] as const).map((format) => <SelectItem key={format} value={format}>{format}</SelectItem>)}</SelectContent></Select></div>
                 </div>
                 <div className="grid gap-2"><Label>Base URL</Label><Input value={provider.baseUrl} onChange={(event) => setProvider({ ...provider, baseUrl: event.target.value })} placeholder="https://api.example.com/v1" /></div>
                 <div className="grid gap-2"><Label>API Key</Label><Input type="password" value={provider.apiKey} onChange={(event) => setProvider({ ...provider, apiKey: event.target.value })} /></div>
-                <div className="grid gap-3"><div className="flex items-center justify-between"><div><Label>模型</Label><p className="text-xs text-muted-foreground">只会把启用的模型提供给聊天选择器。</p></div><Button type="button" variant="outline" size="sm" onClick={() => setProvider({ ...provider, models: [...provider.models, { id: crypto.randomUUID(), modelId: "", displayName: "", isEnabled: true, contextWindow: null, inputRate: null, outputRate: null, createdAt: now() }] })}><Plus /> 添加模型</Button></div>
-                  {provider.models.length === 0 ? <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">还没有模型，请至少添加一个模型。</div> : provider.models.map((model, index) => <div key={model.id} className="grid gap-2 rounded-lg border bg-muted/30 p-3 sm:grid-cols-[1fr_1fr_auto_auto] sm:items-center"><Input value={model.modelId} onChange={(event) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, modelId: event.target.value } : item) })} placeholder="模型 ID" /><Input value={model.displayName} onChange={(event) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, displayName: event.target.value } : item) })} placeholder="显示名称（可选）" /><label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch size="sm" checked={model.isEnabled} onCheckedChange={(checked) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, isEnabled: checked } : item) })} />启用</label><Button type="button" variant="ghost" size="icon" onClick={() => setProvider({ ...provider, models: provider.models.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 className="size-4" /></Button></div>)}
+                <div className="grid gap-3"><div className="flex items-center justify-between"><div><Label>{t("模型")}</Label><p className="text-xs text-muted-foreground">{t("只会把启用的模型提供给聊天选择器。")}</p></div><Button type="button" variant="outline" size="sm" onClick={() => setProvider({ ...provider, models: [...provider.models, { id: crypto.randomUUID(), modelId: "", displayName: "", isEnabled: true, contextWindow: null, inputRate: null, outputRate: null, createdAt: now() }] })}><Plus /> {" "}{t("添加模型")}</Button></div>
+                  {provider.models.length === 0 ? <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">{t("还没有模型，请至少添加一个模型。")}</div> : provider.models.map((model, index) => <div key={model.id} className="grid gap-2 rounded-lg border bg-muted/30 p-3 sm:grid-cols-[1fr_1fr_auto_auto] sm:items-center"><Input value={model.modelId} onChange={(event) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, modelId: event.target.value } : item) })} placeholder={t("模型 ID")} /><Input value={model.displayName} onChange={(event) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, displayName: event.target.value } : item) })} placeholder={t("显示名称（可选）")} /><label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch size="sm" checked={model.isEnabled} onCheckedChange={(checked) => setProvider({ ...provider, models: provider.models.map((item, itemIndex) => itemIndex === index ? { ...item, isEnabled: checked } : item) })} />{t("启用")}</label><Button type="button" variant="ghost" size="icon" onClick={() => setProvider({ ...provider, models: provider.models.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 className="size-4" /></Button></div>)}
                 </div>
-                <div className="flex flex-wrap justify-between gap-2"><DeleteButton onConfirm={() => void removeCurrent()} /><Button onClick={() => void saveProvider()} disabled={saving}><Save /> {saving ? "保存中..." : "保存 Provider"}</Button></div>
+                <div className="flex flex-wrap justify-between gap-2"><DeleteButton onConfirm={() => void removeCurrent()} /><Button onClick={() => void saveProvider()} disabled={saving}><Save /> {saving ? t("保存中...") : t("保存 Provider")}</Button></div>
               </CardContent>
             </Card>
           ) : null}
 
           {tab === "projects" && project ? (
             <Card>
-              <CardHeader><CardTitle>{isNew ? "新增" : "编辑"} Project</CardTitle><CardDescription>项目会与会话一起同步，方便在不同设备继续工作。</CardDescription></CardHeader>
+              <CardHeader><CardTitle>{isNew ? t("新增") : t("编辑")} Project</CardTitle><CardDescription>{t("项目会与会话一起同步，方便在不同设备继续工作。")}</CardDescription></CardHeader>
               <CardContent className="grid gap-5">
-                <div className="grid gap-2"><Label>名称</Label><Input value={project.name} onChange={(event) => setProject({ ...project, name: event.target.value })} /></div>
-                <div className="grid gap-2"><Label>工作区路径</Label><Input value={project.workspace} onChange={(event) => setProject({ ...project, workspace: event.target.value })} placeholder="可选，例如 /workspace/my-project" /></div>
-                <div className="flex flex-wrap justify-between gap-2"><DeleteButton onConfirm={() => void removeCurrent()} /><Button onClick={() => void saveProject()} disabled={saving}><Save /> {saving ? "保存中..." : "保存 Project"}</Button></div>
+                <div className="grid gap-2"><Label>{t("名称")}</Label><Input value={project.name} onChange={(event) => setProject({ ...project, name: event.target.value })} /></div>
+                <div className="grid gap-2"><Label>{t("工作区路径")}</Label><Input value={project.workspace} onChange={(event) => setProject({ ...project, workspace: event.target.value })} placeholder={t("可选，例如 /workspace/my-project")} /></div>
+                <div className="flex flex-wrap justify-between gap-2"><DeleteButton onConfirm={() => void removeCurrent()} /><Button onClick={() => void saveProject()} disabled={saving}><Save /> {saving ? t("保存中...") : t("保存 Project")}</Button></div>
               </CardContent>
             </Card>
           ) : null}

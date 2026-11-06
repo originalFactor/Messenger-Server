@@ -16,6 +16,8 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
+import type { Translator } from "@/lib/i18n";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Activity, ArrowDownToLine, ChevronsUpDown, Plus, RefreshCw } from "lucide-react";
@@ -132,20 +134,21 @@ function CapabilityMultiSelect({ id, value, inherited, options, onChange }: {
   options: readonly string[];
   onChange: (value: string) => void;
 }) {
+  const t = useTranslator();
   const custom = value.split(/[,，\n]/).map((item) => item.trim()).filter(Boolean);
   const selected = custom.length ? custom : inherited;
   const choices = [...new Set([...options, ...inherited, ...custom])];
-  const summary = selected.length ? selected.join(", ") : "未提供";
+  const summary = selected.length ? selected.join(", ") : t("未提供");
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button id={id} type="button" variant="outline" className="w-full min-w-0 justify-between font-normal">
-          <span className="truncate">{custom.length ? summary : `继承（${summary}）`}</span>
+          <span className="truncate">{custom.length ? summary : t("继承（{0}）", { "0": summary })}</span>
           <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
-        <DropdownMenuItem onSelect={() => onChange("")}>恢复继承 catalog</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onChange("")}>{t("恢复继承 catalog")}</DropdownMenuItem>
         <DropdownMenuSeparator />
         {choices.map((option) => (
           <DropdownMenuCheckboxItem key={option} checked={selected.includes(option)} onSelect={(event) => event.preventDefault()} onCheckedChange={(checked) => {
@@ -203,15 +206,16 @@ function buildBulkEditDrafts(
   modelIds: readonly string[],
   values: BulkEditValues,
   scheduleOf: (modelId: string) => ScheduleDraft,
+  t: Translator,
 ): Record<string, Partial<MetaDraft>> {
   if (!values.changeMultiplier && !values.changeOffPeak && !values.changeWindows) {
-    throw new Error("请至少选择一个要修改的字段。");
+    throw new Error(t("请至少选择一个要修改的字段。"));
   }
   if (values.changeMultiplier && parseMultiplierInput(values.multiplier) === "invalid") {
-    throw new Error("模型整体倍率必须是非负数字。");
+    throw new Error(t("模型整体倍率必须是非负数字。"));
   }
   if (values.changeOffPeak && parseMultiplierInput(values.offPeakMultiplier) === "invalid") {
-    throw new Error("谷时倍率必须是非负数字。");
+    throw new Error(t("谷时倍率必须是非负数字。"));
   }
   const patches: Record<string, Partial<MetaDraft>> = {};
   for (const modelId of modelIds) {
@@ -221,10 +225,10 @@ function buildBulkEditDrafts(
       const schedule = { ...scheduleOf(modelId) };
       if (values.changeOffPeak) schedule.offPeakMultiplier = values.offPeakMultiplier;
       if (values.changeWindows) schedule.peakWindows = values.peakWindows;
-      const parsed = parsePeakWindows(schedule.peakWindows);
-      if ("error" in parsed) throw new Error(`模型 ${modelId}：${parsed.error}`);
+      const parsed = parsePeakWindows(schedule.peakWindows, t);
+      if ("error" in parsed) throw new Error(t("模型 {0}：{1}", { "0": modelId, "1": parsed.error }));
       if (values.changeOffPeak && parsed.windows.length === 0) {
-        throw new Error(`模型 ${modelId} 没有峰值时段，请同时设置峰值时段后再修改谷时倍率。`);
+        throw new Error(t("模型 {0} 没有峰值时段，请同时设置峰值时段后再修改谷时倍率。", { "0": modelId }));
       }
       patch.timeBased = schedule;
     }
@@ -242,6 +246,7 @@ function BulkModelEditor({ modelIds, onApply, onClose }: {
   onApply: (values: BulkEditValues) => string | undefined;
   onClose: () => void;
 }) {
+  const t = useTranslator();
   const [values, setValues] = useState<BulkEditValues>({
     changeMultiplier: false, multiplier: "1", changeOffPeak: false,
     offPeakMultiplier: "1", changeWindows: false, peakWindows: "",
@@ -251,8 +256,8 @@ function BulkModelEditor({ modelIds, onApply, onClose }: {
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="flex h-[calc(100dvh-6rem)] flex-col overflow-hidden sm:max-w-lg">
         <DialogHeader className="shrink-0">
-          <DialogTitle>批量编辑 {modelIds.length} 个模型</DialogTitle>
-          <DialogDescription>勾选要修改的字段，未勾选的保留各模型原值。应用后需保存上游。</DialogDescription>
+          <DialogTitle>{t("批量编辑")}{" "}{modelIds.length} {" "}{t("个模型")}</DialogTitle>
+          <DialogDescription>{t("勾选要修改的字段，未勾选的保留各模型原值。应用后需保存上游。")}</DialogDescription>
         </DialogHeader>
         <ScrollArea type="always" className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
         <form id="bulk-model-form" className="grid min-w-0 gap-4 pr-3 pb-2" onSubmit={(event) => {
@@ -262,36 +267,36 @@ function BulkModelEditor({ modelIds, onApply, onClose }: {
           <div className="grid gap-2">
             <Label className="flex items-center gap-2">
               <Checkbox checked={values.changeMultiplier} onCheckedChange={(checked) => setValues({ ...values, changeMultiplier: checked === true })} />
-              设置模型整体倍率
+              {" "}{t("设置模型整体倍率")}{" "}
             </Label>
-            <Input aria-label="批量模型整体倍率" inputMode="decimal" disabled={!values.changeMultiplier}
+            <Input aria-label={t("批量模型整体倍率")} inputMode="decimal" disabled={!values.changeMultiplier}
               value={values.multiplier} onChange={(event) => setValues({ ...values, multiplier: event.target.value })} />
           </div>
           <div className="grid gap-2">
             <Label className="flex items-center gap-2">
               <Checkbox checked={values.changeOffPeak} onCheckedChange={(checked) => setValues({ ...values, changeOffPeak: checked === true })} />
-              设置谷时倍率（峰时 = 1）
+              {" "}{t("设置谷时倍率（峰时 = 1）")}{" "}
             </Label>
-            <Input aria-label="批量谷时倍率" inputMode="decimal" disabled={!values.changeOffPeak}
+            <Input aria-label={t("批量谷时倍率")} inputMode="decimal" disabled={!values.changeOffPeak}
               value={values.offPeakMultiplier} onChange={(event) => setValues({ ...values, offPeakMultiplier: event.target.value })} />
-            <p className="text-xs text-muted-foreground">仅修改谷时倍率时保留各模型峰值时段；没有时段的模型需要同时设置时段。</p>
+            <p className="text-xs text-muted-foreground">{t("仅修改谷时倍率时保留各模型峰值时段；没有时段的模型需要同时设置时段。")}</p>
           </div>
           <div className="grid gap-2">
             <Label className="flex items-center gap-2">
               <Checkbox checked={values.changeWindows} onCheckedChange={(checked) => setValues({ ...values, changeWindows: checked === true })} />
-              设置峰值时段
+              {" "}{t("设置峰值时段")}{" "}
             </Label>
-            <Textarea aria-label="批量峰值时段" rows={4} disabled={!values.changeWindows}
+            <Textarea aria-label={t("批量峰值时段")} rows={4} disabled={!values.changeWindows}
               className="font-mono text-xs" placeholder={"1-5 01:00-09:00\n0,6 12:00-14:00"}
               value={values.peakWindows} onChange={(event) => setValues({ ...values, peakWindows: event.target.value })} />
-            <p className="text-xs text-muted-foreground">UTC，每行一个时段，星期 0 = 周日。留空清除自定义峰谷配置并恢复继承。</p>
+            <p className="text-xs text-muted-foreground">{t("UTC，每行一个时段，星期 0 = 周日。留空清除自定义峰谷配置并恢复继承。")}</p>
           </div>
           {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
         </form>
         </ScrollArea>
         <DialogFooter className="shrink-0">
-          <Button type="button" variant="outline" onClick={onClose}>取消</Button>
-          <Button type="submit" form="bulk-model-form">应用到所选模型</Button>
+          <Button type="button" variant="outline" onClick={onClose}>{t("取消")}</Button>
+          <Button type="submit" form="bulk-model-form">{t("应用到所选模型")}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -443,6 +448,7 @@ function ModelEditor({
   onChange: (patch: Partial<MetaDraft>) => void;
   onClose: () => void;
 }) {
+  const t = useTranslator();
   const [choosingCatalog, setChoosingCatalog] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogLimit, setCatalogLimit] = useState(50);
@@ -463,14 +469,14 @@ function ModelEditor({
         <DialogHeader className="shrink-0 pr-8">
           <DialogTitle className="break-all font-mono text-base">{modelId}</DialogTitle>
           <DialogDescription>
-            倍率逐项留空即沿用上游 `/v1/models` 报价或 catalog，0 表示免费。模型能力留空时继承 catalog。
+            {" "}{t("倍率逐项留空即沿用上游 `/v1/models` 报价或 catalog，0 表示免费。模型能力留空时继承 catalog。")}{" "}
           </DialogDescription>
         </DialogHeader>
 
         <ScrollArea type="always" className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=table-container]]:overflow-visible">
         <div className="grid min-w-0 gap-4 pr-3 pb-2">
           <div className="grid min-w-0 gap-2 rounded-lg border p-3">
-            <Label htmlFor="catalog-model-target" className="text-xs">pi-catalog 目标模型</Label>
+            <Label htmlFor="catalog-model-target" className="text-xs">{t("pi-catalog 目标模型")}</Label>
             <Popover
               modal
               open={choosingCatalog}
@@ -491,15 +497,15 @@ function ModelEditor({
                   aria-expanded={choosingCatalog}
                   className="w-full min-w-0 justify-between font-mono text-xs"
                 >
-                  <span className="truncate">{catalogModelId || "自动匹配"}</span>
+                  <span className="truncate">{catalogModelId || t("自动匹配")}</span>
                   <ChevronsUpDown className="ml-2 size-4 shrink-0 text-muted-foreground" />
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
                 <Command shouldFilter={false}>
                   <CommandInput
-                    aria-label="搜索 pi-catalog 模型"
-                    placeholder="搜索模型 ID 或供应商…"
+                    aria-label={t("搜索 pi-catalog 模型")}
+                    placeholder={t("搜索模型 ID 或供应商…")}
                     value={catalogSearch}
                     onValueChange={(value) => {
                       setCatalogSearch(value);
@@ -516,10 +522,10 @@ function ModelEditor({
                           setChoosingCatalog(false);
                         }}
                       >
-                        自动匹配（恢复默认）
+                        {" "}{t("自动匹配（恢复默认）")}{" "}
                       </CommandItem>
                     </CommandGroup>
-                    <CommandGroup heading={`${catalogResults.length} 个结果 · 按匹配度排序`}>
+                    <CommandGroup heading={t("{0} 个结果 · 按匹配度排序", { "0": catalogResults.length })}>
                       {catalogResults.slice(0, catalogLimit).map((id) => (
                         <CommandItem
                           key={id}
@@ -536,13 +542,13 @@ function ModelEditor({
                       ))}
                       {catalogResults.length > catalogLimit ? (
                         <CommandItem value="__more__" onSelect={() => setCatalogLimit((limit) => limit + 50)}>
-                          显示更多
+                          {" "}{t("显示更多")}{" "}
                         </CommandItem>
                       ) : null}
                     </CommandGroup>
                     {catalogResults.length === 0 ? (
                       <p className="p-3 text-xs text-muted-foreground" role="status">
-                        {Object.keys(catalog).length === 0 ? "目录尚未加载，请先更新元数据。" : "没有找到匹配的模型。"}
+                        {Object.keys(catalog).length === 0 ? t("目录尚未加载，请先更新元数据。") : t("没有找到匹配的模型。")}
                       </p>
                     ) : null}
                   </CommandList>
@@ -550,26 +556,26 @@ function ModelEditor({
               </PopoverContent>
             </Popover>
             {catalogModelId && !Object.hasOwn(catalog, catalogModelId) && !Object.hasOwn(catalogCapabilities, catalogModelId) ? (
-              <p className="text-xs text-destructive">当前目录中未找到此目标，请更新元数据或重新选择。</p>
+              <p className="text-xs text-destructive">{t("当前目录中未找到此目标，请更新元数据或重新选择。")}</p>
             ) : null}
             <p className="text-[10px] text-muted-foreground">
-              用于默认倍率、长上下文阶梯和峰谷配置；自定义覆盖和上游报价仍优先。修改后需保存上游。
+              {" "}{t("用于默认倍率、长上下文阶梯和峰谷配置；自定义覆盖和上游报价仍优先。修改后需保存上游。")}{" "}
             </p>
           </div>
 
           <div className="grid gap-3 rounded-lg border p-3">
-            <div><Label>模型元数据</Label><p className="text-xs text-muted-foreground">留空或选择“继承”时使用 catalog；temperature / top_p / penalties 缺省开启。</p></div>
+            <div><Label>{t("模型元数据")}</Label><p className="text-xs text-muted-foreground">{t("留空或选择“继承”时使用 catalog；temperature / top_p / penalties 缺省开启。")}</p></div>
             <div className="grid gap-3 sm:grid-cols-2">
               {CAPABILITY_FIELDS.map((field) => {
                 const inherited = inheritedCapabilities[field.key];
-                const hint = Array.isArray(inherited) ? inherited.join(", ") : inherited == null ? "未提供" : String(inherited);
+                const hint = Array.isArray(inherited) ? inherited.join(", ") : inherited == null ? t("未提供") : String(inherited);
                 return (
                   <div key={field.key} className="grid gap-1">
-                    <Label htmlFor={`model-cap-${field.key}`}>{field.label}</Label>
+                    <Label htmlFor={`model-cap-${field.key}`}>{t(field.label)}</Label>
                     {field.kind === "boolean" ? (
                       <Select value={capabilities[field.key] || "inherit"} onValueChange={(value) => onChange({ [field.key]: value === "inherit" ? "" : value })}>
                         <SelectTrigger id={`model-cap-${field.key}`} className="w-full"><SelectValue /></SelectTrigger>
-                        <SelectContent><SelectItem value="inherit">继承（{inherited === true ? "开启" : inherited === false ? "关闭" : "未知"}）</SelectItem><SelectItem value="true">开启</SelectItem><SelectItem value="false">关闭</SelectItem></SelectContent>
+                        <SelectContent><SelectItem value="inherit">{t("继承（")}{inherited === true ? t("开启") : inherited === false ? t("关闭") : t("未知")}）</SelectItem><SelectItem value="true">{t("开启")}</SelectItem><SelectItem value="false">{t("关闭")}</SelectItem></SelectContent>
                       </Select>
                     ) : field.kind === "list" ? (
                       <CapabilityMultiSelect id={`model-cap-${field.key}`} value={capabilities[field.key]} inherited={Array.isArray(inherited) ? inherited : []} options={field.key === "inputModalities" ? ["text", "image", "audio", "video", "file"] : ["none", "minimal", "low", "medium", "high", "xhigh", "max"]} onChange={(value) => onChange({ [field.key]: value })} />
@@ -583,10 +589,10 @@ function ModelEditor({
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {(
               [
-                ["inputRate", "输入倍率"],
-                ["cacheReadRate", "缓存读取倍率"],
-                ["cacheWriteRate", "缓存写入倍率"],
-                ["outputRate", "输出倍率"],
+                ["inputRate", t("输入倍率")],
+                ["cacheReadRate", t("缓存读取倍率")],
+                ["cacheWriteRate", t("缓存写入倍率")],
+                ["outputRate", t("输出倍率")],
               ] as const
             ).map(([field, label]) => (
               <div key={field} className="grid gap-1">
@@ -607,7 +613,7 @@ function ModelEditor({
 
           <div className="grid gap-1 sm:w-40">
             <Label htmlFor={`model-multiplier-${modelId}`} className="text-[10px]">
-              模型整体倍率（缺省 = 1）
+              {" "}{t("模型整体倍率（缺省 = 1）")}{" "}
             </Label>
             <Input
               id={`model-multiplier-${modelId}`}
@@ -621,10 +627,10 @@ function ModelEditor({
 
           <div className="grid gap-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <Label className="text-xs">长上下文阶梯</Label>
+              <Label className="text-xs">{t("长上下文阶梯")}</Label>
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] text-muted-foreground">
-                  {inheritedTierText ? `当前继承：${inheritedTierText}` : "当前无阶梯"}
+                  {inheritedTierText ? t("当前继承：{0}", { "0": inheritedTierText }) : t("当前无阶梯")}
                 </span>
                 <Button
                   type="button"
@@ -634,25 +640,25 @@ function ModelEditor({
                   onClick={() => onChange({ tiers: [...tiers, emptyTierDraft()] })}
                 >
                   <Plus />
-                  添加档位
+                  {" "}{t("添加档位")}{" "}
                 </Button>
               </div>
             </div>
             {tiers.length === 0 ? (
               <p className="text-[10px] text-muted-foreground">
-                未自定义时沿用上游 /v1/models 或 pi-catalog 的阶梯配置；留空的倍率字段沿用基础档。
+                {" "}{t("未自定义时沿用上游 /v1/models 或 pi-catalog 的阶梯配置；留空的倍率字段沿用基础档。")}{" "}
               </p>
             ) : (
               <div className="min-w-0 rounded-lg border bg-background">
                 <Table className="min-w-[36rem]">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-28">阈值 (tokens)</TableHead>
-                      <TableHead className="w-24">输入</TableHead>
-                      <TableHead className="w-24">缓存读取</TableHead>
-                      <TableHead className="w-24">缓存写入</TableHead>
-                      <TableHead className="w-24">输出</TableHead>
-                      <TableHead className="w-14">操作</TableHead>
+                      <TableHead className="w-28">{t("阈值 (tokens)")}</TableHead>
+                      <TableHead className="w-24">{t("输入")}</TableHead>
+                      <TableHead className="w-24">{t("缓存读取")}</TableHead>
+                      <TableHead className="w-24">{t("缓存写入")}</TableHead>
+                      <TableHead className="w-24">{t("输出")}</TableHead>
+                      <TableHead className="w-14">{t("操作")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -672,7 +678,7 @@ function ModelEditor({
                             <Input
                               inputMode="decimal"
                               className="h-8 font-mono text-xs tabular-nums"
-                              placeholder="沿用"
+                              placeholder={t("沿用")}
                               value={tier[field]}
                               onChange={(event) => setTier(index, { [field]: event.target.value })}
                             />
@@ -686,7 +692,7 @@ function ModelEditor({
                             className="h-7 px-2 text-xs"
                             onClick={() => onChange({ tiers: tiers.filter((_, position) => position !== index) })}
                           >
-                            删除
+                            {" "}{t("删除")}{" "}
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -699,7 +705,7 @@ function ModelEditor({
 
           <div className="grid gap-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <Label className="text-xs">峰谷计费</Label>
+              <Label className="text-xs">{t("峰谷计费")}</Label>
               {inheritedSchedule ? (
                 <Button
                   type="button"
@@ -708,19 +714,19 @@ function ModelEditor({
                   className="h-7 px-2 text-xs"
                   onClick={() => onChange({ timeBased: metaScheduleToDraft(undefined) })}
                 >
-                  重置为继承值
+                  {" "}{t("重置为继承值")}{" "}
                 </Button>
               ) : null}
             </div>
             <p className="text-[10px] text-muted-foreground">
               {inheritedSchedule
-                ? `当前继承：谷时 ×${inheritedSchedule.offPeakMultiplier}，时段 ${formatPeakWindows(inheritedSchedule) || "—"}`
-                : "当前无峰谷配置；留空的时段 = 不启用周期性谷时价"}
+                ? t("当前继承：谷时 ×{0}，时段 {1}", { "0": inheritedSchedule.offPeakMultiplier, "1": formatPeakWindows(inheritedSchedule) || "—" })
+                : t("当前无峰谷配置；留空的时段 = 不启用周期性谷时价")}
             </p>
             <div className="grid gap-2 sm:grid-cols-[10rem_1fr]">
               <div className="grid gap-1">
                 <Label htmlFor="model-off-peak" className="text-[10px]">
-                  谷时系数（峰值 = 1）
+                  {" "}{t("谷时系数（峰值 = 1）")}{" "}
                 </Label>
                 <Input
                   id="model-off-peak"
@@ -737,7 +743,7 @@ function ModelEditor({
               </div>
               <div className="grid gap-1">
                 <Label htmlFor="model-peak-windows" className="text-[10px]">
-                  峰值时段（UTC，每行一个；星期 0 = 周日）
+                  {" "}{t("峰值时段（UTC，每行一个；星期 0 = 周日）")}{" "}
                 </Label>
                 <textarea
                   id="model-peak-windows"
@@ -757,7 +763,7 @@ function ModelEditor({
 
         <DialogFooter className="shrink-0">
           <Button type="button" onClick={onClose}>
-            完成
+            {" "}{t("完成")}{" "}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -766,6 +772,7 @@ function ModelEditor({
 }
 
 export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
+  const t = useTranslator();
   const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -816,7 +823,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     void (async () => {
       try {
         const response = await fetch("/api/admin/models/metadata");
-        if (!response.ok) throw new Error("模型目录获取失败");
+        if (!response.ok) throw new Error(t("模型目录获取失败"));
         const payload = (await response.json()) as {
           metadata?: Record<string, UpstreamModelMeta>;
           models?: CatalogMetadataMap;
@@ -827,13 +834,13 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
           setCatalogLoaded(Object.keys(payload.metadata).length > 0 || Object.keys(payload.models ?? {}).length > 0);
         }
       } catch {
-        if (!cancelled) toast.error("模型目录获取失败，请点击更新元数据重试。");
+        if (!cancelled) toast.error(t("模型目录获取失败，请点击更新元数据重试。"));
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
 
   function startCreate() {
     setEditingId(null);
@@ -927,12 +934,12 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     const checked = new Set(visibleCheckedModels);
     setSelectedModels((models) => models.filter((id) => !checked.has(id)));
     setDisabledModels((models) => [...new Set([...models, ...checked])]);
-    toast.success(`已停用 ${checked.size} 个模型，保存上游后生效。`);
+    toast.success(t("已停用 {0} 个模型，保存上游后生效。", { "0": checked.size }));
   }
 
   function applyBulkEdit(values: BulkEditValues): string | undefined {
     try {
-      const patches = buildBulkEditDrafts(bulkEditingModels, values, (id) => pricingDraft(id).timeBased);
+      const patches = buildBulkEditDrafts(bulkEditingModels, values, (id) => pricingDraft(id).timeBased, t);
       setMetaDrafts((drafts) => {
         const next = { ...drafts };
         for (const [id, patch] of Object.entries(patches)) {
@@ -941,9 +948,9 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
         return next;
       });
       setBulkEditingModels([]);
-      toast.success(`已更新 ${bulkEditingModels.length} 个模型，保存上游后生效。`);
+      toast.success(t("已更新 {0} 个模型，保存上游后生效。", { "0": bulkEditingModels.length }));
     } catch (error) {
-      return error instanceof Error ? error.message : "批量编辑失败。";
+      return error instanceof Error ? error.message : t("批量编辑失败。");
     }
   }
 
@@ -965,7 +972,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
 
   async function fetchFormModels() {
     if (!form.baseUrl) {
-      setFormError("请先填写 Base URL。");
+      setFormError(t("请先填写 Base URL。"));
       return;
     }
     setFetchingModels(true);
@@ -986,7 +993,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
         error?: string;
       } | null;
       if (!response.ok || !payload?.models) {
-        setFormError(payload?.error ?? "拉取失败，请稍后重试。");
+        setFormError(payload?.error ?? t("拉取失败，请稍后重试。"));
         return;
       }
       setDiscoveredModels((models) =>
@@ -1000,13 +1007,13 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       if (Object.keys(prices).length > 0) {
         setModelPrices((current) => ({ ...current, ...prices }));
         toast.success(
-          `发现 ${payload.models.length} 个模型（已启用），其中 ${Object.keys(prices).length} 个带上游报价`,
+          t("发现 {0} 个模型（已启用），其中 {1} 个带上游报价", { "0": payload.models.length, "1": Object.keys(prices).length }),
         );
       } else {
-        toast.success(`发现 ${payload.models.length} 个模型（已启用）`);
+        toast.success(t("发现 {0} 个模型（已启用）", { "0": payload.models.length }));
       }
     } catch {
-      setFormError("网络错误，请稍后重试。");
+      setFormError(t("网络错误，请稍后重试。"));
     } finally {
       setFetchingModels(false);
     }
@@ -1019,7 +1026,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
     try {
       const response = await fetch("/api/admin/models/metadata?refresh=1");
       if (!response.ok) {
-        setFormError("元数据拉取失败，请稍后重试。");
+        setFormError(t("元数据拉取失败，请稍后重试。"));
         return;
       }
       const payload = (await response.json()) as {
@@ -1028,15 +1035,15 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       };
       const metadata = payload.metadata ?? {};
       if (Object.keys(metadata).length === 0) {
-        toast.error("pi-catalog 无可用元数据（服务器可能无法访问 pi.dev）");
+        toast.error(t("pi-catalog 无可用元数据（服务器可能无法访问 pi.dev）"));
         return;
       }
       setCatalogMeta(metadata);
       setCatalogCapabilities(payload.models ?? {});
       setCatalogLoaded(true);
-      toast.success(`已从 pi-catalog 更新 ${Object.keys(metadata).length} 个模型的元数据`);
+      toast.success(t("已从 pi-catalog 更新 {0} 个模型的元数据", { "0": Object.keys(metadata).length }));
     } catch {
-      setFormError("网络错误，请稍后重试。");
+      setFormError(t("网络错误，请稍后重试。"));
     }
   }
 
@@ -1266,16 +1273,16 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       for (const key of ["contextWindow", "maxOutputTokens"] as const) {
         const value = draft[key]?.trim();
         if (value && (!Number.isSafeInteger(Number(value)) || Number(value) <= 0)) {
-          setFormError(`模型 ${modelId} 的 ${key} 必须为正整数或留空。`);
+          setFormError(t("模型 {0} 的 {1} 必须为正整数或留空。", { "0": modelId, "1": key }));
           return;
         }
       }
       if (badRate) {
-        setFormError(`模型 ${modelId} 的倍率必须是非负数字。`);
+        setFormError(t("模型 {0} 的倍率必须是非负数字。", { "0": modelId }));
         return;
       }
       if (draft.multiplier !== undefined && parseMultiplierInput(draft.multiplier) === "invalid") {
-        setFormError(`模型 ${modelId} 的整体倍率必须是非负数字。`);
+        setFormError(t("模型 {0} 的整体倍率必须是非负数字。", { "0": modelId }));
         return;
       }
       // 阶梯：阈值必须是正整数，价格腿必须是非负数字（留空 = 沿用基础档）。
@@ -1286,33 +1293,33 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
           }
           const threshold = Number(tier.inputThreshold);
           if (!Number.isInteger(threshold) || threshold <= 0) {
-            setFormError(`模型 ${modelId} 的长上下文阈值必须是正整数。`);
+            setFormError(t("模型 {0} 的长上下文阈值必须是正整数。", { "0": modelId }));
             return;
           }
           const badTierRate = [tier.inputRate, tier.cacheReadRate, tier.cacheWriteRate, tier.outputRate]
             .some((value) => value.trim() !== "" && parseRateInput(value) === "invalid");
           if (badTierRate) {
-            setFormError(`模型 ${modelId} 的长上下文倍率必须是非负数字。`);
+            setFormError(t("模型 {0} 的长上下文倍率必须是非负数字。", { "0": modelId }));
             return;
           }
         }
       }
       if (draft.timeBased) {
-        const parsedWindows = parsePeakWindows(draft.timeBased.peakWindows);
+        const parsedWindows = parsePeakWindows(draft.timeBased.peakWindows, t);
         if ("error" in parsedWindows) {
-          setFormError(`模型 ${modelId}：${parsedWindows.error}`);
+          setFormError(t("模型 {0}：{1}", { "0": modelId, "1": parsedWindows.error }));
           return;
         }
         const offPeak = Number(draft.timeBased.offPeakMultiplier.trim());
         if (draft.timeBased.offPeakMultiplier.trim() !== "" && (!Number.isFinite(offPeak) || offPeak < 0)) {
-          setFormError(`模型 ${modelId} 的谷时系数必须是非负数字。`);
+          setFormError(t("模型 {0} 的谷时系数必须是非负数字。", { "0": modelId }));
           return;
         }
       }
     }
     const providerMultiplier = parseMultiplierInput(form.multiplier);
     if (providerMultiplier === "invalid") {
-      setFormError("上游整体倍率必须是非负数字。");
+      setFormError(t("上游整体倍率必须是非负数字。"));
       return;
     }
     const modelMeta: Record<string, UpstreamModelMeta> = {};
@@ -1395,27 +1402,27 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        setFormError(body?.error ?? "保存失败，请稍后重试。");
+        setFormError(body?.error ?? t("保存失败，请稍后重试。"));
         return;
       }
       setShowForm(false);
       router.refresh();
     } catch {
-      setFormError("网络错误，请稍后重试。");
+      setFormError(t("网络错误，请稍后重试。"));
     } finally {
       setBusy(false);
     }
   }
 
   async function removeUpstream(upstream: UpstreamDoc) {
-    if (!window.confirm(`确定删除上游「${upstream.name}」？`)) {
+    if (!window.confirm(t("确定删除上游「{0}」？", { "0": upstream.name }))) {
       return;
     }
     setBusy(true);
     try {
       const response = await fetch(`/api/admin/upstreams/${upstream._id}`, { method: "DELETE" });
       if (!response.ok) {
-        setError("删除失败。");
+        setError(t("删除失败。"));
         return;
       }
       router.refresh();
@@ -1428,7 +1435,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
    *  用存储的凭据对该模型发一次最小 chat completion。 */
   async function overallTest(upstream: UpstreamDoc) {
     if (upstream.models.length === 0) {
-      setError("该上游未配置模型。");
+      setError(t("该上游未配置模型。"));
       return;
     }
     // 与服务端解析同一来源链：上游 /v1/models 报价 > pi-catalog > 1x。
@@ -1484,7 +1491,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       if (!response.ok || typeof payload?.latencyMs !== "number") {
         setListTestResults((results) => ({
           ...results,
-          [upstream._id]: { ok: false, text: payload?.error ?? "测试失败。" },
+          [upstream._id]: { ok: false, text: payload?.error ?? t("测试失败。") },
         }));
         return;
       }
@@ -1493,7 +1500,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
         [upstream._id]: { ok: true, text: `${cheapest}（${payload.latencyMs} ms）` },
       }));
     } catch {
-      setListTestResults((results) => ({ ...results, [upstream._id]: { ok: false, text: "网络错误。" } }));
+      setListTestResults((results) => ({ ...results, [upstream._id]: { ok: false, text: t("网络错误。") } }));
     } finally {
       setListTestingId(null);
     }
@@ -1502,8 +1509,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
   /** 对单个模型发一次最小 chat completion，结果内联显示在该行测试按钮下。 */
   async function testModel(modelId: string, signal?: AbortSignal): Promise<{ ok: boolean; text: string }> {
     if (!form.baseUrl) {
-      setFormError("请先填写 Base URL。");
-      return { ok: false, text: "请先填写 Base URL。" };
+      setFormError(t("请先填写 Base URL。"));
+      return { ok: false, text: t("请先填写 Base URL。") };
     }
     setTestingModel(modelId);
     setFormError(null);
@@ -1523,9 +1530,9 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
         latencyMs?: number;
         error?: string;
       } | null;
-      if (signal?.aborted) return { ok: false, text: "测试已停止。" };
+      if (signal?.aborted) return { ok: false, text: t("测试已停止。") };
       if (!response.ok || typeof payload?.latencyMs !== "number") {
-        const failed = { ok: false, text: payload?.error ?? "测试失败。" };
+        const failed = { ok: false, text: payload?.error ?? t("测试失败。") };
         setTestResults((results) => ({ ...results, [modelId]: failed }));
         return failed;
       }
@@ -1533,8 +1540,8 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       setTestResults((results) => ({ ...results, [modelId]: passed }));
       return passed;
     } catch {
-      if (signal?.aborted) return { ok: false, text: "测试已停止。" };
-      const failed = { ok: false, text: "网络错误。" };
+      if (signal?.aborted) return { ok: false, text: t("测试已停止。") };
+      const failed = { ok: false, text: t("网络错误。") };
       setTestResults((results) => ({ ...results, [modelId]: failed }));
       return failed;
     } finally {
@@ -1544,7 +1551,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
 
   async function testCheckedModels() {
     if (!form.baseUrl) {
-      setFormError("请先填写 Base URL。");
+      setFormError(t("请先填写 Base URL。"));
       return;
     }
     const ids = [...visibleCheckedModels];
@@ -1562,7 +1569,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
         if (result.ok) passed += 1;
         setBatchTestProgress({ completed, total: ids.length });
       }
-      const summary = `${controller.signal.aborted ? "测试已停止" : "批量测试完成"}：${completed}/${ids.length}，成功 ${passed}，失败 ${completed - passed}`;
+      const summary = t("{0}：{1}/{2}，成功 {3}，失败 {4}", { "0": controller.signal.aborted ? t("测试已停止") : t("批量测试完成"), "1": completed, "2": ids.length, "3": passed, "4": completed - passed });
       if (completed > passed) toast.error(summary);
       else toast.success(summary);
     } finally {
@@ -1601,7 +1608,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       <div>
         <Button onClick={startCreate}>
           <Plus />
-          新增上游
+          {" "}{t("新增上游")}{" "}
         </Button>
       </div>
 
@@ -1610,20 +1617,19 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       <Dialog open={showForm} onOpenChange={setFormOpen}>
         <DialogContent className="flex h-[calc(100dvh-6rem)] flex-col overflow-hidden sm:max-w-5xl">
           <DialogHeader className="shrink-0 pr-8">
-            <DialogTitle>{editingId ? "编辑上游" : "新增上游"}</DialogTitle>
+            <DialogTitle>{editingId ? t("编辑上游") : t("新增上游")}</DialogTitle>
             <DialogDescription>
-              填写模型服务的接口地址，例如{" "}
-              <code className="font-mono text-xs">https://api.example.com/v1</code> 或{" "}
+              {" "}{t("填写模型服务的接口地址，例如")}{" "}
+              <code className="font-mono text-xs">https://api.example.com/v1</code> {" "}{t("或")}{" "}
               <code className="font-mono text-xs">https://generativelanguage.googleapis.com/v1beta</code>
-              ；协议决定请求与响应的格式（「跟随客户端」把调用方的请求与上游返回原样透传，不做协议转换）；
-              优先级数字越小越优先，同一模型有多个来源时会自动按优先级切换。
+              {" "}{t("；协议决定请求与响应的格式（「跟随客户端」把调用方的请求与上游返回原样透传，不做协议转换）； 优先级数字越小越优先，同一模型有多个来源时会自动按优先级切换。")}{" "}
             </DialogDescription>
           </DialogHeader>
           <ScrollArea type="always" className="-mx-4 min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]]:overscroll-contain [&_[data-slot=table-container]]:overflow-visible">
           <form id="upstream-form" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 px-4 pb-3" onSubmit={submit}>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="grid gap-2">
-                <Label htmlFor="upstream-name">名称</Label>
+                <Label htmlFor="upstream-name">{t("名称")}</Label>
                 <Input
                   id="upstream-name"
                   required
@@ -1651,7 +1657,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="upstream-format">上游协议</Label>
+                <Label htmlFor="upstream-format">{t("上游协议")}</Label>
                 <Select
                   value={form.apiFormat}
                   onValueChange={(value) =>
@@ -1664,14 +1670,14 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                   <SelectContent>
                     {(Object.keys(API_FORMAT_LABELS) as UpstreamApiFormatValue[]).map((value) => (
                       <SelectItem key={value} value={value}>
-                        {API_FORMAT_LABELS[value]}
+                        {t(API_FORMAT_LABELS[value])}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="upstream-priority">优先级</Label>
+                <Label htmlFor="upstream-priority">{t("优先级")}</Label>
                 <Input
                   id="upstream-priority"
                   type="number"
@@ -1681,19 +1687,19 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="upstream-enabled">启用</Label>
+                <Label htmlFor="upstream-enabled">{t("启用")}</Label>
                 <Select value={form.enabled} onValueChange={(value) => setForm({ ...form, enabled: value })}>
                   <SelectTrigger id="upstream-enabled" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="1">启用</SelectItem>
-                    <SelectItem value="0">停用</SelectItem>
+                    <SelectItem value="1">{t("启用")}</SelectItem>
+                    <SelectItem value="0">{t("停用")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="upstream-multiplier">上游整体倍率</Label>
+                <Label htmlFor="upstream-multiplier">{t("上游整体倍率")}</Label>
                 <Input
                   id="upstream-multiplier"
                   inputMode="decimal"
@@ -1715,11 +1721,11 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                   onClick={fetchFormModels}
                 >
                   <RefreshCw className={fetchingModels ? "animate-spin" : undefined} />
-                  {fetchingModels ? "拉取中…" : "从上游拉取"}
+                  {fetchingModels ? t("拉取中…") : t("从上游拉取")}
                 </Button>
                 <div className="flex items-center gap-1.5">
                   <Input
-                    placeholder="手动添加 model-id"
+                    placeholder={t("手动添加 model-id")}
                     className="h-8 w-52 font-mono text-xs"
                     value={manualModel}
                     onChange={(event) => setManualModel(event.target.value)}
@@ -1731,43 +1737,43 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                     }}
                   />
                   <Button type="button" variant="outline" size="sm" onClick={addManualModel} disabled={modelActionsBusy || !manualModel.trim()}>
-                    添加
+                    {" "}{t("添加")}{" "}
                   </Button>
                 </div>
                 <Button type="button" variant="outline" size="sm" onClick={updateMetaFromCatalog}>
                   <ArrowDownToLine />
-                  更新元数据
+                  {" "}{t("更新元数据")}{" "}
                 </Button>
               </div>
             </div>
 
             <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <Input aria-label="搜索模型 ID 或显示名" placeholder="搜索模型 ID 或显示名…" className="h-8 min-w-40 flex-1 text-xs" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} />
-                <Button type="button" variant={unconfiguredOnly ? "secondary" : "outline"} size="sm" aria-pressed={unconfiguredOnly} disabled={!catalogLoaded} onClick={() => setUnconfiguredOnly((value) => !value)}>仅看未配置（{unconfiguredCount}）</Button>
-                {modelSearch || unconfiguredOnly ? <Button type="button" variant="ghost" size="sm" onClick={() => { setModelSearch(""); setUnconfiguredOnly(false); }}>清除筛选</Button> : null}
-                <span className="text-xs text-muted-foreground">显示 {visibleModelIds.length} / {tableModelIds.length}</span>
+                <Input aria-label={t("搜索模型 ID 或显示名")} placeholder={t("搜索模型 ID 或显示名…")} className="h-8 min-w-40 flex-1 text-xs" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} />
+                <Button type="button" variant={unconfiguredOnly ? "secondary" : "outline"} size="sm" aria-pressed={unconfiguredOnly} disabled={!catalogLoaded} onClick={() => setUnconfiguredOnly((value) => !value)}>{t("仅看未配置（")}{unconfiguredCount}）</Button>
+                {modelSearch || unconfiguredOnly ? <Button type="button" variant="ghost" size="sm" onClick={() => { setModelSearch(""); setUnconfiguredOnly(false); }}>{t("清除筛选")}</Button> : null}
+                <span className="text-xs text-muted-foreground">{t("显示")}{" "}{visibleModelIds.length} / {tableModelIds.length}</span>
               </div>
               {tableModelIds.length > 0 ? (
                 <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-lg border bg-popover p-2">
-                  <span className="text-xs text-muted-foreground">当前结果已选 {checkedCount} / {visibleModelIds.length}</span>
-                  {hiddenCheckedCount > 0 ? <span className="text-xs text-muted-foreground">筛选外已选 {hiddenCheckedCount}（不参与本次批量操作）</span> : null}
+                  <span className="text-xs text-muted-foreground">{t("当前结果已选")}{" "}{checkedCount} / {visibleModelIds.length}</span>
+                  {hiddenCheckedCount > 0 ? <span className="text-xs text-muted-foreground">{t("筛选外已选")}{" "}{hiddenCheckedCount}{t("（不参与本次批量操作）")}</span> : null}
                   <Button type="button" variant="outline" size="sm" disabled={modelActionsBusy || checkedCount === 0}
-                    onClick={() => void testCheckedModels()}>批量测试</Button>
+                    onClick={() => void testCheckedModels()}>{t("批量测试")}</Button>
                   <Button type="button" variant="outline" size="sm" disabled={modelActionsBusy || checkedCount === 0}
-                    onClick={disableCheckedModels}>批量停用</Button>
+                    onClick={disableCheckedModels}>{t("批量停用")}</Button>
                   <Button type="button" variant="outline" size="sm" disabled={modelActionsBusy || checkedCount === 0}
-                    onClick={() => setBulkEditingModels([...visibleCheckedModels])}>批量编辑</Button>
+                    onClick={() => setBulkEditingModels([...visibleCheckedModels])}>{t("批量编辑")}</Button>
                   <Button type="button" variant="destructive" size="sm" disabled={modelActionsBusy || checkedCount === 0}
-                    onClick={() => setPendingDeleteModels([...visibleCheckedModels])}>批量删除</Button>
+                    onClick={() => setPendingDeleteModels([...visibleCheckedModels])}>{t("批量删除")}</Button>
                   <Button type="button" variant="ghost" size="sm" disabled={modelActionsBusy || checkedCount + hiddenCheckedCount === 0}
-                    onClick={() => setCheckedModels([])}>取消选择</Button>
+                    onClick={() => setCheckedModels([])}>{t("取消选择")}</Button>
                   {batchTestProgress ? (
                     <>
                       <span className="text-xs tabular-nums" role="status">
-                        已测试 {batchTestProgress.completed} / {batchTestProgress.total}
+                        {" "}{t("已测试")}{" "}{batchTestProgress.completed} / {batchTestProgress.total}
                       </span>
-                      <Button type="button" variant="outline" size="sm" onClick={() => batchTestController.current?.abort()}>停止测试</Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => batchTestController.current?.abort()}>{t("停止测试")}</Button>
                     </>
                   ) : null}
                 </div>
@@ -1778,18 +1784,18 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                     <TableHeader>
                       <TableRow>
                         <TableHead className="w-10">
-                          <Checkbox aria-label="全选当前筛选结果用于批量操作" disabled={modelActionsBusy || visibleModelIds.length === 0}
+                          <Checkbox aria-label={t("全选当前筛选结果用于批量操作")} disabled={modelActionsBusy || visibleModelIds.length === 0}
                             checked={allChecked ? true : checkedCount > 0 ? "indeterminate" : false}
                             onCheckedChange={(checked) => setCheckedModels((current) => checked === true ? [...new Set([...current, ...visibleModelIds])] : current.filter((id) => !visibleModelIds.includes(id)))} />
                         </TableHead>
-                        <TableHead>模型 ID</TableHead>
-                        <TableHead>显示名</TableHead>
-                        <TableHead className="w-40">当前倍率</TableHead>
-                        <TableHead className="w-56 text-right">操作</TableHead>
+                        <TableHead>{t("模型 ID")}</TableHead>
+                        <TableHead>{t("显示名")}</TableHead>
+                        <TableHead className="w-40">{t("当前倍率")}</TableHead>
+                        <TableHead className="w-56 text-right">{t("操作")}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {visibleModelIds.length === 0 ? <TableRow><TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">没有匹配的模型，请调整搜索或筛选条件。</TableCell></TableRow> : null}
+                      {visibleModelIds.length === 0 ? <TableRow><TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">{t("没有匹配的模型，请调整搜索或筛选条件。")}</TableCell></TableRow> : null}
                       {visibleModelIds.map((modelId) => {
                         const displayName = rowFacts.get(modelId)?.displayName ?? modelId;
                         const rowDisabled = disabledModels.includes(modelId);
@@ -1801,7 +1807,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                         return (
                           <TableRow key={modelId} data-state={checkedSet.has(modelId) ? "selected" : undefined}>
                             <TableCell>
-                              <Checkbox aria-label={`选择模型 ${modelId}`} checked={checkedSet.has(modelId)} disabled={modelActionsBusy}
+                              <Checkbox aria-label={t("选择模型 {0}", { "0": modelId })} checked={checkedSet.has(modelId)} disabled={modelActionsBusy}
                                 onCheckedChange={(checked) => setCheckedModels((models) => checked === true
                                   ? [...new Set([...models, modelId])]
                                   : models.filter((id) => id !== modelId))} />
@@ -1809,22 +1815,22 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                             <TableCell className="font-mono text-xs">
                               {modelId}
                               {rowFacts.get(modelId)?.unconfigured ? (
-                                <Badge variant="outline" className="ml-2 border-orange-500/40 bg-orange-500/10 font-sans text-[10px] text-orange-700 dark:text-orange-300" title="未匹配到 catalog，且未手动配置模型元数据或倍率">
-                                  未配置
+                                <Badge variant="outline" className="ml-2 border-orange-500/40 bg-orange-500/10 font-sans text-[10px] text-orange-700 dark:text-orange-300" title={t("未匹配到 catalog，且未手动配置模型元数据或倍率")}>
+                                  {" "}{t("未配置")}{" "}
                                 </Badge>
                               ) : null}
                               {rowDisabled ? (
                                 <Badge variant="secondary" className="ml-2 font-sans text-[10px]">
-                                  已停用
+                                  {" "}{t("已停用")}{" "}
                                 </Badge>
                               ) : null}
                               {hasUpstreamPrice(modelId) ? (
                                 <Badge
                                   variant="outline"
                                   className="ml-2 font-sans text-[10px]"
-                                  title="该上游的 /v1/models 自报了价格，解析时优先于 pi-catalog"
+                                  title={t("该上游的 /v1/models 自报了价格，解析时优先于 pi-catalog")}
                                 >
-                                  上游报价
+                                  {" "}{t("上游报价")}{" "}
                                 </Badge>
                               ) : null}
                             </TableCell>
@@ -1833,17 +1839,15 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                             </TableCell>
                             <TableCell className="font-mono text-xs tabular-nums">
                               <span
-                                title={`四腿顺序：输入 / 缓存读取 / 缓存写入 / 输出${
-                                  hasExtras ? "（已含阶梯与峰谷配置）" : ""
-                                }`}
+                                title={t("四腿顺序：输入 / 缓存读取 / 缓存写入 / 输出{0}", { "0": hasExtras ? t("（已含阶梯与峰谷配置）") : "" })}
                               >
                                 {[effective.inputRate, effective.cacheReadRate, effective.cacheWriteRate, effective.outputRate].map((rate) => rateDisplayFormat.format(rate)).join(" / ")}
                               </span>
                               {hasExtras ? (
                                 <span className="ml-1 font-sans text-[10px] text-muted-foreground">
-                                  {tiers.length > 0 ? `阶梯×${tiers.length}` : null}
+                                  {tiers.length > 0 ? t("阶梯×{0}", { "0": tiers.length }) : null}
                                   {tiers.length > 0 && meta.timeBased ? " · " : null}
-                                  {meta.timeBased ? `峰谷×${meta.timeBased.offPeakMultiplier}` : null}
+                                  {meta.timeBased ? t("峰谷×{0}", { "0": meta.timeBased.offPeakMultiplier }) : null}
                                 </span>
                               ) : null}
                             </TableCell>
@@ -1857,7 +1861,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                   disabled={modelActionsBusy}
                                   onClick={() => setEditingModelId(modelId)}
                                 >
-                                  编辑
+                                  {" "}{t("编辑")}{" "}
                                 </Button>
                                 <Button
                                   type="button"
@@ -1867,7 +1871,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                   disabled={modelActionsBusy}
                                   onClick={() => void testModel(modelId)}
                                 >
-                                  {testingModel === modelId ? "测试中…" : "测试"}
+                                  {testingModel === modelId ? t("测试中…") : t("测试")}
                                 </Button>
                                 {rowDisabled || !enabled ? (
                                   <Button
@@ -1878,7 +1882,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                     disabled={modelActionsBusy}
                                     onClick={() => enableFormModel(modelId)}
                                   >
-                                    启用
+                                    {" "}{t("启用")}{" "}
                                   </Button>
                                 ) : (
                                   <Button
@@ -1889,7 +1893,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                     disabled={modelActionsBusy}
                                     onClick={() => disableFormModel(modelId)}
                                   >
-                                    停用
+                                    {" "}{t("停用")}{" "}
                                   </Button>
                                 )}
                                 <Button
@@ -1900,7 +1904,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                                   disabled={modelActionsBusy}
                                   onClick={() => deleteFormModel(modelId)}
                                 >
-                                  删除
+                                  {" "}{t("删除")}{" "}
                                 </Button>
                               </div>
                               {testResults[modelId] ? (
@@ -1932,10 +1936,10 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
           </ScrollArea>
           <DialogFooter className="relative z-20 shrink-0">
             <Button type="submit" form="upstream-form" disabled={modelActionsBusy}>
-              {editingId ? "保存" : "创建"}
+              {editingId ? t("保存") : t("创建")}
             </Button>
             <Button type="button" variant="outline" onClick={() => setFormOpen(false)}>
-              取消
+              {" "}{t("取消")}{" "}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1974,42 +1978,42 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
       <AlertDialog open={pendingDeleteModels.length > 0} onOpenChange={(open) => { if (!open) setPendingDeleteModels([]); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>删除 {pendingDeleteModels.length} 个模型？</AlertDialogTitle>
+            <AlertDialogTitle>{t("删除")}{" "}{pendingDeleteModels.length} {" "}{t("个模型？")}</AlertDialogTitle>
             <AlertDialogDescription>
-              将从此上游移除所选模型及其自定义配置、目录目标和上游报价，保存上游后生效。
+              {" "}{t("将从此上游移除所选模型及其自定义配置、目录目标和上游报价，保存上游后生效。")}{" "}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>{t("取消")}</AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={() => {
               removeFormModels(pendingDeleteModels);
               setPendingDeleteModels([]);
-            }}>删除</AlertDialogAction>
+            }}>{t("删除")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">上游列表</CardTitle>
-          <CardDescription>按优先级升序排列。</CardDescription>
+          <CardTitle className="text-base">{t("上游列表")}</CardTitle>
+          <CardDescription>{t("按优先级升序排列。")}</CardDescription>
         </CardHeader>
         <CardContent>
           {upstreams.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
-              还没有上游，点击「新增上游」添加第一个模型服务。
+              {" "}{t("还没有上游，点击「新增上游」添加第一个模型服务。")}{" "}
             </p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>名称</TableHead>
+                  <TableHead>{t("名称")}</TableHead>
                   <TableHead>Base URL</TableHead>
-                  <TableHead>协议</TableHead>
-                  <TableHead>优先级</TableHead>
-                  <TableHead>模型</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
+                  <TableHead>{t("协议")}</TableHead>
+                  <TableHead>{t("优先级")}</TableHead>
+                  <TableHead>{t("模型")}</TableHead>
+                  <TableHead>{t("状态")}</TableHead>
+                  <TableHead className="text-right">{t("操作")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2019,7 +2023,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                     <TableCell className="max-w-52 font-mono text-xs break-all">{upstream.baseUrl}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className="font-mono text-[10px]">
-                        {API_FORMAT_LABELS[(upstream.apiFormat ?? "auto") as UpstreamApiFormatValue]}
+                        {t(API_FORMAT_LABELS[(upstream.apiFormat ?? "auto") as UpstreamApiFormatValue])}
                       </Badge>
                     </TableCell>
                     <TableCell className="tabular-nums">{upstream.priority}</TableCell>
@@ -2032,13 +2036,13 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                     </TableCell>
                     <TableCell>
                       <Badge variant={upstream.enabled ? "default" : "secondary"}>
-                        {upstream.enabled ? "启用" : "停用"}
+                        {upstream.enabled ? t("启用") : t("停用")}
                       </Badge>
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap justify-end gap-2">
                         <Button variant="outline" size="sm" onClick={() => startEdit(upstream)}>
-                          编辑
+                          {" "}{t("编辑")}{" "}
                         </Button>
                         <Button
                           variant="outline"
@@ -2047,7 +2051,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                           onClick={() => overallTest(upstream)}
                         >
                           <Activity />
-                          {listTestingId === upstream._id ? "测试中…" : "整体测试"}
+                          {listTestingId === upstream._id ? t("测试中…") : t("整体测试")}
                         </Button>
                         <Button
                           variant="destructive"
@@ -2055,7 +2059,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                           disabled={busy}
                           onClick={() => removeUpstream(upstream)}
                         >
-                          删除
+                          {" "}{t("删除")}{" "}
                         </Button>
                       </div>
                     </TableCell>
@@ -2071,7 +2075,7 @@ export function UpstreamsManager({ upstreams }: { upstreams: UpstreamDoc[] }) {
                 className="mt-4 grid gap-1 rounded-lg border bg-muted/40 p-4 first:mt-6"
               >
                 <p className="text-sm font-medium">
-                  「{upstream.name}」整体测试{listTestResults[upstream._id].ok ? "通过" : "失败"}
+                  「{upstream.name}{t("」整体测试")}{listTestResults[upstream._id].ok ? t("通过") : t("失败")}
                 </p>
                 <p
                   className={

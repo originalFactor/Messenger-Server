@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { createTranslator, type Translator } from "@/lib/i18n";
 import type { MessageEmbed } from "@/lib/types";
 
 /** A content part stored in `MessageEmbed.partsJson` (the clients' shared shape). */
@@ -230,8 +231,8 @@ type ChatChunk = {
 };
 
 /** Reads a chat-completions SSE stream, reporting the accumulated text as it grows. */
-export async function readChatStream(response: Response, onText: (text: string) => void): Promise<{ text: string; toolCalls: StreamedToolCall[] }> {
-  if (!response.body) throw new Error("AI 返回为空");
+export async function readChatStream(response: Response, onText: (text: string) => void, t: Translator = createTranslator("zh-CN")): Promise<{ text: string; toolCalls: StreamedToolCall[] }> {
+  if (!response.body) throw new Error(t("AI 返回为空"));
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";

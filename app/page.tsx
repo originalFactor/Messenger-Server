@@ -1,3 +1,4 @@
+import { LanguageSwitcher } from "@/components/i18n/language-switcher";
 /*
  * Copyright 2026 originalFactor
  *
@@ -14,6 +15,8 @@
  * limitations under the License.
  */
 
+import { getTranslator } from "@/lib/i18n/server";
+import type { Translator } from "@/lib/i18n";
 import Link from "next/link";
 import { ArrowRight, CloudCog, CreditCard, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -27,9 +30,10 @@ import type { PlanDoc } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 
-function formatQuota(credits: number): string {
-  if (credits >= 100_000_000) return `${(credits / 100_000_000).toFixed(credits % 100_000_000 === 0 ? 0 : 1)} 亿 credit`;
-  if (credits >= 10_000) return `${(credits / 10_000).toFixed(credits % 10_000 === 0 ? 0 : 1)} 万 credit`;
+function formatQuota(credits: number, t: Translator): string {
+  if (t.locale === "en-US") return `${new Intl.NumberFormat(t.locale, { notation: "compact", maximumFractionDigits: 1 }).format(credits)} credits`;
+  if (credits >= 100_000_000) return t("{0} 亿 credit", { "0": (credits / 100_000_000).toFixed(credits % 100_000_000 === 0 ? 0 : 1) });
+  if (credits >= 10_000) return t("{0} 万 credit", { "0": (credits / 10_000).toFixed(credits % 10_000 === 0 ? 0 : 1) });
   return `${credits} credit`;
 }
 
@@ -57,6 +61,7 @@ const features = [
 ];
 
 export default async function HomePage() {
+  const t = await getTranslator();
   const session = await requireUserSession();
   let plans: PlanDoc[] = [];
   try {
@@ -68,36 +73,37 @@ export default async function HomePage() {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-50 border-b bg-background/70 backdrop-blur">
-        <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-6">
+        <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-2 px-4 sm:px-6">
           <Link className="flex items-center gap-2.5 text-sm font-semibold tracking-tight" href="/">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/logo.svg" alt="" className="size-5 rounded-md" />
             Messenger Cloud
           </Link>
-          <nav className="flex items-center gap-5">
+          <nav className="flex items-center gap-2 sm:gap-5">
+            <LanguageSwitcher />
             <Link className="hidden text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:block" href="#features">
-              功能
+              {" "}{t("功能")}{" "}
             </Link>
             <Link className="hidden text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:block" href="#pricing">
-              套餐
+              {" "}{t("套餐")}{" "}
             </Link>
             <Link className="hidden text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:block" href="/models">
-              模型广场
+              {" "}{t("模型广场")}{" "}
             </Link>
             <Link className="hidden text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:block" href="https://github.com/originalFactor/Messenger">
               GitHub
             </Link>
             {session ? (
               <Button asChild size="sm">
-                <Link href="/console">进入控制台</Link>
+                <Link href="/console">{t("进入控制台")}</Link>
               </Button>
             ) : (
               <>
                 <Link className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground" href="/login">
-                  登录
+                  {" "}{t("登录")}{" "}
                 </Link>
                 <Button asChild size="sm">
-                  <Link href="/register">注册</Link>
+                  <Link href="/register">{t("注册")}</Link>
                 </Button>
               </>
             )}
@@ -116,25 +122,23 @@ export default async function HomePage() {
               MESSENGER CLOUD
             </Badge>
             <h1 className="text-4xl font-bold tracking-tighter text-balance sm:text-6xl">
-              云端同步。
-              <br />
+              {" "}{t("云端同步。")}{" "}<br />
               <span className="bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 bg-clip-text text-transparent">
-                内置 AI 能力。
+                {" "}{t("内置 AI 能力。")}{" "}
               </span>
             </h1>
             <p className="max-w-xl text-balance text-muted-foreground">
-              一个账号，多端一致。Messenger Cloud 为 Messenger 提供账号体系、云同步与
-              内置 AI 服务 —— 用卡密兑换套餐即可获得额度，无需自备 API Key。
+              {" "}{t("一个账号，多端一致。Messenger Cloud 为 Messenger 提供账号体系、云同步与 内置 AI 服务 —— 用卡密兑换套餐即可获得额度，无需自备 API Key。")}{" "}
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3">
               <Button asChild>
                 <Link href={session ? "/console" : "/register"}>
-                  {session ? "打开控制台" : "立即注册"}
+                  {session ? t("打开控制台") : t("立即注册")}
                   <ArrowRight />
                 </Link>
               </Button>
               <Button asChild variant="outline">
-                <Link href="https://github.com/originalFactor/Messenger">下载 Messenger</Link>
+                <Link href="https://github.com/originalFactor/Messenger">{t("下载 Messenger")}</Link>
               </Button>
             </div>
           </div>
@@ -148,10 +152,10 @@ export default async function HomePage() {
                   <span className="font-mono text-xs font-medium tracking-widest text-muted-foreground">
                     {feature.kicker}
                   </span>
-                  <CardTitle className="text-base">{feature.title}</CardTitle>
+                  <CardTitle className="text-base">{t(feature.title)}</CardTitle>
                 </CardHeader>
                 <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                  {feature.description}
+                  {t(feature.description)}
                 </CardContent>
               </Card>
             ))}
@@ -159,10 +163,10 @@ export default async function HomePage() {
         </section>
 
         <section id="pricing" className="scroll-mt-16 pb-24 pt-20">
-          <h2 className="mb-6 text-2xl font-bold tracking-tight">套餐</h2>
+          <h2 className="mb-6 text-2xl font-bold tracking-tight">{t("套餐")}</h2>
           {plans.length === 0 ? (
             <Card>
-              <CardContent className="text-sm text-muted-foreground">暂无可售套餐，敬请期待。</CardContent>
+              <CardContent className="text-sm text-muted-foreground">{t("暂无可售套餐，敬请期待。")}</CardContent>
             </Card>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -171,11 +175,10 @@ export default async function HomePage() {
                   <CardHeader>
                     <CardTitle className="text-sm font-medium text-muted-foreground">{plan.name}</CardTitle>
                     <div className="text-3xl font-bold tracking-tighter">
-                      {plan.price ? formatPlanPrice(plan.price) : formatQuota(plan.quotaTokens)}
+                      {plan.price ? formatPlanPrice(plan.price) : formatQuota(plan.quotaTokens, t)}
                     </div>
                     <CardDescription>
-                      {formatQuota(plan.quotaTokens)} · 有效期 {plan.validityDays} 天
-                    </CardDescription>
+                      {formatQuota(plan.quotaTokens, t)} {" "}{t("· 有效期")}{" "}{plan.validityDays} {" "}{t("天")}{" "}</CardDescription>
                   </CardHeader>
                   {plan.description ? (
                     <CardContent className="text-sm text-muted-foreground">{plan.description}</CardContent>

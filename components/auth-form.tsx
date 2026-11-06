@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -32,6 +33,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export function AuthForm({ mode, mailEnabled }: { mode: "login" | "register"; mailEnabled: boolean }) {
+  const t = useTranslator();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -79,12 +81,12 @@ export function AuthForm({ mode, mailEnabled }: { mode: "login" | "register"; ma
       }
       const payload = await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok) {
-        setError(payload?.error ?? "验证码发送失败，请稍后重试。");
+        setError(payload?.error ?? t("验证码发送失败，请稍后重试。"));
         return;
       }
-      toast.success("验证码已发送，10 分钟内有效，请查收。重发后旧码失效。");
+      toast.success(t("验证码已发送，10 分钟内有效，请查收。重发后旧码失效。"));
     } catch {
-      setError("网络错误，请稍后重试。");
+      setError(t("网络错误，请稍后重试。"));
     } finally {
       setSendingCode(false);
     }
@@ -94,7 +96,7 @@ export function AuthForm({ mode, mailEnabled }: { mode: "login" | "register"; ma
     event.preventDefault();
     setError(null);
     if (isRegister && password !== confirm) {
-      setError("两次输入的密码不一致。");
+      setError(t("两次输入的密码不一致。"));
       return;
     }
     setBusy(true);
@@ -106,13 +108,13 @@ export function AuthForm({ mode, mailEnabled }: { mode: "login" | "register"; ma
       });
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-        setError(payload?.error ?? "操作失败，请稍后重试。");
+        setError(payload?.error ?? t("操作失败，请稍后重试。"));
         return;
       }
       router.push("/console");
       router.refresh();
     } catch {
-      setError("网络错误，请稍后重试。");
+      setError(t("网络错误，请稍后重试。"));
     } finally {
       setBusy(false);
     }
@@ -121,15 +123,15 @@ export function AuthForm({ mode, mailEnabled }: { mode: "login" | "register"; ma
   return (
     <Card className="w-full max-w-sm">
       <CardHeader className="items-center text-center">
-        <CardTitle className="text-xl">{isRegister ? "创建账号" : "登录 Messenger Cloud"}</CardTitle>
+        <CardTitle className="text-xl">{isRegister ? t("创建账号") : t("登录 Messenger Cloud")}</CardTitle>
         <CardDescription>
-          {isRegister ? "注册后即可使用云同步与内置 AI 服务" : "使用邮箱与密码继续"}
+          {isRegister ? t("注册后即可使用云同步与内置 AI 服务") : t("使用邮箱与密码继续")}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form className="grid gap-4" onSubmit={handleSubmit}>
           <div className="grid gap-2">
-            <Label htmlFor="email">邮箱</Label>
+            <Label htmlFor="email">{t("邮箱")}</Label>
             <Input
               id="email"
               type="email"
@@ -142,14 +144,14 @@ export function AuthForm({ mode, mailEnabled }: { mode: "login" | "register"; ma
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="password">密码</Label>
+            <Label htmlFor="password">{t("密码")}</Label>
             <Input
               id="password"
               type="password"
               required
               minLength={8}
               autoComplete={isRegister ? "new-password" : "current-password"}
-              placeholder={isRegister ? "至少 8 位" : "密码"}
+              placeholder={isRegister ? t("至少 8 位") : t("密码")}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
@@ -158,20 +160,20 @@ export function AuthForm({ mode, mailEnabled }: { mode: "login" | "register"; ma
                 className="justify-self-end text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                 href="/forgot-password"
               >
-                忘记密码？
+                {" "}{t("忘记密码？")}{" "}
               </Link>
             ) : null}
           </div>
           {isRegister ? (
             <div className="grid gap-2">
-              <Label htmlFor="confirm">确认密码</Label>
+              <Label htmlFor="confirm">{t("确认密码")}</Label>
               <Input
                 id="confirm"
                 type="password"
                 required
                 minLength={8}
                 autoComplete="new-password"
-                placeholder="再次输入密码"
+                placeholder={t("再次输入密码")}
                 value={confirm}
                 onChange={(event) => setConfirm(event.target.value)}
               />
@@ -179,7 +181,7 @@ export function AuthForm({ mode, mailEnabled }: { mode: "login" | "register"; ma
           ) : null}
           {isRegister && mailEnabled ? (
             <div className="grid gap-2">
-              <Label htmlFor="code">邮箱验证码</Label>
+              <Label htmlFor="code">{t("邮箱验证码")}</Label>
               <div className="flex gap-2">
                 <Input
                   id="code"
@@ -188,35 +190,33 @@ export function AuthForm({ mode, mailEnabled }: { mode: "login" | "register"; ma
                   autoComplete="one-time-code"
                   pattern="[0-9]{6}"
                   maxLength={6}
-                  placeholder="6 位验证码"
+                  placeholder={t("6 位验证码")}
                   value={code}
                   onChange={(event) => setCode(event.target.value)}
                 />
                 <Button type="button" variant="outline" disabled={busy || sendingCode || cooldownSeconds > 0 || !email.trim()} onClick={sendCode}>
-                  {sendingCode ? "发送中…" : cooldownSeconds > 0 ? `${cooldownSeconds} 秒后重发` : "发送验证码"}
+                  {sendingCode ? t("发送中…") : cooldownSeconds > 0 ? t("{0} 秒后重发", { "0": cooldownSeconds }) : t("发送验证码")}
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">验证码 10 分钟内有效，注册成功后邮箱即完成验证。</p>
+              <p className="text-xs text-muted-foreground">{t("验证码 10 分钟内有效，注册成功后邮箱即完成验证。")}</p>
             </div>
           ) : null}
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
           <Button type="submit" disabled={busy || sendingCode}>
-            {busy ? "请稍候…" : isRegister ? "注册" : "登录"}
+            {busy ? t("请稍候…") : isRegister ? t("注册") : t("登录")}
           </Button>
         </form>
         <p className="mt-5 text-center text-sm text-muted-foreground">
           {isRegister ? (
             <>
-              已有账号？
-              <Link className="font-medium text-foreground underline-offset-4 hover:underline" href="/login">
-                直接登录
+              {" "}{t("已有账号？")}{" "}<Link className="font-medium text-foreground underline-offset-4 hover:underline" href="/login">
+                {" "}{t("直接登录")}{" "}
               </Link>
             </>
           ) : (
             <>
-              还没有账号？
-              <Link className="font-medium text-foreground underline-offset-4 hover:underline" href="/register">
-                立即注册
+              {" "}{t("还没有账号？")}{" "}<Link className="font-medium text-foreground underline-offset-4 hover:underline" href="/register">
+                {" "}{t("立即注册")}{" "}
               </Link>
             </>
           )}

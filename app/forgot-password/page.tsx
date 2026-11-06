@@ -1,3 +1,4 @@
+import { getTranslator } from "@/lib/i18n/server";
 /*
  * Copyright 2026 originalFactor
  *
@@ -21,7 +22,10 @@ import { ForgotPasswordForm } from "@/components/forgot-password-form";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "找回密码" };
+export async function generateMetadata() {
+  const t = await getTranslator();
+  return { title: t("找回密码") };
+}
 
 export default function ForgotPasswordPage() {
   if (!mailEnabled()) redirect("/login");

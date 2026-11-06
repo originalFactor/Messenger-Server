@@ -1,3 +1,4 @@
+import { LanguageSwitcher } from "@/components/i18n/language-switcher";
 /*
  * Copyright 2026 originalFactor
  *
@@ -26,6 +27,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
           <img src="/logo.svg" alt="" className="size-5 rounded-md" />
           Messenger Cloud
         </Link>
+        <LanguageSwitcher />
         {children}
       </div>
     </main>

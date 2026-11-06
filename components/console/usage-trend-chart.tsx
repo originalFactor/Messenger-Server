@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import {
   CartesianGrid,
   Legend,
@@ -84,6 +85,7 @@ interface ChartRow {
  * 归到「未知」线并始终可见。
  */
 export function UsageTrendChart({ buckets, windowMs, now, dimensionLabel, rangeLabel, sinceTs }: UsageTrendChartProps) {
+  const t = useTranslator();
   if (buckets.length === 0) {
     return null;
   }
@@ -104,8 +106,8 @@ export function UsageTrendChart({ buckets, windowMs, now, dimensionLabel, rangeL
   const foldedKnown = new Set(knownRanked.slice(visibleKnown.length).map(([id]) => id as string));
 
   const hasNullSeries = nullTotal > 0;
-  const otherLabel = "其他";
-  const unknownLabel = "未知";
+  const otherLabel = t("其他");
+  const unknownLabel = t("未知");
   const series = [
     ...visibleKnown,
     ...(foldedKnown.size > 0 ? [otherLabel] : []),
@@ -139,11 +141,11 @@ export function UsageTrendChart({ buckets, windowMs, now, dimensionLabel, rangeL
   }
 
   const defaultWindowLabel =
-    windowMs >= 30 * DAY_MS ? "近 30 天"
-      : windowMs >= 7 * DAY_MS ? "近 7 天"
-        : "近 24 小时";
+    windowMs >= 30 * DAY_MS ? t("近 30 天")
+      : windowMs >= 7 * DAY_MS ? t("近 7 天")
+        : t("近 24 小时");
   const windowLabel = rangeLabel ?? defaultWindowLabel;
-  const bucketLabel = daily ? "每天" : "每小时";
+  const bucketLabel = daily ? t("每天") : t("每小时");
   // 自适应刻度密度：并排展示时半宽容易重叠，按「最多 ~8 个刻度」取步长，
   // 并保证末刻度恒为序列末端（从末端按步长倒推取刻度）。
   const maxTicks = 8;
@@ -155,9 +157,9 @@ export function UsageTrendChart({ buckets, windowMs, now, dimensionLabel, rangeL
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">{windowLabel}按{dimensionLabel}用量</CardTitle>
+        <CardTitle className="text-base">{windowLabel}{t("按")}{dimensionLabel}{t("用量")}</CardTitle>
         <CardDescription>
-          {bucketLabel} tokens，按{dimensionLabel}拆分（共 {totals.size} 个{dimensionLabel}）。
+          {bucketLabel} {" "}{t("tokens，按")}{dimensionLabel}{t("拆分（共")}{" "}{totals.size} {" "}{t("个")}{dimensionLabel}）。
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -179,16 +181,16 @@ export function UsageTrendChart({ buckets, windowMs, now, dimensionLabel, rangeL
                 interval={0}
               />
               <YAxis
-                tickFormatter={(value) => formatTokens(Number(value))}
+                tickFormatter={(value) => formatTokens(Number(value), t.locale)}
                 tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
                 stroke="var(--border)"
                 width={48}
                 allowDecimals={false}
               />
               <Tooltip
-                labelFormatter={(label) => formatDateTime(Number(label))}
+                labelFormatter={(label) => formatDateTime(Number(label), t.locale)}
                 formatter={(value, name) => [
-                  `${formatTokens(Number(value))} tokens`,
+                  `${formatTokens(Number(value), t.locale)} tokens`,
                   String(name),
                 ]}
                 contentStyle={{

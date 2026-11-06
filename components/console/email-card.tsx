@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -45,6 +46,7 @@ export interface EmailCardProps {
  * 所以第二步只回显，不允许编辑。
  */
 export function EmailCard({ email, emailVerifiedAt, mailEnabled }: EmailCardProps) {
+  const t = useTranslator();
   const router = useRouter();
   const [step, setStep] = useState<"idle" | "sent">("idle");
   const [newEmail, setNewEmail] = useState("");
@@ -77,15 +79,15 @@ export function EmailCard({ email, emailVerifiedAt, mailEnabled }: EmailCardProp
         | { error?: string; email?: string }
         | null;
       if (!response.ok) {
-        setError(payload?.error ?? "发送失败，请稍后重试。");
+        setError(payload?.error ?? t("发送失败，请稍后重试。"));
         return;
       }
       setPendingEmail(payload?.email ?? newEmail.trim());
       setCurrentPassword("");
       setStep("sent");
-      toast.success("验证码已发送，请查收新邮箱");
+      toast.success(t("验证码已发送，请查收新邮箱"));
     } catch {
-      setError("网络错误，请稍后重试。");
+      setError(t("网络错误，请稍后重试。"));
     } finally {
       setBusy(false);
     }
@@ -103,14 +105,14 @@ export function EmailCard({ email, emailVerifiedAt, mailEnabled }: EmailCardProp
       });
       const payload = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) {
-        setError(payload?.error ?? "验证码校验失败，请稍后重试。");
+        setError(payload?.error ?? t("验证码校验失败，请稍后重试。"));
         return;
       }
-      toast.success("登录邮箱已更换");
+      toast.success(t("登录邮箱已更换"));
       reset();
       router.refresh();
     } catch {
-      setError("网络错误，请稍后重试。");
+      setError(t("网络错误，请稍后重试。"));
     } finally {
       setBusy(false);
     }
@@ -119,29 +121,29 @@ export function EmailCard({ email, emailVerifiedAt, mailEnabled }: EmailCardProp
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">登录邮箱</CardTitle>
+        <CardTitle className="text-base">{t("登录邮箱")}</CardTitle>
         <CardDescription>
-          更换后需用新邮箱登录。Messenger App 的云端账号同步使用同一邮箱，其它设备上的会话不会失效。
+          {" "}{t("更换后需用新邮箱登录。Messenger App 的云端账号同步使用同一邮箱，其它设备上的会话不会失效。")}{" "}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
         <div className="flex flex-wrap items-center gap-2">
           <span className="break-all font-medium">{email}</span>
           {emailVerifiedAt ? (
-            <Badge variant="outline">已验证 · {formatDateTime(emailVerifiedAt)}</Badge>
+            <Badge variant="outline">{t("已验证 ·")}{" "}{formatDateTime(emailVerifiedAt, t.locale)}</Badge>
           ) : (
-            <Badge variant="secondary">未验证</Badge>
+            <Badge variant="secondary">{t("未验证")}</Badge>
           )}
         </div>
 
         {!mailEnabled ? (
           <p className="text-sm text-muted-foreground">
-            当前服务器未配置 SMTP，无法发送验证码，改绑邮箱暂不可用。
+            {" "}{t("当前服务器未配置 SMTP，无法发送验证码，改绑邮箱暂不可用。")}{" "}
           </p>
         ) : step === "idle" ? (
           <form className="grid max-w-md gap-3" onSubmit={requestCode}>
             <div className="grid gap-2">
-              <Label htmlFor="email-change-new">新邮箱</Label>
+              <Label htmlFor="email-change-new">{t("新邮箱")}</Label>
               <Input
                 id="email-change-new"
                 type="email"
@@ -154,7 +156,7 @@ export function EmailCard({ email, emailVerifiedAt, mailEnabled }: EmailCardProp
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="email-change-password">当前密码</Label>
+              <Label htmlFor="email-change-password">{t("当前密码")}</Label>
               <Input
                 id="email-change-password"
                 type="password"
@@ -166,21 +168,21 @@ export function EmailCard({ email, emailVerifiedAt, mailEnabled }: EmailCardProp
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              需要验证当前密码：更换登录邮箱等同于转移账号身份。我们会向新邮箱发送一封 6 位验证码邮件，10 分钟内有效。
+              {" "}{t("需要验证当前密码：更换登录邮箱等同于转移账号身份。我们会向新邮箱发送一封 6 位验证码邮件，10 分钟内有效。")}{" "}
             </p>
             <div>
               <Button type="submit" disabled={busy || !newEmail.trim() || !currentPassword}>
-                {busy ? "发送中…" : "发送验证码"}
+                {busy ? t("发送中…") : t("发送验证码")}
               </Button>
             </div>
           </form>
         ) : (
           <form className="grid max-w-md gap-3" onSubmit={confirm}>
             <p className="text-sm">
-              验证码已发送至 <span className="break-all font-medium">{pendingEmail}</span>。
+              {" "}{t("验证码已发送至")}{" "}<span className="break-all font-medium">{pendingEmail}</span>。
             </p>
             <div className="grid gap-2">
-              <Label htmlFor="email-change-code">6 位验证码</Label>
+              <Label htmlFor="email-change-code">{t("6 位验证码")}</Label>
               <Input
                 id="email-change-code"
                 inputMode="numeric"
@@ -195,10 +197,10 @@ export function EmailCard({ email, emailVerifiedAt, mailEnabled }: EmailCardProp
             </div>
             <div className="flex flex-wrap gap-2">
               <Button type="submit" disabled={busy || code.length !== 6}>
-                {busy ? "确认中…" : "确认更换"}
+                {busy ? t("确认中…") : t("确认更换")}
               </Button>
               <Button type="button" variant="ghost" onClick={reset} disabled={busy}>
-                取消
+                {" "}{t("取消")}{" "}
               </Button>
             </div>
           </form>

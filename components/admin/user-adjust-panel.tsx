@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -54,6 +55,7 @@ export function UserAdjustPanel({
   role: "user" | "admin";
   self: boolean;
 }) {
+  const t = useTranslator();
   const router = useRouter();
   const [quotaDelta, setQuotaDelta] = useState("");
   const [validDays, setValidDays] = useState("");
@@ -67,15 +69,15 @@ export function UserAdjustPanel({
     const grantedDays = validDays.trim() === "" ? undefined : Number(validDays);
     const days = extendDays.trim() === "" ? undefined : Number(extendDays);
     if (delta !== undefined && (!Number.isFinite(delta) || !Number.isInteger(delta))) {
-      setError("额度增减必须是整数。");
+      setError(t("额度增减必须是整数。"));
       return;
     }
     if (grantedDays !== undefined && (!Number.isFinite(grantedDays) || !Number.isInteger(grantedDays) || grantedDays < 0)) {
-      setError("新条目有效天数必须是不小于 0 的整数。");
+      setError(t("新条目有效天数必须是不小于 0 的整数。"));
       return;
     }
     if (days !== undefined && (!Number.isFinite(days) || !Number.isInteger(days) || days < 0)) {
-      setError("有效期顺延天数必须是不小于 0 的整数。");
+      setError(t("有效期顺延天数必须是不小于 0 的整数。"));
       return;
     }
     const payload: Record<string, unknown> = {};
@@ -92,7 +94,7 @@ export function UserAdjustPanel({
       payload.role = nextRole;
     }
     if (Object.keys(payload).length === 0) {
-      setError("没有需要保存的变更。");
+      setError(t("没有需要保存的变更。"));
       return;
     }
     setBusy(true);
@@ -105,16 +107,16 @@ export function UserAdjustPanel({
       });
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) {
-        setError(body?.error ?? "保存失败，请稍后重试。");
+        setError(body?.error ?? t("保存失败，请稍后重试。"));
         return;
       }
-      toast.success(`已更新用户 ${email}`);
+      toast.success(t("已更新用户 {0}", { "0": email }));
       setQuotaDelta("");
       setValidDays("");
       setExtendDays("");
       router.refresh();
     } catch {
-      setError("网络错误，请稍后重试。");
+      setError(t("网络错误，请稍后重试。"));
     } finally {
       setBusy(false);
     }
@@ -123,57 +125,55 @@ export function UserAdjustPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">调整</CardTitle>
+        <CardTitle className="text-base">{t("调整")}</CardTitle>
         <CardDescription>
-          正数充值生成新条目（可设有效天数，留空 = 不限），负数按先过期先用扣减（下限 0）；
-          顺延作用于所有已设到期时间的未过期条目。
-          {self ? " （不能修改自己的角色）" : ""}
+          {" "}{t("正数充值生成新条目（可设有效天数，留空 = 不限），负数按先过期先用扣减（下限 0）； 顺延作用于所有已设到期时间的未过期条目。")}{" "}{self ? t("（不能修改自己的角色）") : ""}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="grid gap-2">
-            <Label htmlFor="user-quota-delta">额度增减</Label>
+            <Label htmlFor="user-quota-delta">{t("额度增减")}</Label>
             <Input
               id="user-quota-delta"
               inputMode="numeric"
-              placeholder="如 100000 或 -50000"
+              placeholder={t("如 100000 或 -50000")}
               className="font-mono text-xs tabular-nums"
               value={quotaDelta}
               onChange={(event) => setQuotaDelta(event.target.value)}
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="user-valid-days">新条目有效天数</Label>
+            <Label htmlFor="user-valid-days">{t("新条目有效天数")}</Label>
             <Input
               id="user-valid-days"
               inputMode="numeric"
-              placeholder="留空 = 不限"
+              placeholder={t("留空 = 不限")}
               className="font-mono text-xs tabular-nums"
               value={validDays}
               onChange={(event) => setValidDays(event.target.value)}
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="user-extend-days">有效期顺延（天）</Label>
+            <Label htmlFor="user-extend-days">{t("有效期顺延（天）")}</Label>
             <Input
               id="user-extend-days"
               inputMode="numeric"
-              placeholder="如 30"
+              placeholder={t("如 30")}
               className="font-mono text-xs tabular-nums"
               value={extendDays}
               onChange={(event) => setExtendDays(event.target.value)}
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="user-role">角色</Label>
+            <Label htmlFor="user-role">{t("角色")}</Label>
             <Select value={nextRole} onValueChange={(value) => setNextRole(value as "user" | "admin")} disabled={self}>
               <SelectTrigger id="user-role" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="user">用户</SelectItem>
-                <SelectItem value="admin">管理员</SelectItem>
+                <SelectItem value="user">{t("用户")}</SelectItem>
+                <SelectItem value="admin">{t("管理员")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -181,7 +181,7 @@ export function UserAdjustPanel({
         {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
         <div className="mt-4 flex gap-2">
           <Button size="sm" disabled={busy} onClick={save}>
-            {busy ? "保存中…" : "保存"}
+            {busy ? t("保存中…") : t("保存")}
           </Button>
         </div>
       </CardContent>

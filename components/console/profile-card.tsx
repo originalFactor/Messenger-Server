@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -50,6 +51,7 @@ export interface ProfileCardProps {
  * `PUT /api/auth/profile`，随 `/api/auth/me` 一起下发给客户端。
  */
 export function ProfileCard({ displayName, email, avatarUrl, avatarVersion }: ProfileCardProps) {
+  const t = useTranslator();
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(displayName ?? "");
@@ -63,11 +65,11 @@ export function ProfileCard({ displayName, email, avatarUrl, avatarVersion }: Pr
   async function upload(file: File) {
     setError(null);
     if (!ACCEPTED_TYPES.includes(file.type)) {
-      setError("头像只支持 JPEG、PNG、WebP 或 GIF。");
+      setError(t("头像只支持 JPEG、PNG、WebP 或 GIF。"));
       return;
     }
     if (file.size === 0 || file.size > MAX_AVATAR_BYTES) {
-      setError("头像大小必须在 5 MiB 以内。");
+      setError(t("头像大小必须在 5 MiB 以内。"));
       return;
     }
     setBusy("avatar");
@@ -77,13 +79,13 @@ export function ProfileCard({ displayName, email, avatarUrl, avatarVersion }: Pr
       const response = await fetch("/api/avatars/user", { method: "PUT", body: form });
       const payload = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) {
-        setError(payload?.error ?? "头像上传失败，请稍后重试。");
+        setError(payload?.error ?? t("头像上传失败，请稍后重试。"));
         return;
       }
-      toast.success("头像已更新");
+      toast.success(t("头像已更新"));
       router.refresh();
     } catch {
-      setError("网络错误，请稍后重试。");
+      setError(t("网络错误，请稍后重试。"));
     } finally {
       setBusy(null);
       if (fileInput.current) {
@@ -94,7 +96,7 @@ export function ProfileCard({ displayName, email, avatarUrl, avatarVersion }: Pr
 
   async function removeAvatar() {
     setError(null);
-    if (!window.confirm("移除后 App 端也会在下次刷新时失去该头像，确定移除？")) {
+    if (!window.confirm(t("移除后 App 端也会在下次刷新时失去该头像，确定移除？"))) {
       return;
     }
     setBusy("remove");
@@ -102,13 +104,13 @@ export function ProfileCard({ displayName, email, avatarUrl, avatarVersion }: Pr
       const response = await fetch("/api/avatars/user", { method: "DELETE" });
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-        setError(payload?.error ?? "移除失败，请稍后重试。");
+        setError(payload?.error ?? t("移除失败，请稍后重试。"));
         return;
       }
-      toast.success("头像已移除");
+      toast.success(t("头像已移除"));
       router.refresh();
     } catch {
-      setError("网络错误，请稍后重试。");
+      setError(t("网络错误，请稍后重试。"));
     } finally {
       setBusy(null);
     }
@@ -126,13 +128,13 @@ export function ProfileCard({ displayName, email, avatarUrl, avatarVersion }: Pr
       });
       const payload = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) {
-        setError(payload?.error ?? "保存失败，请稍后重试。");
+        setError(payload?.error ?? t("保存失败，请稍后重试。"));
         return;
       }
-      toast.success(trimmed === "" ? "已清除昵称，将显示邮箱" : "昵称已保存");
+      toast.success(trimmed === "" ? t("已清除昵称，将显示邮箱") : t("昵称已保存"));
       router.refresh();
     } catch {
-      setError("网络错误，请稍后重试。");
+      setError(t("网络错误，请稍后重试。"));
     } finally {
       setBusy(null);
     }
@@ -141,10 +143,9 @@ export function ProfileCard({ displayName, email, avatarUrl, avatarVersion }: Pr
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">头像与昵称</CardTitle>
+        <CardTitle className="text-base">{t("头像与昵称")}</CardTitle>
         <CardDescription>
-          头像与 Messenger App 使用同一份云端文件，在任一客户端更换后，其它客户端刷新即可看到。
-          昵称未设置时显示登录邮箱。
+          {" "}{t("头像与 Messenger App 使用同一份云端文件，在任一客户端更换后，其它客户端刷新即可看到。 昵称未设置时显示登录邮箱。")}{" "}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-6">
@@ -174,34 +175,34 @@ export function ProfileCard({ displayName, email, avatarUrl, avatarVersion }: Pr
                 onClick={() => fileInput.current?.click()}
                 disabled={busy !== null}
               >
-                {busy === "avatar" ? "上传中…" : avatarSrc ? "更换头像" : "上传头像"}
+                {busy === "avatar" ? t("上传中…") : avatarSrc ? t("更换头像") : t("上传头像")}
               </Button>
               {avatarSrc ? (
                 <Button variant="ghost" size="sm" onClick={removeAvatar} disabled={busy !== null}>
-                  {busy === "remove" ? "移除中…" : "移除头像"}
+                  {busy === "remove" ? t("移除中…") : t("移除头像")}
                 </Button>
               ) : null}
             </div>
-            <p className="text-xs text-muted-foreground">JPEG / PNG / WebP / GIF，最大 5 MiB。</p>
+            <p className="text-xs text-muted-foreground">{t("JPEG / PNG / WebP / GIF，最大 5 MiB。")}</p>
           </div>
         </div>
 
         <form className="grid max-w-md gap-2" onSubmit={saveName}>
-          <Label htmlFor="profile-display-name">昵称</Label>
+          <Label htmlFor="profile-display-name">{t("昵称")}</Label>
           <div className="flex gap-2">
             <Input
               id="profile-display-name"
               value={name}
               maxLength={32}
-              placeholder="例如：小明"
+              placeholder={t("例如：小明")}
               onChange={(event) => setName(event.target.value)}
               disabled={busy !== null}
             />
             <Button type="submit" disabled={busy !== null || !nameChanged}>
-              {busy === "name" ? "保存中…" : "保存"}
+              {busy === "name" ? t("保存中…") : t("保存")}
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">1–32 个字符，留空则清除昵称。</p>
+          <p className="text-xs text-muted-foreground">{t("1–32 个字符，留空则清除昵称。")}</p>
         </form>
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}

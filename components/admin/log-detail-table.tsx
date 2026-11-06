@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import { useTranslator } from "@/components/i18n/locale-provider";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -93,6 +94,7 @@ export interface LogRowView {
  * 一起收进点击行后的详情窗，需要时一次看全。
  */
 export function LogDetailTable({ rows }: { rows: LogRowView[] }) {
+  const t = useTranslator();
   // 翻页/换筛选后 `rows` 整批换掉，但组件实例留在原位；把页码指纹一起存进
   // 状态，指纹不匹配就当作未打开——否则模态窗会继续展示上一页那条日志。
   const rowsKey = rows.map((log) => log.id).join(",");
@@ -102,11 +104,11 @@ export function LogDetailTable({ rows }: { rows: LogRowView[] }) {
   async function copyDetails(log: LogRowView) {
     try {
       await navigator.clipboard.writeText(
-        `${log.timeLabel} [${LEVEL_LABEL[log.level]}/${SOURCE_LABEL[log.source]}] ${log.message}${log.detailsText === null ? "" : `\n\n${log.detailsText}`}`,
+        `${log.timeLabel} [${t(LEVEL_LABEL[log.level])}/${t(SOURCE_LABEL[log.source])}] ${log.message}${log.detailsText === null ? "" : `\n\n${log.detailsText}`}`,
       );
-      toast.success("日志详情已复制");
+      toast.success(t("日志详情已复制"));
     } catch {
-      toast.error("复制失败，请手动选择文本。");
+      toast.error(t("复制失败，请手动选择文本。"));
     }
   }
 
@@ -116,10 +118,10 @@ export function LogDetailTable({ rows }: { rows: LogRowView[] }) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-44">时间</TableHead>
-              <TableHead className="w-20">级别</TableHead>
-              <TableHead className="w-20">来源</TableHead>
-              <TableHead>摘要</TableHead>
+              <TableHead className="w-44">{t("时间")}</TableHead>
+              <TableHead className="w-20">{t("级别")}</TableHead>
+              <TableHead className="w-20">{t("来源")}</TableHead>
+              <TableHead>{t("摘要")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -131,16 +133,16 @@ export function LogDetailTable({ rows }: { rows: LogRowView[] }) {
               >
                 <TableCell className="whitespace-nowrap tabular-nums">{log.timeLabel}</TableCell>
                 <TableCell>
-                  <Badge variant={LEVEL_VARIANT[log.level]}>{LEVEL_LABEL[log.level]}</Badge>
+                  <Badge variant={LEVEL_VARIANT[log.level]}>{t(LEVEL_LABEL[log.level])}</Badge>
                 </TableCell>
-                <TableCell className="whitespace-nowrap">{SOURCE_LABEL[log.source]}</TableCell>
+                <TableCell className="whitespace-nowrap">{t(SOURCE_LABEL[log.source])}</TableCell>
                 <TableCell className="max-w-96">
                   {/* 行点击只服务指针；键盘/读屏走这个真实按钮（点击冒泡到行，
                       不会重复触发），表格行因此保留 tr 语义。 */}
                   <button
                     type="button"
                     title={log.message}
-                    aria-label={`查看日志详情：${log.message}`}
+                    aria-label={t("查看日志详情：{0}", { "0": log.message })}
                     className="block w-full truncate text-left focus-visible:underline focus-visible:underline-offset-4 focus-visible:outline-none"
                   >
                     {log.message}
@@ -158,8 +160,8 @@ export function LogDetailTable({ rows }: { rows: LogRowView[] }) {
             <>
               <DialogHeader className="pr-8">
                 <DialogTitle className="flex flex-wrap items-center gap-2">
-                  <Badge variant={LEVEL_VARIANT[opened.level]}>{LEVEL_LABEL[opened.level]}</Badge>
-                  <span>{SOURCE_LABEL[opened.source]}</span>
+                  <Badge variant={LEVEL_VARIANT[opened.level]}>{t(LEVEL_LABEL[opened.level])}</Badge>
+                  <span>{t(SOURCE_LABEL[opened.source])}</span>
                   <span className="text-sm font-normal text-muted-foreground tabular-nums">
                     {opened.timeLabel}
                   </span>
@@ -170,32 +172,32 @@ export function LogDetailTable({ rows }: { rows: LogRowView[] }) {
               <dl className="grid gap-2 text-sm sm:grid-cols-[6rem_1fr]">
                 {opened.method ? (
                   <>
-                    <dt className="text-muted-foreground">方法</dt>
+                    <dt className="text-muted-foreground">{t("方法")}</dt>
                     <dd className="font-mono text-xs">{opened.method}</dd>
                   </>
                 ) : null}
                 {opened.path ? (
                   <>
-                    <dt className="text-muted-foreground">路径</dt>
+                    <dt className="text-muted-foreground">{t("路径")}</dt>
                     <dd className="break-all font-mono text-xs">{opened.path}</dd>
                   </>
                 ) : null}
                 {opened.status != null ? (
                   <>
-                    <dt className="text-muted-foreground">状态码</dt>
+                    <dt className="text-muted-foreground">{t("状态码")}</dt>
                     <dd className="font-mono text-xs tabular-nums">{opened.status}</dd>
                   </>
                 ) : null}
-                <dt className="text-muted-foreground">记录 ID</dt>
+                <dt className="text-muted-foreground">{t("记录 ID")}</dt>
                 <dd className="break-all font-mono text-xs">{opened.id}</dd>
               </dl>
 
               {opened.detailsText !== null ? (
                 <div className="grid gap-2">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm text-muted-foreground">原始上下文</span>
+                    <span className="text-sm text-muted-foreground">{t("原始上下文")}</span>
                     <Button variant="outline" size="sm" onClick={() => copyDetails(opened)}>
-                      复制
+                      {" "}{t("复制")}{" "}
                     </Button>
                   </div>
                   <pre className="max-h-80 overflow-auto rounded-lg bg-muted/50 p-3 font-mono text-xs whitespace-pre-wrap break-words">
@@ -206,7 +208,7 @@ export function LogDetailTable({ rows }: { rows: LogRowView[] }) {
 
               <DialogFooter>
                 <DialogClose asChild>
-                  <Button variant="outline">关闭</Button>
+                  <Button variant="outline">{t("关闭")}</Button>
                 </DialogClose>
               </DialogFooter>
             </>

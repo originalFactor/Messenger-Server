@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import { getTranslator } from "@/lib/i18n/server";
 import { redirect } from "next/navigation";
 import { ApiKeyCard } from "@/components/console/api-key-card";
 import { UsageTrendChart } from "@/components/console/usage-trend-chart";
@@ -180,6 +181,7 @@ export default async function ConsoleOverviewPage({
 }: {
   searchParams: Promise<{ range?: string; from?: string; to?: string; page?: string }>;
 }) {
+  const t = await getTranslator();
   const session = await requireUserSession();
   if (!session) {
     redirect("/login");
@@ -218,52 +220,52 @@ export default async function ConsoleOverviewPage({
   return (
     <div className="grid gap-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold tracking-tight">概览</h1>
-        <Badge variant="outline">{user.role === "admin" ? "管理员" : "用户"}</Badge>
+        <h1 className="text-xl font-semibold tracking-tight">{t("概览")}</h1>
+        <Badge variant="outline">{user.role === "admin" ? t("管理员") : t("用户")}</Badge>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">剩余额度</CardDescription>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("剩余额度")}</CardDescription>
             <CardTitle className="text-2xl tracking-tighter tabular-nums">
-              {formatTokens(quota.balance)}
+              {formatTokens(quota.balance, t.locale)}
             </CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
             {quota.available
               ? quota.expiresAt === null
-                ? "有效期不限"
-                : `有效期至 ${formatDateTime(quota.expiresAt)}`
+                ? t("有效期不限")
+                : t("有效期至 {0}", { "0": formatDateTime(quota.expiresAt, t.locale) })
               : quota.reason === "expired"
-                ? "套餐已过期，请兑换新卡密"
-                : "暂无可用额度，请兑换卡密"}
+                ? t("套餐已过期，请兑换新卡密")
+                : t("暂无可用额度，请兑换卡密")}
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">近 24 小时请求</CardDescription>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("近 24 小时请求")}</CardDescription>
             <CardTitle className="text-2xl tracking-tighter tabular-nums">{today.requests}</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
-            消耗 {formatTokens(today.cost)} 额度
+            {" "}{t("消耗")}{" "}{formatTokens(today.cost, t.locale)} {" "}{t("额度")}{" "}
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">近 24 小时 tokens</CardDescription>
-            <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(today.tokens)}</CardTitle>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("近 24 小时 tokens")}</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(today.tokens, t.locale)}</CardTitle>
           </CardHeader>
-          <CardContent className="text-xs text-muted-foreground">已按所选模型价格折算</CardContent>
+          <CardContent className="text-xs text-muted-foreground">{t("已按所选模型价格折算")}</CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription className="font-mono text-xs uppercase tracking-wider">云同步</CardDescription>
-            <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(sync.conversations)}</CardTitle>
+            <CardDescription className="font-mono text-xs uppercase tracking-wider">{t("云同步")}</CardDescription>
+            <CardTitle className="text-2xl tracking-tighter tabular-nums">{formatTokens(sync.conversations, t.locale)}</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
-            会话 · 智能体 {sync.agents} · 服务商 {sync.providers} · 消息 {formatTokens(sync.messages)}
-            {sync.lastSyncAt ? ` · 最近同步 ${formatDateTime(sync.lastSyncAt)}` : ""}
+            {" "}{t("会话 · 智能体")}{" "}{sync.agents} {" "}{t("· 服务商")}{" "}{sync.providers} {" "}{t("· 消息")}{" "}{formatTokens(sync.messages, t.locale)}
+            {sync.lastSyncAt ? t(" · 最近同步 {0}", { "0": formatDateTime(sync.lastSyncAt, t.locale) }) : ""}
           </CardContent>
         </Card>
       </div>
@@ -271,7 +273,7 @@ export default async function ConsoleOverviewPage({
       <ApiKeyCard apiKey={user.aiApiKey} />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold tracking-tight">调用记录</h2>
+        <h2 className="text-xl font-semibold tracking-tight">{t("调用记录")}</h2>
         <UsageRangePicker
           key={`${activeRange}:${from ?? ""}:${to ?? ""}`}
           activeRange={activeRange}
@@ -286,7 +288,7 @@ export default async function ConsoleOverviewPage({
         windowMs={windowMs}
         now={now}
         sinceTs={sinceTs}
-        dimensionLabel="模型"
+        dimensionLabel={t("模型")}
         rangeLabel={rangeLabel}
       />
 
@@ -300,8 +302,8 @@ export default async function ConsoleOverviewPage({
         to={to}
         showCallerColumn={false}
         showUpstreamColumn={false}
-        title="近期用量"
-        description="每页 {pageSize} 条，按调用时间倒序；共 {total} 条 / {totalPages} 页。TPS 由输出 tokens ÷ 耗时换算。"
+        title={t("近期用量")}
+        description={t("每页 {pageSize} 条，按调用时间倒序；共 {total} 条 / {totalPages} 页。TPS 由输出 tokens ÷ 耗时换算。")}
         basePath="/console"
       />
     </div>
