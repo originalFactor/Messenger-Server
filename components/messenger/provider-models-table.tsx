@@ -172,7 +172,7 @@ export function ProviderModelsTable({ models, onChange, onFetch, fetching = fals
       </div>
       {!readOnly ? <p className="text-xs text-muted-foreground">{t("模型信息留空时自动匹配 catalog；远端返回值和自定义值优先。保存 Provider 后生效。")}</p> : null}
       {editingModel && inherited ? <ModelEditor key={editingModel.id} modelId={editingModel.modelId} title={editing.length > 1 ? t("批量编辑 {0} 个模型", { "0": editing.length }) : undefined} description={editing.length > 1 ? t("仅将修改过的字段应用到所选模型，其余字段保持各自原值。") : undefined} open catalogModelId={draft.catalogModelId ?? ""} catalog={catalogMeta} catalogCapabilities={catalog.models} capabilities={providerDraftCapabilities(draft)}
-        rates={{ inputRate: draft.inputRate ?? "", cacheReadRate: draft.cacheReadRate ?? "", cacheWriteRate: draft.cacheWriteRate ?? "", outputRate: draft.outputRate ?? "" }} multiplier="" showMultiplier={false}
+        rates={{ inputRate: draft.inputRate ?? "", cacheReadRate: draft.cacheReadRate ?? "", cacheWriteRate: draft.cacheWriteRate ?? "", outputRate: draft.outputRate ?? "" }} multiplier="" showMultiplier={false} showPricing={false}
         tiers={draft.tiers ?? []} schedule={draft.timeBased ?? metaScheduleToDraft(undefined)} inheritedRates={{ inputRate: inherited.input, cacheReadRate: inherited.cacheRead, cacheWriteRate: inherited.cacheWrite, outputRate: inherited.output }}
         inheritedTiers={providerCatalogMeta({ inherited }).inherited.tiers} inheritedSchedule={inherited.timeBased}
         onChange={(next) => setPatch((current) => ({ ...current, ...next }))} onClose={finishEdit} onCancel={() => { setEditing([]); setPatch({}); }} /> : null}

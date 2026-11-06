@@ -121,6 +121,7 @@ export function ModelEditor({
   rates,
   multiplier,
   showMultiplier = true,
+  showPricing = true,
   tiers,
   schedule,
   inheritedTiers,
@@ -141,6 +142,7 @@ export function ModelEditor({
   rates: { inputRate: string; cacheReadRate: string; cacheWriteRate: string; outputRate: string };
   multiplier: string;
   showMultiplier?: boolean;
+  showPricing?: boolean;
   tiers: TierDraft[];
   schedule: ScheduleDraft;
   inheritedTiers: UpstreamModelMeta["tiers"];
@@ -171,7 +173,7 @@ export function ModelEditor({
         <DialogHeader className="shrink-0 pr-8">
           <DialogTitle className="break-all font-mono text-base">{title ?? modelId}</DialogTitle>
           <DialogDescription>
-            {" "}{description ?? t("倍率逐项留空即沿用上游 `/v1/models` 报价或 catalog，0 表示免费。模型能力留空时继承 catalog。")}{" "}
+            {" "}{description ?? (showPricing ? t("倍率逐项留空即沿用上游 `/v1/models` 报价或 catalog，0 表示免费。模型能力留空时继承 catalog。") : t("模型能力留空时自动继承 catalog。修改后需保存 Provider。"))}{" "}
           </DialogDescription>
         </DialogHeader>
 
@@ -261,7 +263,7 @@ export function ModelEditor({
               <p className="text-xs text-destructive">{t("当前目录中未找到此目标，请更新元数据或重新选择。")}</p>
             ) : null}
             <p className="text-[10px] text-muted-foreground">
-              {" "}{t("用于默认倍率、长上下文阶梯和峰谷配置；自定义覆盖和上游报价仍优先。修改后需保存上游。")}{" "}
+              {" "}{showPricing ? t("用于默认倍率、长上下文阶梯和峰谷配置；自定义覆盖和上游报价仍优先。修改后需保存上游。") : t("用于模型能力的默认值；留空字段自动继承 catalog。修改后需保存 Provider。")}{" "}
             </p>
           </div>
 
@@ -288,6 +290,7 @@ export function ModelEditor({
             </div>
           </div>
 
+          {showPricing ? <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {(
               [
@@ -459,8 +462,9 @@ export function ModelEditor({
               </div>
             </div>
           </div>
+          </> : null}
         </div>
-        <ScrollBar orientation="horizontal" />
+        {showPricing ? <ScrollBar orientation="horizontal" /> : null}
         </ScrollArea>
 
         <DialogFooter className="shrink-0">
