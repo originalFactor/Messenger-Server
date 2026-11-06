@@ -1738,6 +1738,6 @@ Web 拉取结果合并到草稿，保留手动添加但远端未返回的模型�
 
 需要用户 session，无需管理员权限。返回 `{ rates: CatalogRateMap, models: CatalogMetadataMap, degraded: boolean }`，仅含 pi.dev 的公共 catalog 及归一化倍率，不含平台上游配置或凭据。响应 `Cache-Control: private, no-store`。`?refresh=1` 强制刷新，限制每用户每分钟 5 次；默认使用现有 24 小时缓存/持久化快照。
 
-Web Provider 模型列表与上游编辑共用模型编辑弹窗，采用模型 ID、显示名、四腿倍率与操作表格。空白字段按 catalog 自动匹配，导入/自定义值优先，自动默认值不写入同步实体。支持搜索、未配置筛选、可见范围选择与批量启用/停用/编辑/删除；仅修改批量编辑时实际触碰的字段。输入模态和推理档位继续使用多选下拉框。Built-in Provider 表格只读。
+Web Provider 模型列表与上游编辑共用模型编辑弹窗，内置 Provider 表格仅显示显示名和当前倍率，自定义 Provider 表格仅显示显示名和操作；选择框和状态标签置于显示名列，模型 ID 仍可搜索并在提示/编辑窗中查看。空白字段按 catalog 自动匹配，导入/自定义值优先，自动默认值不写入同步实体。支持搜索、未配置筛选、可见范围选择与批量启用/停用/编辑/删除；仅修改批量编辑时实际触碰的字段。输入模态和推理档位继续使用多选下拉框。Built-in Provider 表格只读。
 
 `ModelEmbed.catalogModelId?: string | null` 指定精确 catalog 键；省略/null 时自动匹配。`GET /api/models/metadata?modelId=原始路由ID&catalogModelId=目录键` 返回该目标对应的默认能力，目标缺失时 `metadata=null`，不会偷偷匹配别的模型；cloud=1 仍以平台上游为准。`tiers` / `timeBased` 允许 null，表示清除覆盖并恢复目录默认。旧客户端省略这些字段时继续保留存量值，明确 null 不会被旧值恢复。目录目标仅用于能力/价格默认值，不改变对话请求的 model ID。

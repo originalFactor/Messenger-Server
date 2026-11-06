@@ -137,27 +137,33 @@ export function ProviderModelsTable({ models, onChange, onFetch, fetching = fals
       </div> : null}
       <div className="min-w-0 rounded-lg border">
         <ScrollArea className="min-w-0 [&_[data-slot=table-container]]:overflow-visible [&_[data-slot=scroll-area-viewport]>div]:!block">
-          <Table className="min-w-[46rem]">
+          <Table className="w-full min-w-[24rem] table-fixed">
             <TableHeader><TableRow>
-              {!readOnly ? <TableHead className="w-10"><Checkbox aria-label={t("全选当前筛选结果用于批量操作")} disabled={busy || !visible.length} checked={visible.length > 0 && visibleChecked.length === visible.length ? true : visibleChecked.length ? "indeterminate" : false} onCheckedChange={(value) => setChecked((current) => value === true ? [...new Set([...current, ...visible.map((model) => model.id)])] : current.filter((id) => !visible.some((model) => model.id === id)))} /></TableHead> : null}
-              <TableHead>{t("模型 ID")}</TableHead><TableHead>{t("显示名")}</TableHead><TableHead>{t("当前倍率")}</TableHead><TableHead className="text-right">{t("操作")}</TableHead>
+              <TableHead><div className="flex items-center gap-3">{!readOnly ? <Checkbox aria-label={t("全选当前筛选结果用于批量操作")} disabled={busy || !visible.length} checked={visible.length > 0 && visibleChecked.length === visible.length ? true : visibleChecked.length ? "indeterminate" : false} onCheckedChange={(value) => setChecked((current) => value === true ? [...new Set([...current, ...visible.map((model) => model.id)])] : current.filter((id) => !visible.some((model) => model.id === id)))} /> : null}{t("显示名")}</div></TableHead>
+              <TableHead className={readOnly ? "w-56" : "w-52 text-right"}>{readOnly ? t("当前倍率") : t("操作")}</TableHead>
             </TableRow></TableHeader>
             <TableBody>
-              {!visible.length ? <TableRow><TableCell colSpan={readOnly ? 4 : 5} className="py-8 text-center text-muted-foreground">{t("没有匹配的模型，请调整搜索或筛选条件。")}</TableCell></TableRow> : null}
+              {!visible.length ? <TableRow><TableCell colSpan={2} className="py-8 text-center text-muted-foreground">{t("没有匹配的模型，请调整搜索或筛选条件。")}</TableCell></TableRow> : null}
               {visible.map((model) => {
                 const row = rows.get(model.id)!;
                 return <TableRow key={model.id} data-state={checked.includes(model.id) ? "selected" : undefined}>
-                  {!readOnly ? <TableCell><Checkbox aria-label={t("选择模型 {0}", { "0": model.modelId })} disabled={busy} checked={checked.includes(model.id)} onCheckedChange={(value) => setChecked((current) => value === true ? [...new Set([...current, model.id])] : current.filter((id) => id !== model.id))} /></TableCell> : null}
-                  <TableCell className="font-mono text-xs">{model.modelId}{row.unconfigured ? <Badge variant="outline" className="ml-2 border-orange-500/40 bg-orange-500/10 font-sans text-[10px] text-orange-700 dark:text-orange-300">{t("未配置")}</Badge> : null}{!model.isEnabled ? <Badge variant="secondary" className="ml-2 font-sans text-[10px]">{t("已停用")}</Badge> : null}</TableCell>
-                  <TableCell className="max-w-56 text-sm"><span className="block truncate" title={row.displayName}>{row.displayName}</span></TableCell>
+                  <TableCell className="text-sm"><div className="flex min-w-0 items-center gap-3">
+                    {!readOnly ? <Checkbox aria-label={t("选择模型 {0}", { "0": model.modelId })} disabled={busy} checked={checked.includes(model.id)} onCheckedChange={(value) => setChecked((current) => value === true ? [...new Set([...current, model.id])] : current.filter((id) => id !== model.id))} /> : null}
+                    <span className="min-w-0 truncate" title={model.modelId}>{row.displayName}</span>
+                    {row.unconfigured ? <Badge variant="outline" className="shrink-0 border-orange-500/40 bg-orange-500/10 text-[10px] text-orange-700 dark:text-orange-300">{t("未配置")}</Badge> : null}
+                    {!model.isEnabled ? <Badge variant="secondary" className="shrink-0 text-[10px]">{t("已停用")}</Badge> : null}
+                  </div></TableCell>
+                  {readOnly ? (
                   <TableCell className="whitespace-nowrap font-mono text-xs tabular-nums" title={t("四腿顺序：输入 / 缓存读取 / 缓存写入 / 输出{0}", { "0": "" })}>
                     {[row.card.input, row.card.cacheRead, row.card.cacheWrite, row.card.output].map((value) => rateFormat.format(value)).join(" / ")}
                     {row.card.tiers?.length ? <span className="ml-1 font-sans text-[10px] text-muted-foreground">{t("阶梯×{0}", { "0": row.card.tiers.length })}</span> : null}
                     {row.card.timeBased ? <span className="ml-1 font-sans text-[10px] text-muted-foreground">{t("峰谷×{0}", { "0": row.card.timeBased.offPeakMultiplier })}</span> : null}
                   </TableCell>
+                  ) : (
                   <TableCell><div className="flex justify-end gap-1.5">
-                    {readOnly ? <Badge variant="secondary">{t("可用")}</Badge> : <><Button type="button" variant="outline" size="sm" className="h-7 px-2.5 text-xs" disabled={busy} onClick={() => startEdit([model.id])}>{t("编辑")}</Button><Button type="button" variant="outline" size="sm" className="h-7 px-2.5 text-xs" disabled={busy} onClick={() => setEnabled([model.id], !model.isEnabled)}>{model.isEnabled ? t("停用") : t("启用")}</Button><Button type="button" variant="ghost" size="sm" className="h-7 px-2.5 text-xs" disabled={busy} onClick={() => setPendingDelete([model.id])}>{t("删除")}</Button></>}
+                    <><Button type="button" variant="outline" size="sm" className="h-7 px-2.5 text-xs" disabled={busy} onClick={() => startEdit([model.id])}>{t("编辑")}</Button><Button type="button" variant="outline" size="sm" className="h-7 px-2.5 text-xs" disabled={busy} onClick={() => setEnabled([model.id], !model.isEnabled)}>{model.isEnabled ? t("停用") : t("启用")}</Button><Button type="button" variant="ghost" size="sm" className="h-7 px-2.5 text-xs" disabled={busy} onClick={() => setPendingDelete([model.id])}>{t("删除")}</Button></>
                   </div></TableCell>
+                  )}
                 </TableRow>;
               })}
             </TableBody>
