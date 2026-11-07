@@ -123,6 +123,7 @@ export async function advanceSessionCursor(sid: string, cursor: number): Promise
 export async function deleteSession(sid: string): Promise<boolean> {
   const db = await getDb();
   const result = await db.collection<UserSessionDoc>("user_sessions").deleteOne({ _id: sid });
+  getRemoteHub().closeSession(sid);
   return result.deletedCount === 1;
 }
 
@@ -134,11 +135,7 @@ export async function deleteUserSessions(userId: string, exceptSid?: string | nu
   const db = await getDb();
   const filter = exceptSid ? { userId, _id: { $ne: exceptSid } } : { userId };
   const result = await db.collection<UserSessionDoc>("user_sessions").deleteMany(filter);
-  if (!exceptSid) {
-    // 全部会话都没了：中转长连接立刻断开。保留一条会话时（改密）由连接自己的
-    // 定期复核处理，被注销的那几台设备最迟一分钟内掉线。
-    getRemoteHub().closeUser(userId);
-  }
+  getRemoteHub().closeSessions(userId, exceptSid ?? undefined);
   return result.deletedCount;
 }
 

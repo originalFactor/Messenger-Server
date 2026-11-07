@@ -32,10 +32,12 @@
  * 账号内唯一；一个账号永远无法向另一个账号的设备投递。
  */
 
-export type RemoteEventName = "presence" | "toolCall" | "toolResult" | "toolCancel";
+export type RemoteEventName = "presence" | "toolCall" | "toolResult" | "toolCancel"
+  | "controlReady" | "controlRequest" | "controlReply" | "controlSignal";
 
 export interface RemoteConnection {
   readonly deviceId: string;
+  readonly sid?: string;
   /** 写入一帧 SSE；连接已关闭或积压过多时返回 `false`。 */
   send(event: RemoteEventName, data: unknown): boolean;
   /** 关闭这条连接（幂等）。 */
@@ -93,11 +95,17 @@ class RemoteHub {
     return true;
   }
 
-  /** 关闭账号的全部连接（注销账号、会话失效时用）。 */
-  closeUser(userId: string): void {
+  closeSessions(userId: string, exceptSid?: string): void {
     for (const connection of [...(this.users.get(userId)?.values() ?? [])]) {
-      connection.close();
-      this.unregister(userId, connection);
+      if (connection.sid !== exceptSid || exceptSid === undefined) connection.close();
+    }
+  }
+
+  closeSession(sid: string): void {
+    for (const devices of this.users.values()) {
+      for (const connection of [...devices.values()]) {
+        if (connection.sid === sid) connection.close();
+      }
     }
   }
 

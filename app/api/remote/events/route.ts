@@ -17,6 +17,7 @@
 import { requireUserSession } from "@/lib/auth";
 import { jsonError } from "@/lib/http";
 import { getRemoteHub, type RemoteConnection, type RemoteEventName } from "@/lib/remote-hub";
+import { controlRelay } from "@/lib/remote-control";
 import { getActiveSession } from "@/lib/sessions";
 import { deviceIdSchema } from "@/lib/validation";
 
@@ -28,7 +29,7 @@ const HEARTBEAT_MS = 15_000;
 /** 每 N 次心跳复核一次会话：注销/改密码后长连接必须随之断开，不能活到自然断线。 */
 const SESSION_RECHECK_EVERY = 4;
 /** 积压超过这个帧数说明对端不读了，直接断开而不是无限占内存。 */
-const MAX_QUEUED_FRAMES = 1_000;
+const MAX_QUEUED_BYTES = 4_000_000;
 
 /**
  * 设备的中转长连接。连接存在即在线；断开即离线。连接建立时立刻收到一帧
@@ -39,7 +40,9 @@ export async function GET(request: Request) {
   if (!session) {
     return jsonError("Unauthorized.", 401);
   }
-  const device = deviceIdSchema.safeParse(new URL(request.url).searchParams.get("deviceId"));
+  const query = new URL(request.url).searchParams;
+  const device = deviceIdSchema.safeParse(query.get("deviceId"));
+  const control = query.get("control");
   if (!device.success) {
     return jsonError("A valid deviceId query parameter is required.", 400);
   }
@@ -49,9 +52,10 @@ export async function GET(request: Request) {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   let timer: ReturnType<typeof setInterval> | undefined;
   let closed = false;
+  let unregisterControl: (() => void) | undefined;
 
   const write = (frame: string): boolean => {
-    if (closed || (controller.desiredSize ?? 0) < -MAX_QUEUED_FRAMES) {
+    if (closed || (controller.desiredSize ?? 0) <= 0) {
       return false;
     }
     try {
@@ -64,6 +68,7 @@ export async function GET(request: Request) {
 
   const connection: RemoteConnection = {
     deviceId: device.data,
+    sid: session.sid,
     send: (event: RemoteEventName, data: unknown) => write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
     close: () => {
       if (closed) {
@@ -71,6 +76,7 @@ export async function GET(request: Request) {
       }
       closed = true;
       clearInterval(timer);
+      unregisterControl?.();
       hub.unregister(session.sub, connection);
       try {
         controller.close();
@@ -102,10 +108,17 @@ export async function GET(request: Request) {
       }, HEARTBEAT_MS);
       request.signal.addEventListener("abort", () => connection.close());
       hub.register(session.sub, connection);
+      if (!closed && session.sid && (control === "client" || control === "host")) {
+        unregisterControl = controlRelay().register(session.sub, session.sid, control, connection);
+        if (closed) unregisterControl();
+      }
     },
     cancel() {
       connection.close();
     },
+  }, {
+    highWaterMark: MAX_QUEUED_BYTES,
+    size: (frame) => frame.byteLength,
   });
 
   return new Response(stream, {

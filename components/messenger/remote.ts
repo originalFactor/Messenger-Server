@@ -36,6 +36,25 @@ export type RemoteToolRequest = {
 
 export type RemoteToolResult = { output: string; isError: boolean };
 
+export type ControlEvent = { type: string; [key: string]: unknown };
+type ControlPending = {
+  update?: (event: ControlEvent) => void;
+  resolve: (event: ControlEvent) => void;
+  reject: (error: Error) => void;
+};
+
+async function postControl(payload: unknown) {
+  const reply = await fetch("/api/remote/control", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!reply.ok) {
+    const body = await reply.json().catch(() => null);
+    throw new Error(body?.error ?? `HTTP ${reply.status}`);
+  }
+}
+
 type Pending = {
   target: string;
   settle: (result: RemoteToolResult, cancelRemote?: boolean) => void;
@@ -86,6 +105,9 @@ export function useRemoteDevice() {
   const [devices, setDevices] = useState<string[]>([]);
   const deviceIdRef = useRef<string | null>(null);
   const pendingRef = useRef(new Map<string, Pending>());
+  const controlId = useRef<string | null>(null);
+  const controls = useRef(new Map<string, ControlPending>());
+  const [controlReady, setControlReady] = useState(false);
 
   useEffect(() => {
     const deviceId = loadDeviceId();
@@ -97,9 +119,39 @@ export function useRemoteDevice() {
       }
     };
 
-    const source = new EventSource(`/api/remote/events?deviceId=${encodeURIComponent(deviceId)}`);
+    const activeControls = controls.current;
+    const disconnectControl = () => {
+      controlId.current = null;
+      setControlReady(false);
+      for (const entry of activeControls.values()) {
+        entry.reject(new Error(translatorRef.current("与中转服务的连接已断开。")));
+      }
+      activeControls.clear();
+    };
+    const source = new EventSource(`/api/remote/events?deviceId=${encodeURIComponent(deviceId)}&control=client`);
+    source.addEventListener("controlReady", (event: MessageEvent<string>) => {
+      const frame = JSON.parse(event.data) as { connectionId: string };
+      controlId.current = frame.connectionId;
+      setControlReady(true);
+    });
+    source.addEventListener("controlReply", (event: MessageEvent<string>) => {
+      const frame = JSON.parse(event.data) as { id: string; done: boolean; payload: ControlEvent };
+      const entry = activeControls.get(frame.id);
+      if (!entry) return;
+      if (frame.done) {
+        activeControls.delete(frame.id);
+        if (frame.payload.type === "Error") {
+          entry.reject(new Error([frame.payload.message, frame.payload.detail].filter(Boolean).join(" ")));
+        } else {
+          entry.resolve(frame.payload);
+        }
+      } else {
+        entry.update?.(frame.payload);
+      }
+    });
     source.onopen = () => setConnected(true);
     source.onerror = () => {
+      disconnectControl();
       setConnected(false);
       setDevices([]);
       settleAll(translatorRef.current("与中转服务的连接已断开。"));
@@ -126,6 +178,7 @@ export function useRemoteDevice() {
 
     return () => {
       source.close();
+      disconnectControl();
       settleAll(translatorRef.current("与中转服务的连接已断开。"));
       setConnected(false);
       setDevices([]);
@@ -176,5 +229,29 @@ export function useRemoteDevice() {
     );
   }), [t]);
 
-  return { connected, devices, callTool };
+  const controlRequest = useCallback((target: string, payload: unknown, update?: ControlPending["update"]) => {
+    const id = crypto.randomUUID();
+    const connectionId = controlId.current;
+    const result = new Promise<ControlEvent>((resolve, reject) => {
+      if (!connectionId) {
+        reject(new Error(translatorRef.current("尚未连接到中转服务。")));
+        return;
+      }
+      controls.current.set(id, { resolve, reject, update });
+      void postControl({ kind: "request", connectionId, target, id, payload }).catch((error: Error) => {
+        if (controls.current.delete(id)) {
+          reject(error);
+          void postControl({ kind: "signal", connectionId, id }).catch(() => undefined);
+        }
+      });
+    });
+    return { id, result };
+  }, []);
+
+  const controlSignal = useCallback(async (id: string, optionId?: string) => {
+    const connectionId = controlId.current;
+    if (connectionId) await postControl({ kind: "signal", connectionId, id, optionId });
+  }, []);
+
+  return { connected, devices, callTool, controlReady, controlRequest, controlSignal };
 }

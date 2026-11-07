@@ -54,6 +54,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { ConversationModelMenu, type ConversationModelChoice } from "@/components/messenger/conversation-model-menu";
+import { DeviceControl } from "@/components/messenger/device-control";
 import { ConversationSettings } from "@/components/messenger/conversation-settings";
 import { ConfigurationManagement } from "@/components/messenger/configuration-management";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -523,6 +524,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
     setActiveProjectId((current) => current && !configuration.projects.some((item) => item._id === current) ? null : current);
   }, [initialProviders]);
   const remote = useRemoteDevice();
+  const [deviceControlOpen, setDeviceControlOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const [conversations, setConversations] = useState(initialConversations);
   const [selectedId, setSelectedId] = useState<string | null>(initialConversations.find((conversation) => !conversation.projectId)?._id ?? null);
@@ -1053,6 +1055,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <LanguageSwitcher />
+            <Button variant="ghost" onClick={() => setDeviceControlOpen(true)}>{t("设备远程会话")}</Button>
             <Button variant="ghost" size="icon" disabled={!selected || isSending || savingModel} onClick={() => setConversationSettingsOpen(true)} aria-label={t("对话设置")}><SlidersHorizontal /></Button>
             {selected?.projectId ? (
               <Badge variant={projectBlock ? "outline" : "secondary"} className="max-w-48">
@@ -1168,6 +1171,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
           </>
         )}
       </main>
+      <DeviceControl open={deviceControlOpen} onOpenChange={setDeviceControlOpen} remote={remote} />
       {conversationSettingsOpen && selected ? (
         <ConversationSettings key={selected._id} conversation={selected} providers={providers} agentModelId={agent?.defaultModelId ?? null} onClose={() => setConversationSettingsOpen(false)} onSave={saveConversationSettings} />
       ) : null}
