@@ -915,6 +915,11 @@ export async function softDeleteProvider(userId: string, providerId: string): Pr
   });
 }
 
+export async function getProviderForUser(userId: string, providerId: string): Promise<ProviderDoc | null> {
+  const db = await getDb();
+  return db.collection<ProviderDoc>("providers").findOne({ _id: providerId, userId, deleted: false });
+}
+
 export async function listProvidersSince(
   userId: string,
   since: number,

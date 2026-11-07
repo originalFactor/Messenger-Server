@@ -6,9 +6,11 @@
  */
 
 import { requireUserSession } from "@/lib/auth";
-import { relayCompletion } from "@/lib/ai-relay";
+import { relayCompletion, relayProviderCompletion } from "@/lib/ai-relay";
 import { jsonError } from "@/lib/http";
-import { getUserById } from "@/lib/storage";
+import { BUILTIN_PROVIDER_ID } from "@/lib/conversation-model";
+import { entityIdSchema } from "@/lib/validation";
+import { getProviderForUser, getUserById } from "@/lib/storage";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -23,18 +25,21 @@ export async function POST(request: Request) {
     return jsonError("Unauthorized.", 401);
   }
 
-  const user = await getUserById(session.sub);
-  if (!user) {
-    return jsonError("User not found.", 404);
-  }
-  if (!user.aiApiKey) {
-    return jsonError("Your built-in AI service is not configured yet.", 409);
+  const body = await request.text().catch(() => "");
+  if (!body) return jsonError("Request body is required.", 400);
+
+  const providerId = request.headers.get("x-messenger-provider");
+  if (providerId !== null && providerId !== BUILTIN_PROVIDER_ID) {
+    const id = entityIdSchema.safeParse(providerId);
+    if (!id.success) return jsonError("Invalid Provider ID.", 400);
+    const provider = await getProviderForUser(session.sub, id.data);
+    if (!provider) return jsonError("Provider not found.", 404);
+    return relayProviderCompletion(provider, body, request.signal);
   }
 
-  const body = await request.text().catch(() => "");
-  if (!body) {
-    return jsonError("Request body is required.", 400);
-  }
+  const user = await getUserById(session.sub);
+  if (!user) return jsonError("User not found.", 404);
+  if (!user.aiApiKey) return jsonError("Your built-in AI service is not configured yet.", 409);
 
   const headers = new Headers(request.headers);
   headers.set("authorization", `Bearer ${user.aiApiKey}`);

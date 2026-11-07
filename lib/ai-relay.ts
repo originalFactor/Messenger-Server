@@ -36,6 +36,7 @@
 
 import { NextResponse } from "next/server";
 import {
+  FormatError,
   type ApiFormat,
   type IrEvent,
   type IrRequest,
@@ -60,7 +61,8 @@ import { type CatalogRateMap, getCatalogRates } from "@/lib/pi-catalog";
 import { type BaseModelContext, resolveBaseContext, resolveModelRates } from "@/lib/model-rates";
 import { computeCost } from "@/lib/quota";
 import { consumeQuota, getModelRateSettings, getUserQuotaState, listUpstreamsForModel, recordUsage } from "@/lib/storage";
-import type { UpstreamDoc } from "@/lib/types";
+import { assertOutboundUrl } from "@/lib/outbound-url";
+import type { ProviderDoc, UpstreamDoc } from "@/lib/types";
 import { createLogger } from "@/lib/runtime-logs";
 
 /**
@@ -575,9 +577,9 @@ export function buildStreamingResponse(
   clientFormat: ApiFormat,
   upstreamFormat: ApiFormat,
   response: Response,
-  upstream: UpstreamDoc,
+  upstream: UpstreamDoc | undefined,
   model: string,
-  settle: SettleParams,
+  settle?: SettleParams,
 ): Response {
   const decoder = createStreamDecoder(upstreamFormat);
   const encoder = createStreamEncoder(clientFormat, model);
@@ -597,7 +599,7 @@ export function buildStreamingResponse(
   // 结算必须恰好发生一次：正常结束走 flush（await，保证 serverless 实例
   // 在函数返回前写完额度），客户端断连走 cancel（无响应可等，只能尽力）。
   const settleOnce = (): Promise<void> | null => {
-    if (settled) {
+    if (settled || !upstream || !settle) {
       return null;
     }
     settled = true;
@@ -671,9 +673,9 @@ export function buildStreamingResponse(
         // 绝不能补一个 finish_reason=stop 冒充正常完成。
         if (!terminated) {
           relayLog.warn("Upstream stream ended without a terminal event.", {
-            userId: settle.userId,
-            modelId: settle.modelId,
-            upstreamId: upstream._id,
+            userId: settle?.userId,
+            modelId: model,
+            upstreamId: upstream?._id,
             upstreamFormat,
             completionChars: sniffed.completionChars,
           });
@@ -889,6 +891,65 @@ export interface RelayOptions {
  * /v1 代理入口：认证 → 额度 → 解码请求 → 上游故障转移 → 编码响应。
  * 返回 `NextResponse`（错误）或 `Response`（成功）。
  */
+/** BYOK chat uses one saved, session-owned Provider and never settles cloud quota. */
+export async function relayProviderCompletion(provider: ProviderDoc, rawBody: string, signal: AbortSignal): Promise<Response> {
+  const format = normalizeApiFormat(provider.apiFormat);
+  let ir: IrRequest;
+  let body: string;
+  try {
+    ir = decodeClientRequest("chat", JSON.parse(rawBody));
+    if (!provider.models.some((model) => model.isEnabled && model.modelId === ir.model)) {
+      return clientError("chat", "The selected model is unavailable on this Provider.", 409);
+    }
+    body = format === "chat" ? rawBody : JSON.stringify(encodeUpstreamRequest(format, ir));
+  } catch (error) {
+    return clientError("chat", error instanceof FormatError ? error.message : "Invalid chat request.", 400);
+  }
+
+  let url: URL;
+  try {
+    url = await assertOutboundUrl(provider.baseUrl);
+    url.pathname = url.pathname.replace(/\/+$/, "") + formatPath(format);
+    url.hash = "";
+  } catch {
+    return clientError("chat", "The Provider URL must be a valid HTTP(S) URL.", 400);
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: upstreamHeaders(format, provider.apiKey),
+      body,
+      signal: AbortSignal.any([signal, AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)]),
+      redirect: "error",
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      const raw = await readUpstreamErrorBody(response);
+      const detail = upstreamErrorMessage(raw, response.status);
+      const safeDetail = provider.apiKey ? detail.replaceAll(provider.apiKey, "[redacted]") : detail;
+      relayLog.warn("Custom Provider returned an error.", { providerId: provider._id, status: response.status, format });
+      return clientError("chat", `Provider HTTP ${response.status}: ${safeDetail.slice(0, UPSTREAM_ERROR_EXCERPT_LIMIT)}`, 502, "upstream_error");
+    }
+    if (ir.stream) {
+      if (!response.body || !response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+        await response.body?.cancel();
+        return clientError("chat", "The Provider did not return an event stream.", 502, "upstream_error");
+      }
+      if (format !== "chat") return buildStreamingResponse("chat", format, response, undefined, ir.model);
+      return new Response(response.body, { headers: {
+        "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache",
+        "x-accel-buffering": "no", "x-content-type-options": "nosniff",
+      } });
+    }
+    const payload = await response.json();
+    return NextResponse.json(format === "chat" ? payload : encodeClientResponse("chat", decodeUpstreamResponse(format, payload), ir.model));
+  } catch {
+    relayLog.warn("Custom Provider request failed.", { providerId: provider._id, format });
+    return clientError("chat", "Unable to complete the Provider request.", 502, "upstream_error");
+  }
+}
+
 export async function relayCompletion({ format, request }: RelayOptions): Promise<Response> {
   const user = await authenticateAiKey(request);
   if (!user) {

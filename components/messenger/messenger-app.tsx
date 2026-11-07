@@ -1,6 +1,7 @@
 "use client";
 
 import { applyProviderModelMetadata } from "@/lib/provider-model-metadata";
+import { BUILTIN_PROVIDER_ID, resolveConversationModel } from "@/lib/conversation-model";
 import type { ModelEmbed } from "@/lib/types";
 import { LanguageSwitcher } from "@/components/i18n/language-switcher";
 
@@ -561,8 +562,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
     maxTokens: sourceAgent.followDefaultMaxTokens ? defaultAgent.maxTokens : sourceAgent.maxTokens,
     reasoningEffort: sourceAgent.followDefaultReasoningEffort ? defaultAgent.reasoningEffort : sourceAgent.reasoningEffort,
   } : sourceAgent;
-  const provider = providers.find((item) => item._id === selected?.providerId) ?? providers[0];
-  const availableModel = selected?.overrideModelId ?? agent?.defaultModelId ?? provider?.models.find((model) => model.isEnabled)?.modelId ?? null;
+  const { provider, modelId: availableModel, model: availableModelConfig } = resolveConversationModel(providers, agent?.defaultModelId ?? null, selected);
   const project = selected?.projectId ? projects.find((item) => item._id === selected.projectId) : undefined;
   const activeProject = activeProjectId ? projects.find((item) => item._id === activeProjectId) : undefined;
   const statusOf = (item: ProjectDoc) => projectStatus(item, remote.connected, remote.devices);
@@ -661,7 +661,8 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
       toast.error(t("请先在左下角配置管理中配置 Agent 和 Provider。"));
       return;
     }
-    const selectedProvider = providers.find((item) => item.models.some((model) => model.isEnabled && model.modelId === chosen.defaultModelId))
+    const chosenModel = !chosen.isDefault && chosen.followDefaultModel ? defaultAgent?.defaultModelId : chosen.defaultModelId;
+    const selectedProvider = resolveConversationModel(providers, chosenModel ?? null).provider
       ?? providers.find((item) => item.models.some((model) => model.isEnabled))
       ?? providers[0];
     if (!selectedProvider) {
@@ -734,7 +735,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
     event.preventDefault();
     const text = draft.trim();
     if (!text || isSending) return;
-    if (!selected || !agent || !provider) {
+    if (!selected || !agent) {
       toast.error(t("请先创建一个对话。"));
       return;
     }
@@ -749,6 +750,10 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
     }
     if (!availableModel) {
       toast.error(t("请先在 Messenger 中为 Agent 设置默认模型。"));
+      return;
+    }
+    if (!provider || !availableModelConfig) {
+      toast.error(t("所选 Provider 或模型已不可用，请在对话设置中重新选择。"));
       return;
     }
 
@@ -775,14 +780,14 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
 
     try {
       await saveConversation({ ...base, messages: history, updatedAt: currentTimestamp() });
-      const capabilities = await loadModelCapabilities(availableModel, provider._id === "builtin-messenger-cloud-ai", t, provider.models.find((item) => item.modelId === availableModel));
+      const capabilities = await loadModelCapabilities(availableModel, provider._id === BUILTIN_PROVIDER_ID, t, availableModelConfig);
       let finalText = "";
       // One round = one model request; a round that asks for tools runs them and goes again.
       while (!controller.signal.aborted) {
         partial = "";
         const response = await fetch("/api/chat", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", "x-messenger-provider": provider._id },
           signal: controller.signal,
           body: JSON.stringify({
             model: availableModel,
@@ -795,9 +800,13 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
           }),
         });
         if (!response.ok) {
-          const payload = await response.json().catch(() => null) as { error?: { message?: string } | string } | null;
-          const detail = typeof payload?.error === "string" ? payload.error : payload?.error?.message;
-          throw new Error(detail || (await response.text()) || t("AI 请求失败"));
+          const raw = await response.text().catch(() => "");
+          let detail: string | undefined;
+          try {
+            const payload = JSON.parse(raw) as { error?: { message?: string } | string } | null;
+            detail = typeof payload?.error === "string" ? payload.error : payload?.error?.message;
+          } catch { /* Plain-text error from a reverse proxy. */ }
+          throw new Error(detail || raw.slice(0, 512) || t("AI 请求失败"));
         }
         const round = await readChatStream(response, (answer) => {
           partial = answer;
@@ -1093,7 +1102,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
                 />
                 <div className="flex min-w-0 items-center justify-between gap-3 px-1 pt-1">
                   <p className="min-w-0 truncate text-xs text-muted-foreground">
-                    {availableModel ? t("{0} · 云端额度计费", { "0": availableModel }) : t("请先选择模型")}
+                    {availableModel && provider && availableModelConfig ? provider._id === BUILTIN_PROVIDER_ID ? t("{0} · 云端额度计费", { "0": availableModel }) : `${availableModel} · ${provider.name}` : t("请先选择模型")}
                     {project ? ` · ${projectTools.length > 0 ? t("{0} 个工具", { "0": projectTools.length }) : t("未启用工具")}` : ""}
                   </p>
                   {isSending ? (
@@ -1114,7 +1123,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
         )}
       </main>
       {conversationSettingsOpen && selected ? (
-        <ConversationSettings key={selected._id} conversation={selected} providers={providers} providerId={provider?._id ?? ""} agentModelId={agent?.defaultModelId ?? provider?.models.find((model) => model.isEnabled)?.modelId ?? null} onClose={() => setConversationSettingsOpen(false)} onSave={async (next) => {
+        <ConversationSettings key={selected._id} conversation={selected} providers={providers} agentModelId={agent?.defaultModelId ?? null} onClose={() => setConversationSettingsOpen(false)} onSave={async (next) => {
           await saveConversation(next);
           updateConversation(next);
         }} />

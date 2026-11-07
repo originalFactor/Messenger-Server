@@ -1743,3 +1743,10 @@ Web Provider 模型列表与上游编辑共用模型编辑弹窗，内置 Provid
 `ModelEmbed.catalogModelId?: string | null` 指定精确 catalog 键；省略/null 时自动匹配。`GET /api/models/metadata?modelId=原始路由ID&catalogModelId=目录键` 返回该目标对应的默认能力，目标缺失时 `metadata=null`，不会偷偷匹配别的模型；cloud=1 仍以平台上游为准。`tiers` / `timeBased` 允许 null，表示清除覆盖并恢复目录默认。旧客户端省略这些字段时继续保留存量值，明确 null 不会被旧值恢复。目录目标仅用于能力/价格默认值，不改变对话请求的 model ID。
 
 Custom Provider 模型编辑窗仅提供 catalog 匹配与能力元数据，不展示定价倍率、整体倍率、长上下文阶梯或峰谷配置。移除定价编辑控件不删除已拉取/存量的定价数据；上游管理仍保留完整定价编辑能力。
+
+
+### Web 对话模型选择与 POST /api/chat
+
+对话设置按 Provider → Model 两级选择，只列出该 Provider 启用的模型。显式选择通过原有对话 PUT 保存 `providerId` 和 `overrideModelId`；同名模型不会跨 Provider 复用。选择「跟随 Agent」清空模型覆盖，并从启用的 Provider 解析 Agent 的模型。原有同步结构不变。
+
+Web 请求可通过 `X-Messenger-Provider` 指定 Provider。省略或指定内置 Provider 时沿用云端代理和额度结算。自定义 Provider 必须属于当前会话用户、未删除且启用了请求模型；服务端读取该 Provider 的地址、密钥与协议，不接收浏览器提供的转发地址。自定义 Provider 请求使用已有协议转换，无云端额度结算，不跟随重定向或自动重试。

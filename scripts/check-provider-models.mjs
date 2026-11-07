@@ -28,7 +28,7 @@ function load(file) {
   }).outputText;
   const testModule = { exports: {} };
   runInNewContext(source, {
-    module: testModule, exports: testModule.exports, crypto, URL, AbortSignal, Buffer, Response,
+    module: testModule, exports: testModule.exports, crypto, URL, AbortSignal, Buffer, Request, Response, Headers, TextDecoder, TextEncoder, ReadableStream, TransformStream,
     fetch: async (url, options) => { outgoing.push({ url, options }); return respond(url, options); },
     require(name) {
       if (mocks[name]) return mocks[name];
@@ -215,4 +215,76 @@ const missingTarget = await (await readCapabilities(new Request("http://localhos
 assert.equal(missingTarget.metadata, null, "Unavailable manual targets must not silently remap");
 assert.equal((await readCapabilities(new Request("http://localhost/api/models/metadata?modelId=deepseek-flash&catalogModelId="))).status, 400);
 
-console.log("Provider discovery checks passed: standard/extended lists, zero/false values, sparse metadata, pricing, merge/legacy preservation, effective capabilities, catalog autofill/targets, sparse editor clears/bulk patches, auth, protocol headers, pagination, bounds and visible failures without retries.");
+const { BUILTIN_PROVIDER_ID, resolveConversationModel } = load("lib/conversation-model.ts");
+const customProvider = { _id: "custom-provider", userId: "test-user", baseUrl: "https://example.com/v1/", apiKey: "custom-test-key", apiFormat: "chat", models };
+const cloudProvider = { ...customProvider, _id: BUILTIN_PROVIDER_ID };
+const pool = [cloudProvider, customProvider];
+const sameModel = { providerId: customProvider._id, overrideModelId: extended.id };
+assert.equal(resolveConversationModel(pool, "plain", sameModel).provider._id, customProvider._id);
+assert.equal(resolveConversationModel(pool, extended.id).provider._id, BUILTIN_PROVIDER_ID);
+assert.equal(resolveConversationModel(pool, extended.id, { ...sameModel, overrideModelId: null }).provider._id, customProvider._id);
+assert.equal(resolveConversationModel(pool, "plain", { ...sameModel, providerId: "missing" }).provider, undefined);
+assert.equal(resolveConversationModel(pool, "plain", { ...sameModel, overrideModelId: "missing" }).model, undefined);
+assert.equal(resolveConversationModel(pool, null).model, undefined);
+assert.equal(resolveConversationModel([cloudProvider, { ...customProvider, models: [] }], "plain", sameModel).model, undefined);
+
+mocks["next/server"] = { NextResponse: { json: Response.json.bind(Response) } };
+mocks["@/lib/ai-proxy"] = { authenticateAiKey: () => { throw new Error("BYOK must not authenticate a cloud key"); } };
+mocks["@/lib/runtime-logs"] = { createLogger: () => ({ warn() {} }) };
+const { relayProviderCompletion } = load("lib/ai-relay.ts");
+const { readChatStream } = load("components/messenger/chat-wire.ts");
+const chatBody = JSON.stringify({ model: extended.id, messages: [{ role: "user", content: "hello" }], stream: true });
+const sse = (body) => new Response(body, { headers: { "content-type": "text/event-stream" } });
+const signal = new AbortController().signal;
+outgoing = [];
+respond = () => sse('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\r\n\r\ndata: [DONE]\r\n\r\n');
+const customResponse = await relayProviderCompletion(customProvider, chatBody, signal);
+assert.equal(outgoing[0].url.toString(), "https://example.com/v1/chat/completions");
+assert.equal(outgoing[0].options.headers.Authorization, "Bearer custom-test-key");
+assert.equal(outgoing[0].options.redirect, "error");
+assert.equal(outgoing[0].options.body, chatBody);
+assert.equal((await readChatStream(customResponse, () => {}, t)).text, "ok");
+respond = () => sse('data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"converted"}}\n\ndata: {"type":"message_stop"}\n\n');
+const convertedResponse = await relayProviderCompletion({ ...customProvider, apiFormat: "messages" }, chatBody, signal);
+assert.equal(outgoing[1].url.toString(), "https://example.com/v1/messages");
+assert.equal(outgoing[1].options.headers["x-api-key"], "custom-test-key");
+assert.equal((await readChatStream(convertedResponse, () => {}, t)).text, "converted");
+assert.equal((await relayProviderCompletion({ ...customProvider, models: [] }, chatBody, signal)).status, 409);
+assert.equal(outgoing.length, 2);
+respond = () => Response.json({ error: { message: "Bad key custom-test-key" } }, { status: 401 });
+const failure = await relayProviderCompletion(customProvider, chatBody, signal);
+assert.equal(failure.status, 502);
+assert.match((await failure.json()).error.message, /Provider HTTP 401: Bad key \[redacted\]/);
+assert.equal(outgoing.length, 3);
+await assert.rejects(readChatStream(sse('data: {"error":{"message":"Provider stream failure"}}\n\n'), () => {}, t), /Provider stream failure/);
+await assert.rejects(readChatStream(sse('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'), () => {}, t), /ended unexpectedly/);
+
+let providerReads = 0;
+let cloudCalls = 0;
+mocks["@/lib/storage"].getProviderForUser = async (userId, id) => {
+  providerReads++;
+  assert.equal(userId, "test-user");
+  return id === customProvider._id ? customProvider : null;
+};
+mocks["@/lib/storage"].getUserById = async () => ({ aiApiKey: "cloud-test-key" });
+mocks["@/lib/ai-relay"] = { relayProviderCompletion, relayCompletion: async ({ request }) => {
+  cloudCalls++;
+  assert.equal(request.headers.get("authorization"), "Bearer cloud-test-key");
+  return new Response("cloud");
+} };
+const { POST: postChat } = load("app/api/chat/route.ts");
+const chatRequest = (id) => new Request("http://localhost/api/chat", { method: "POST", body: chatBody, headers: id ? { "x-messenger-provider": id } : {} });
+authenticated = false;
+assert.equal((await postChat(chatRequest(customProvider._id))).status, 401);
+assert.equal(providerReads, 0);
+authenticated = true;
+assert.equal((await postChat(chatRequest("other-users-provider"))).status, 404);
+assert.equal(cloudCalls, 0);
+respond = () => sse('data: [DONE]\n\n');
+assert.equal((await postChat(chatRequest(customProvider._id))).status, 200);
+assert.equal(cloudCalls, 0);
+assert.equal(await (await postChat(chatRequest(BUILTIN_PROVIDER_ID))).text(), "cloud");
+assert.equal(await (await postChat(chatRequest())).text(), "cloud");
+assert.equal(cloudCalls, 2);
+
+console.log("Provider discovery checks passed: standard/extended lists, zero/false values, sparse metadata, pricing, merge/legacy preservation, effective capabilities, catalog autofill/targets, sparse editor clears/bulk patches, auth, protocol headers, pagination, bounds, Provider/Model pairing, owned BYOK and cloud routing, stream conversion, and visible failures without retries.");

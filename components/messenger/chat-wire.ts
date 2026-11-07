@@ -221,7 +221,9 @@ export function toWireMessages(messages: MessageEmbed[]): WireMessage[] {
 export type StreamedToolCall = { id: string; name: string; arguments: string };
 
 type ChatChunk = {
+  error?: string | { message?: string };
   choices?: Array<{
+    finish_reason?: string | null;
     delta?: {
       content?: unknown;
       tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }>;
@@ -237,18 +239,22 @@ export async function readChatStream(response: Response, onText: (text: string) 
   const decoder = new TextDecoder();
   let buffer = "";
   let text = "";
+  let finished = false;
   const calls = new Map<number, { id: string; name: string; arguments: string }>();
 
   const handle = (frame: string) => {
     const data = frame.split("\n").find((line) => line.startsWith("data:"))?.slice(5).trim();
-    if (!data || data === "[DONE]") return;
+    if (!data) return;
+    if (data === "[DONE]") { finished = true; return; }
     let parsed: ChatChunk;
     try {
       parsed = JSON.parse(data) as ChatChunk;
     } catch {
       return; // keep-alive frames and malformed intermediary events
     }
+    if (parsed.error) throw new Error((typeof parsed.error === "string" ? parsed.error : parsed.error.message) || t("AI 请求失败"));
     const choice = parsed.choices?.[0];
+    if (choice?.finish_reason) finished = true;
     const chunk = messageText(choice?.delta?.content ?? choice?.message?.content);
     if (chunk) {
       text += chunk;
@@ -264,15 +270,24 @@ export async function readChatStream(response: Response, onText: (text: string) 
     }
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split("\n\n");
-    buffer = frames.pop() ?? "";
-    frames.forEach(handle);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split(/\r?\n\r?\n/);
+      buffer = frames.pop() ?? "";
+      frames.forEach(handle);
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) handle(buffer);
+    if (!finished) throw new Error(t("AI 响应流意外结束。"));
+  } catch (error) {
+    void reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
   }
-  if (buffer.trim()) handle(buffer);
 
   const toolCalls = [...calls.entries()]
     .sort(([a], [b]) => a - b)

@@ -733,5 +733,9 @@
   "将移除所选模型及其元数据和倍率，保存 Provider 后生效。": "Removes the selected models, metadata, and rates. Save the Provider to apply changes.",
   "仅将修改过的字段应用到所选模型，其余字段保持各自原值。": "Only changed fields apply to selected models; all other fields keep their individual values.",
   "模型能力留空时自动继承 catalog。修改后需保存 Provider。": "Blank capabilities inherit catalog defaults. Save the Provider to apply changes.",
-  "用于模型能力的默认值；留空字段自动继承 catalog。修改后需保存 Provider。": "Sets capability defaults; blank fields inherit the catalog. Save the Provider to apply changes."
+  "用于模型能力的默认值；留空字段自动继承 catalog。修改后需保存 Provider。": "Sets capability defaults; blank fields inherit the catalog. Save the Provider to apply changes.",
+  "Provider 不可用": "Provider unavailable",
+  "模型不可用": "Model unavailable",
+  "所选 Provider 或模型已不可用，请在对话设置中重新选择。": "The selected Provider or model is unavailable. Choose another one in conversation settings.",
+  "AI 响应流意外结束。": "The AI response stream ended unexpectedly."
 }

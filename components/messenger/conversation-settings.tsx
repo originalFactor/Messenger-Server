@@ -14,19 +14,20 @@ import { ModelMetadataSummary, useModelMetadata } from "@/components/messenger/m
 import { ReasoningEffortSelect } from "@/components/messenger/reasoning-effort-select";
 import { SAMPLING_FIELDS, parseSamplingInputs, type SamplingKey } from "@/lib/sampling";
 import { resolveTools } from "@/components/messenger/chat-wire";
+import { BUILTIN_PROVIDER_ID, resolveConversationModel } from "@/lib/conversation-model";
 import type { ConversationDoc, ProviderDoc } from "@/lib/types";
 
 type Props = {
   conversation: ConversationDoc;
   providers: ProviderDoc[];
   agentModelId: string | null;
-  providerId: string;
   onClose: () => void;
   onSave: (conversation: ConversationDoc) => Promise<void>;
 };
 
-export function ConversationSettings({ conversation, providers, agentModelId, providerId, onClose, onSave }: Props) {
+export function ConversationSettings({ conversation, providers, agentModelId, onClose, onSave }: Props) {
   const t = useTranslator();
+  const [providerId, setProviderId] = useState(conversation.overrideModelId ? conversation.providerId : null);
   const [model, setModel] = useState(conversation.overrideModelId ?? "");
   const [samplingInputs, setSamplingInputs] = useState(() => Object.fromEntries(
     SAMPLING_FIELDS.map((field) => [field.key, conversation[field.override]?.toString() ?? ""]),
@@ -39,15 +40,23 @@ export function ConversationSettings({ conversation, providers, agentModelId, pr
   const [toolsEnabled, setToolsEnabled] = useState(conversation.overrideToolsEnabled ?? null);
   const [toolsConfig, setToolsConfig] = useState(conversation.overrideToolsConfig ?? null);
   const [saving, setSaving] = useState(false);
-  const models = [...new Set(providers.flatMap((provider) => provider.models.filter((item) => item.isEnabled).map((item) => item.modelId)))];
-  if (model && !models.includes(model)) models.unshift(model);
-
-  const effectiveModel = model || agentModelId;
-  const cloudModel = providerId === "builtin-messenger-cloud-ai";
-  const modelMetadata = useModelMetadata(effectiveModel, cloudModel, providers.find((item) => item._id === providerId)?.models.find((item) => item.modelId === effectiveModel));
+  const overridingModel = providerId !== null;
+  const selectedProvider = providers.find((provider) => provider._id === providerId);
+  const models = selectedProvider?.models.filter((item) => item.isEnabled) ?? [];
+  const savedModelUnavailable = Boolean(model && !models.some((item) => item.modelId === model));
+  const inherited = resolveConversationModel(providers, agentModelId, conversation.overrideModelId ? null : conversation);
+  const effectiveModel = overridingModel ? model || null : inherited.modelId;
+  const effectiveProvider = overridingModel ? selectedProvider : inherited.provider;
+  const modelMetadata = useModelMetadata(effectiveModel, effectiveProvider?._id === BUILTIN_PROVIDER_ID,
+    effectiveProvider?.models.find((item) => item.modelId === effectiveModel));
   const modelCapabilities = modelMetadata.metadata;
 
   async function save() {
+    if (overridingModel && !model) {
+      toast.error(t("请先选择模型"));
+      return;
+    }
+
     let sampling;
     try { sampling = parseSamplingInputs(samplingInputs, t); } catch (error) {
       toast.error(error instanceof Error ? error.message : t("采样参数无效"));
@@ -60,7 +69,7 @@ export function ConversationSettings({ conversation, providers, agentModelId, pr
     }
     setSaving(true);
     try {
-      await onSave({ ...conversation, overrideModelId: model || null, overrideTemperature: sampling.temperature, overrideTopP: sampling.topP, overrideFrequencyPenalty: sampling.frequencyPenalty, overridePresencePenalty: sampling.presencePenalty, followAgentTemperature: followSampling.temperature, followAgentTopP: followSampling.topP, followAgentFrequencyPenalty: followSampling.frequencyPenalty, followAgentPresencePenalty: followSampling.presencePenalty, overrideMaxTokens: max, overrideReasoningEffort: reasoning.trim() || null, overrideToolsEnabled: toolsEnabled, overrideToolsConfig: toolsConfig, updatedAt: Date.now() });
+      await onSave({ ...conversation, providerId: providerId ?? inherited.provider?._id ?? "", overrideModelId: overridingModel ? model : null, overrideTemperature: sampling.temperature, overrideTopP: sampling.topP, overrideFrequencyPenalty: sampling.frequencyPenalty, overridePresencePenalty: sampling.presencePenalty, followAgentTemperature: followSampling.temperature, followAgentTopP: followSampling.topP, followAgentFrequencyPenalty: followSampling.frequencyPenalty, followAgentPresencePenalty: followSampling.presencePenalty, overrideMaxTokens: max, overrideReasoningEffort: reasoning.trim() || null, overrideToolsEnabled: toolsEnabled, overrideToolsConfig: toolsConfig, updatedAt: Date.now() });
       toast.success(t("对话设置已保存"));
       onClose();
     } catch (error) {
@@ -80,11 +89,34 @@ export function ConversationSettings({ conversation, providers, agentModelId, pr
         <ScrollArea type="always" className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
           <fieldset disabled={saving} className="grid min-w-0 gap-5 pr-3 pb-2">
             <div className="grid gap-2">
-              <Label htmlFor="conversation-model">{t("模型")}</Label>
-              <Select value={model || "__follow__"} onValueChange={(value) => setModel(value === "__follow__" ? "" : value)}>
-                <SelectTrigger id="conversation-model" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="__follow__">{t("跟随 Agent")}</SelectItem>{models.map((id) => <SelectItem key={id} value={id}>{providers.flatMap((provider) => provider.models).find((item) => item.modelId === id)?.displayName || id}</SelectItem>)}</SelectContent>
-              </Select>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid min-w-0 gap-2">
+                  <Label htmlFor="conversation-provider">Provider</Label>
+                  <Select value={overridingModel ? `provider:${providerId}` : "follow"} disabled={saving} onValueChange={(value) => {
+                    setProviderId(value === "follow" ? null : value.slice("provider:".length));
+                    setModel("");
+                  }}>
+                    <SelectTrigger id="conversation-provider" className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="follow">{t("跟随 Agent")}</SelectItem>
+                      {overridingModel && !selectedProvider ? <SelectItem value={`provider:${providerId}`} disabled>{providerId ? `${providerId} · ` : ""}{t("Provider 不可用")}</SelectItem> : null}
+                      {providers.map((provider) => <SelectItem key={provider._id} value={`provider:${provider._id}`}>{provider.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid min-w-0 gap-2">
+                  <Label htmlFor="conversation-model">{t("模型")}</Label>
+                  <Select value={overridingModel ? model : ""} disabled={saving || !selectedProvider || !models.length && !savedModelUnavailable} onValueChange={setModel}>
+                    <SelectTrigger id="conversation-model" className="w-full"><SelectValue placeholder={!overridingModel
+                      ? inherited.model?.displayName || inherited.modelId || t("跟随 Agent")
+                      : models.length ? t("选择模型") : t("该 Provider 暂无模型")} /></SelectTrigger>
+                    <SelectContent>
+                      {savedModelUnavailable ? <SelectItem value={model} disabled>{model} · {t("模型不可用")}</SelectItem> : null}
+                      {models.map((item) => <SelectItem key={item.id} value={item.modelId}>{item.displayName || item.modelId}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
               <ModelMetadataSummary state={modelMetadata} />
             </div>
             {SAMPLING_FIELDS.map((field) => (
