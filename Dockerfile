@@ -10,14 +10,13 @@
 #     -p 127.0.0.1:3000:3000 messenger-server
 
 FROM node:24-bookworm-slim AS base
-# MUST match `packageManager` in package.json — a mismatched pnpm may refuse
-# the lockfile format or silently install with different resolution rules.
-RUN npm install -g pnpm@12.14.0
+# Keep the image tag in sync with `packageManager` in package.json.
+COPY --from=ghcr.io/pnpm/pnpm:12.17.0 /opt/pnpm /opt/pnpm
+ENV PATH="/opt/pnpm:${PATH}"
 WORKDIR /app
 
 # Dependencies are installed in their own layer so edits to app code reuse it.
-# pnpm-workspace.yaml is required: it carries the `allowBuilds` entries (sharp)
-# that pnpm 11 needs before it will run install scripts.
+# pnpm-workspace.yaml carries the `allowBuilds` entries for dependency install scripts.
 FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store,sharing=locked \

@@ -2,7 +2,7 @@
 
 ## Commands
 
-- Use Node.js 20+ and pnpm. Install dependencies with `pnpm install`.
+- Use Node.js 20+ and the pnpm version pinned in `package.json`. pnpm is the sole supported JavaScript package manager for this repository and any submodules. Install dependencies with `pnpm install`. The Dockerfile takes pnpm from its official image at the same pinned version.
 - Run the development server with `pnpm dev`; production checks are `pnpm build` and `pnpm start`.
 - Before handing off changes, run `pnpm lint` and `pnpm typecheck`; there is no configured test runner. For UI copy/localization changes, also run `pnpm i18n:check` (translation coverage, placeholder parity and locale/fallback isolation).
 - Local MongoDB must be a replica set (for example `mongod --replSet rs0`, then `rs.initiate()` in `mongosh`) because entity writes use transactions.
