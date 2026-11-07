@@ -642,7 +642,6 @@
   "项目": "Projects",
   "开始一个新对话": "Start a new conversation",
   "{0} 个会话": "{0} conversations",
-  "{0} 个会话 · {1} 个项目 · {2} 个 Provider": "{0} conversations · {1} projects · {2} Providers",
   "配置管理": "Configuration",
   "切换会话栏": "Toggle conversation sidebar",
   "项目已删除": "Project deleted",

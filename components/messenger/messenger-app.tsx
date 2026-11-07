@@ -1023,12 +1023,6 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
               )}
             </div>
           </ScrollArea>
-          <Separator />
-          <p className="px-4 py-3 text-xs text-muted-foreground">
-            {activeProject
-              ? t("{0} 个会话", { "0": filteredConversations.length })
-              : t("{0} 个会话 · {1} 个项目 · {2} 个 Provider", { "0": conversations.length, "1": projects.length, "2": providers.length })}
-          </p>
           <div className="grid gap-1 border-t p-2">
             <Button variant="ghost" className="justify-start" onClick={() => setManagementOpen(true)} disabled={isSending || savingModel}>
               <SlidersHorizontal /> {" "}{t("配置管理")}{" "}</Button>
