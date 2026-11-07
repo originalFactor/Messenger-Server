@@ -1,11 +1,17 @@
 import MarkdownIt from "markdown-it";
 import katex from "katex";
+import hljs from "highlight.js/lib/common";
 
 const markdown = new MarkdownIt({
   html: false,
   breaks: true,
   linkify: true,
   typographer: true,
+  highlight(source, language) {
+    const name = language.toLowerCase();
+    // An empty result lets MarkdownIt escape unknown or unlabelled code normally.
+    return name && hljs.getLanguage(name) ? hljs.highlight(source, { language: name }).value : "";
+  },
 });
 
 function renderMath(expression: string, displayMode: boolean): string {

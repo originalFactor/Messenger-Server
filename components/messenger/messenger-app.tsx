@@ -38,7 +38,7 @@ import {
   Trash2,
   Wrench,
 } from "lucide-react";
-import { renderMarkdown } from "@/components/messenger/markdown";
+import { MarkdownMessage } from "@/components/messenger/markdown-message";
 import { cn } from "cn";
 import { toast } from "sonner";
 import {
@@ -206,11 +206,6 @@ function groupMessages(messages: MessageEmbed[]): RenderItem[] {
     }
   }
   return items;
-}
-
-function MarkdownMessage({ content }: { content: string }) {
-  const html = useMemo(() => renderMarkdown(content), [content]);
-  return <div className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 function AgentAvatar({ agent, className }: { agent: AgentDoc | undefined; className?: string }) {

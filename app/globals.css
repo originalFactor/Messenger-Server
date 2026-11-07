@@ -66,6 +66,10 @@
     --accent: oklch(0.97 0 0);
     --accent-foreground: oklch(0.205 0 0);
     --destructive: oklch(0.577 0.245 27.325);
+    --syntax-keyword: oklch(0.43 0.19 300);
+    --syntax-string: oklch(0.42 0.11 154);
+    --syntax-literal: oklch(0.45 0.16 45);
+    --syntax-name: oklch(0.43 0.14 253);
     --border: oklch(0.922 0 0);
     --input: oklch(0.922 0 0);
     --ring: oklch(0.708 0 0);
@@ -102,6 +106,10 @@
     --accent: oklch(0.269 0 0);
     --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
+    --syntax-keyword: oklch(0.80 0.13 300);
+    --syntax-string: oklch(0.81 0.11 154);
+    --syntax-literal: oklch(0.80 0.13 65);
+    --syntax-name: oklch(0.80 0.12 253);
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.556 0 0);
@@ -161,7 +169,7 @@ body:has([data-slot="dialog-content"]) [data-slot="table-container"]::-webkit-sc
 .markdown-body ul,
 .markdown-body ol,
 .markdown-body blockquote,
-.markdown-body pre,
+.markdown-body .markdown-code-block,
 .markdown-body table {
     margin: 0.75rem 0;
 }
@@ -185,13 +193,13 @@ body:has([data-slot="dialog-content"]) [data-slot="table-container"]::-webkit-sc
     font-family: var(--font-mono);
     font-size: 0.88em;
 }
-.markdown-body pre {
-    max-width: 100%;
-    overflow-x: auto;
+.markdown-body .markdown-code-block {
     border-radius: var(--radius-lg);
     background: var(--background);
-    padding: 0.85rem;
     box-shadow: inset 0 0 0 1px var(--border);
+}
+.markdown-body pre {
+    padding: 0.85rem;
 }
 .markdown-body pre code {
     display: block;
@@ -199,6 +207,35 @@ body:has([data-slot="dialog-content"]) [data-slot="table-container"]::-webkit-sc
     background: transparent;
     padding: 0;
     white-space: pre;
+}
+.markdown-code-block .hljs-comment,
+.markdown-code-block .hljs-quote {
+    color: var(--muted-foreground);
+    font-style: italic;
+}
+.markdown-code-block .hljs-keyword,
+.markdown-code-block .hljs-selector-tag,
+.markdown-code-block .hljs-meta {
+    color: var(--syntax-keyword);
+}
+.markdown-code-block .hljs-string,
+.markdown-code-block .hljs-regexp,
+.markdown-code-block .hljs-addition {
+    color: var(--syntax-string);
+}
+.markdown-code-block .hljs-number,
+.markdown-code-block .hljs-literal,
+.markdown-code-block .hljs-symbol {
+    color: var(--syntax-literal);
+}
+.markdown-code-block .hljs-title,
+.markdown-code-block .hljs-type,
+.markdown-code-block .hljs-built_in,
+.markdown-code-block .hljs-attr {
+    color: var(--syntax-name);
+}
+.markdown-code-block .hljs-deletion {
+    color: var(--destructive);
 }
 .markdown-body a {
     color: var(--primary);
