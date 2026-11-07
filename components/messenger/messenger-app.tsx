@@ -38,8 +38,7 @@ import {
   Trash2,
   Wrench,
 } from "lucide-react";
-import MarkdownIt from "markdown-it";
-import katex from "katex";
+import { renderMarkdown } from "@/components/messenger/markdown";
 import { cn } from "cn";
 import { toast } from "sonner";
 import {
@@ -120,13 +119,6 @@ function makeMessage(role: ChatMessage["role"], content: string, status: ChatMes
 function currentTimestamp(): number {
   return Date.now();
 }
-
-const markdown = new MarkdownIt({
-  html: false,
-  breaks: true,
-  linkify: true,
-  typographer: true,
-});
 
 type ToolEntry = {
   callId: string | null;
@@ -214,23 +206,6 @@ function groupMessages(messages: MessageEmbed[]): RenderItem[] {
     }
   }
   return items;
-}
-
-function renderMarkdown(source: string): string {
-  const math: string[] = [];
-  const protect = (expression: string, display: boolean) => {
-    const index = math.push(katex.renderToString(expression.trim(), {
-      displayMode: display,
-      throwOnError: false,
-      strict: "ignore",
-      trust: false,
-    })) - 1;
-    return `MATHPLACEHOLDER${index}ENDMATH`;
-  };
-  let text = source.replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g, (_match, dollars: string, brackets: string) => protect(dollars ?? brackets, true));
-  text = text.replace(/(^|[^$])\$([^$\n]+)\$/g, (_match, prefix: string, expression: string) => `${prefix}${protect(expression, false)}`);
-  const html = markdown.render(text);
-  return html.replace(/MATHPLACEHOLDER(\d+)ENDMATH/g, (_match, index: string) => math[Number(index)] ?? "");
 }
 
 function MarkdownMessage({ content }: { content: string }) {
