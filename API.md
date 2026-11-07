@@ -1747,6 +1747,6 @@ Custom Provider 模型编辑窗仅提供 catalog 匹配与能力元数据，不�
 
 ### Web 对话模型选择与 POST /api/chat
 
-对话设置按 Provider → Model 两级选择，只列出该 Provider 启用的模型。显式选择通过原有对话 PUT 保存 `providerId` 和 `overrideModelId`；同名模型不会跨 Provider 复用。选择「跟随 Agent」清空模型覆盖，并从启用的 Provider 解析 Agent 的模型。原有同步结构不变。
+对话设置按 Provider → Model 两级选择，只列出该 Provider 启用的模型。显式选择通过原有对话 PUT 保存 `providerId` 和 `overrideModelId`；同名模型不会跨 Provider 复用。选择「跟随 Agent」清空模型覆盖，并从启用的 Provider 解析 Agent 的模型。原有同步结构不变。输入框左下角的 Provider → Model 子菜单使用同一保存流程，成功后即切换当前对话的模型，保留未发送的草稿。
 
 Web 请求可通过 `X-Messenger-Provider` 指定 Provider。省略或指定内置 Provider 时沿用云端代理和额度结算。自定义 Provider 必须属于当前会话用户、未删除且启用了请求模型；服务端读取该 Provider 的地址、密钥与协议，不接收浏览器提供的转发地址。自定义 Provider 请求使用已有协议转换，无云端额度结算，不跟随重定向或自动重试。

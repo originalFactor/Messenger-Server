@@ -53,6 +53,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { ConversationModelMenu, type ConversationModelChoice } from "@/components/messenger/conversation-model-menu";
 import { ConversationSettings } from "@/components/messenger/conversation-settings";
 import { ConfigurationManagement } from "@/components/messenger/configuration-management";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -352,11 +353,13 @@ function ConversationItem({
   active,
   onSelect,
   onDelete,
+  deleteDisabled,
 }: {
   conversation: ConversationDoc;
   active: boolean;
   onSelect: () => void;
   onDelete: () => void;
+  deleteDisabled: boolean;
 }) {
   const t = useTranslator();
   return (
@@ -382,6 +385,7 @@ function ConversationItem({
             size="icon-sm"
             className="text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
             aria-label={t("删除会话")}
+            disabled={deleteDisabled}
           >
             <Trash2 />
           </Button>
@@ -524,6 +528,9 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
   const [selectedId, setSelectedId] = useState<string | null>(initialConversations.find((conversation) => !conversation.projectId)?._id ?? null);
   const [draft, setDraft] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [savingModel, setSavingModel] = useState(false);
+  const conversationWrites = useRef(new Set<string>());
+  const conversationCreations = useRef(new Map<string, Promise<void>>());
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [search, setSearch] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -619,6 +626,8 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
   }
 
   async function saveConversation(conversation: ConversationDoc) {
+    // A new chat can be edited before its initial PUT returns. Save in that order.
+    await conversationCreations.current.get(conversation._id);
     const payload = {
       id: conversation._id,
       title: conversation.title,
@@ -656,6 +665,33 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
     if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? t("保存会话失败"));
   }
 
+  async function saveConversationSettings(next: ConversationDoc) {
+    if (conversationWrites.current.has(next._id)) throw new Error(t("保存对话设置失败"));
+    conversationWrites.current.add(next._id);
+    try {
+      await saveConversation(next);
+      updateConversation(next);
+    } finally {
+      conversationWrites.current.delete(next._id);
+    }
+  }
+
+  async function selectConversationModel(choice: ConversationModelChoice | null) {
+    if (!selected || isSending || savingModel || conversationWrites.current.has(selected._id)) return;
+    const inherited = choice ? null : resolveConversationModel(providers, agent?.defaultModelId ?? null, selected.overrideModelId ? null : selected);
+    const providerId = choice?.providerId ?? inherited?.provider?._id ?? "";
+    const overrideModelId = choice?.modelId ?? null;
+    if (providerId === selected.providerId && overrideModelId === (selected.overrideModelId ?? null)) return;
+    setSavingModel(true);
+    try {
+      await saveConversationSettings({ ...selected, providerId, overrideModelId, updatedAt: currentTimestamp() });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("保存对话设置失败"));
+    } finally {
+      setSavingModel(false);
+    }
+  }
+
   function startConversation(chosen: AgentDoc) {
     if (!providers[0]) {
       toast.error(t("请先在左下角配置管理中配置 Agent 和 Provider。"));
@@ -669,7 +705,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
       toast.error(t("请先配置可用模型。"));
       return;
     }
-    const now = Date.now();
+    const now = currentTimestamp();
     const next: ConversationDoc = {
       _id: crypto.randomUUID(),
       userId: "",
@@ -699,20 +735,28 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
     setConversations((current) => [next, ...current]);
     setSelectedId(next._id);
     setDraft("");
-    void saveConversation(next).catch((error: unknown) => {
+    const creation = saveConversation(next);
+    conversationCreations.current.set(next._id, creation);
+    void creation.catch((error: unknown) => {
       setConversations((current) => current.filter((conversation) => conversation._id !== next._id));
       toast.error(error instanceof Error ? error.message : t("创建会话失败"));
-    });
+    }).finally(() => conversationCreations.current.delete(next._id));
   }
 
   async function deleteConversation(id: string) {
-    const response = await fetch(`/api/conversations/${id}`, { method: "DELETE" });
-    if (!response.ok) {
-      toast.error((await response.json().catch(() => null))?.error ?? t("删除会话失败"));
-      return;
+    if (conversationWrites.current.has(id)) return;
+    conversationWrites.current.add(id);
+    try {
+      await conversationCreations.current.get(id);
+      const response = await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? t("删除会话失败"));
+      setConversations((current) => current.filter((conversation) => conversation._id !== id));
+      if (selectedId === id) setSelectedId(firstConversationIn(activeProjectId, id));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("删除会话失败"));
+    } finally {
+      conversationWrites.current.delete(id);
     }
-    setConversations((current) => current.filter((conversation) => conversation._id !== id));
-    if (selectedId === id) setSelectedId(firstConversationIn(activeProjectId, id));
   }
 
   async function runTool(call: { id: string; name: string; arguments: string }, conversation: ConversationDoc, signal: AbortSignal): Promise<RemoteToolResult> {
@@ -734,7 +778,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
     const text = draft.trim();
-    if (!text || isSending) return;
+    if (!text || isSending || savingModel || (selected && conversationWrites.current.has(selected._id))) return;
     if (!selected || !agent) {
       toast.error(t("请先创建一个对话。"));
       return;
@@ -973,6 +1017,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
                     active={conversation._id === selectedId}
                     onSelect={() => setSelectedId(conversation._id)}
                     onDelete={() => void deleteConversation(conversation._id)}
+                    deleteDisabled={savingModel}
                   />
                 ))
               )}
@@ -985,7 +1030,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
               : t("{0} 个会话 · {1} 个项目 · {2} 个 Provider", { "0": conversations.length, "1": projects.length, "2": providers.length })}
           </p>
           <div className="grid gap-1 border-t p-2">
-            <Button variant="ghost" className="justify-start" onClick={() => setManagementOpen(true)} disabled={isSending}>
+            <Button variant="ghost" className="justify-start" onClick={() => setManagementOpen(true)} disabled={isSending || savingModel}>
               <SlidersHorizontal /> {" "}{t("配置管理")}{" "}</Button>
             <Button asChild variant="ghost" className="justify-start">
               <Link href="/console"><LayoutDashboard /> {" "}{t("控制台")}</Link>
@@ -1014,7 +1059,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <LanguageSwitcher />
-            <Button variant="ghost" size="icon" disabled={!selected || isSending} onClick={() => setConversationSettingsOpen(true)} aria-label={t("对话设置")}><SlidersHorizontal /></Button>
+            <Button variant="ghost" size="icon" disabled={!selected || isSending || savingModel} onClick={() => setConversationSettingsOpen(true)} aria-label={t("对话设置")}><SlidersHorizontal /></Button>
             {selected?.projectId ? (
               <Badge variant={projectBlock ? "outline" : "secondary"} className="max-w-48">
                 <Folder />
@@ -1101,17 +1146,24 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
                   disabled={isSending || Boolean(projectBlock)}
                 />
                 <div className="flex min-w-0 items-center justify-between gap-3 px-1 pt-1">
-                  <p className="min-w-0 truncate text-xs text-muted-foreground">
-                    {availableModel && provider && availableModelConfig ? provider._id === BUILTIN_PROVIDER_ID ? t("{0} · 云端额度计费", { "0": availableModel }) : `${availableModel} · ${provider.name}` : t("请先选择模型")}
-                    {project ? ` · ${projectTools.length > 0 ? t("{0} 个工具", { "0": projectTools.length }) : t("未启用工具")}` : ""}
-                  </p>
+                  <div className="flex min-w-0 items-center gap-1">
+                    <ConversationModelMenu providers={providers}
+                      selection={selected.overrideModelId ? { providerId: selected.providerId, modelId: selected.overrideModelId } : null}
+                      label={availableModel && provider && availableModelConfig
+                        ? provider._id === BUILTIN_PROVIDER_ID
+                          ? t("{0} · 云端额度计费", { "0": availableModelConfig.displayName || availableModel })
+                          : `${availableModelConfig.displayName || availableModel} · ${provider.name}`
+                        : t("请先选择模型")}
+                      disabled={isSending} saving={savingModel} onSelect={(choice) => void selectConversationModel(choice)} />
+                    {project ? <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">{projectTools.length > 0 ? t("{0} 个工具", { "0": projectTools.length }) : t("未启用工具")}</span> : null}
+                  </div>
                   {isSending ? (
                     <Button type="button" size="sm" variant="outline" onClick={() => abortRef.current?.abort()}>
                       <Square />
                       {" "}{t("停止")}{" "}
                     </Button>
                   ) : (
-                    <Button type="submit" size="sm" disabled={!draft.trim() || Boolean(projectBlock) || (selected.writable === false && !selected.projectId)}>
+                    <Button type="submit" size="sm" disabled={savingModel || !draft.trim() || Boolean(projectBlock) || (selected.writable === false && !selected.projectId)}>
                       <Send />
                       {" "}{t("发送")}{" "}
                     </Button>
@@ -1123,10 +1175,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
         )}
       </main>
       {conversationSettingsOpen && selected ? (
-        <ConversationSettings key={selected._id} conversation={selected} providers={providers} agentModelId={agent?.defaultModelId ?? null} onClose={() => setConversationSettingsOpen(false)} onSave={async (next) => {
-          await saveConversation(next);
-          updateConversation(next);
-        }} />
+        <ConversationSettings key={selected._id} conversation={selected} providers={providers} agentModelId={agent?.defaultModelId ?? null} onClose={() => setConversationSettingsOpen(false)} onSave={saveConversationSettings} />
       ) : null}
       <Dialog open={managementOpen} onOpenChange={setManagementOpen}>
         <DialogContent className="flex h-[calc(100dvh-2rem)] flex-col sm:max-w-5xl">
