@@ -14,7 +14,7 @@ import { LanguageSwitcher } from "@/components/i18n/language-switcher";
 
 import { useTranslator } from "@/components/i18n/locale-provider";
 import type { Translator } from "@/lib/i18n";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -517,7 +517,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
   const conversationCreations = useRef(new Map<string, Promise<void>>());
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [search, setSearch] = useState("");
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const historyRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const defaultAgent = agents.find((agent) => agent.isDefault) ?? agents[0];
@@ -601,9 +601,19 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
     setSelectedId(firstConversationIn(null));
   }
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [selected?.messages.length, isSending]);
+  useLayoutEffect(() => {
+    const history = historyRef.current;
+    const viewport = history?.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]');
+    if (!history || !viewport) return;
+
+    const isOpening = !history.hasAttribute("data-history-ready");
+    const bottom = viewport.scrollHeight - viewport.clientHeight;
+    if (bottom - viewport.scrollTop > 1) {
+      viewport.scrollTo({ top: bottom, behavior: isOpening ? "instant" : "smooth" });
+    }
+    // Keep the server-rendered history hidden until its initial scroll position is set.
+    if (isOpening) history.setAttribute("data-history-ready", "");
+  }, [selected?._id, selected?.messages.length, isSending]);
 
   function updateConversation(next: ConversationDoc) {
     setConversations((current) => current.map((conversation) => (conversation._id === next._id ? next : conversation)));
@@ -1083,7 +1093,11 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
           </Empty>
         ) : (
           <>
-            <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
+            <ScrollArea
+              key={selected._id}
+              ref={historyRef}
+              className="invisible min-h-0 flex-1 data-[history-ready]:visible [&_[data-slot=scroll-area-viewport]>div]:!block"
+            >
               <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
                 {groupedMessages.length === 0 ? (
                   <Empty className="py-24">
@@ -1100,7 +1114,6 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
                     <MessageRow key={message.id} item={message} agent={agent} userName={userName} userAvatarUrl={userAvatarUrl} />
                   ))
                 )}
-                <div ref={bottomRef} />
               </div>
             </ScrollArea>
             <form onSubmit={sendMessage} className="shrink-0 px-4 pb-4 sm:px-6">
