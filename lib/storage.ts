@@ -33,6 +33,7 @@ import type {
   MarketAgentDoc,
   MarketAgentInput,
   ConversationDoc,
+  ConversationSummary,
   ConversationUpsertInput,
   ModelRateSettingsDoc,
   PlanDoc,
@@ -862,13 +863,19 @@ export async function listConversationsSince(
   return (limit === undefined ? query : query.limit(limit)).toArray();
 }
 
-export async function listRecentWebConversations(userId: string, projectIds: string[]): Promise<ConversationDoc[]> {
+export async function listRecentWebConversations(userId: string, projectIds: string[]): Promise<ConversationSummary[]> {
   const db = await getDb();
   return db.collection<ConversationDoc>("conversations")
     .find({ userId, deleted: { $ne: true }, projectId: { $in: [null, "", ...projectIds] } })
     .sort({ updatedAt: -1, _id: 1 })
     .limit(SYNC_MAX_LIMIT)
+    .project<ConversationSummary>({ _id: 1, title: 1, agentId: 1, providerId: 1, overrideModelId: 1, projectId: 1, updatedAt: 1 })
     .toArray();
+}
+
+export async function getConversationForUser(userId: string, conversationId: string): Promise<ConversationDoc | null> {
+  const db = await getDb();
+  return db.collection<ConversationDoc>("conversations").findOne({ _id: conversationId, userId, deleted: { $ne: true } });
 }
 
 export async function upsertProvider(userId: string, provider: ProviderUpsertInput): Promise<number> {

@@ -17,7 +17,7 @@
 import { requireUserSession } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/http";
 import { storageErrorResponse } from "@/lib/route-errors";
-import { softDeleteConversation, upsertConversation } from "@/lib/storage";
+import { getConversationForUser, softDeleteConversation, upsertConversation } from "@/lib/storage";
 import { conversationSchema, entityIdSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -27,6 +27,21 @@ type RouteContext = { params: Promise<{ id: string }> };
 async function getConversationId(context: RouteContext): Promise<string | null> {
   const { id } = await context.params;
   return entityIdSchema.safeParse(id).success ? id : null;
+}
+
+export async function GET(_request: Request, context: RouteContext) {
+  const session = await requireUserSession();
+  if (!session) return jsonError("Unauthorized.", 401);
+  const conversationId = await getConversationId(context);
+  if (!conversationId) return jsonError("Invalid conversation ID.", 400);
+
+  try {
+    const conversation = await getConversationForUser(session.sub, conversationId);
+    if (!conversation) return jsonError("Conversation not found.", 404);
+    return jsonOk({ conversation }, 200, { "Cache-Control": "private, no-store" });
+  } catch (error) {
+    return storageErrorResponse(error, "Unable to load the conversation.");
+  }
 }
 
 export async function PUT(request: Request, context: RouteContext) {

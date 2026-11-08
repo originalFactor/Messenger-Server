@@ -632,6 +632,8 @@
   "{0} 小时前": "{0} hours ago",
   "该项目已不存在。": "This project no longer exists.",
   "保存会话失败": "Unable to save conversation",
+  "加载会话失败": "Unable to load conversation",
+  "重试": "Retry",
   "请先在左下角配置管理中配置 Agent 和 Provider。": "Configure an Agent and Provider using Configuration in the lower left first.",
   "请先配置可用模型。": "Configure an available model first.",
   "创建会话失败": "Unable to create conversation",

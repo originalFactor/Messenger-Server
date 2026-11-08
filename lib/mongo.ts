@@ -62,6 +62,7 @@ async function ensureIndexesFor(database: Db): Promise<void> {
         { unique: true, partialFilterExpression: { isDefault: true, deleted: false } },
       ),
       database.collection("conversations").createIndex({ userId: 1, version: 1 }),
+      database.collection("conversations").createIndex({ userId: 1, updatedAt: -1, _id: 1 }),
       database.collection("conversations").createIndex({ userId: 1, agentId: 1 }),
       database.collection("providers").createIndex({ userId: 1, version: 1 }),
       // projects 与其它三个同步集合同构：增量同步按 { userId, version }

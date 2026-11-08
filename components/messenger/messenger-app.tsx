@@ -14,7 +14,8 @@ import { LanguageSwitcher } from "@/components/i18n/language-switcher";
 
 import { useTranslator } from "@/components/i18n/locale-provider";
 import type { Translator } from "@/lib/i18n";
-import { FormEvent, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -68,7 +69,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { UserAvatar } from "@/components/console/user-avatar";
-import type { AgentDoc, ConversationDoc, MessageEmbed, ProjectDoc, ProviderDoc } from "@/lib/types";
+import type { AgentDoc, ConversationDoc, ConversationSummary, MessageEmbed, ProjectDoc, ProviderDoc } from "@/lib/types";
 import {
   isWorkspaceTool,
   messageText,
@@ -87,7 +88,7 @@ type Props = {
   builtinModels: PlazaModel[];
   initialManagementOpen: boolean;
   initialAgents: AgentDoc[];
-  initialConversations: ConversationDoc[];
+  initialConversations: ConversationSummary[];
   initialProviders: ProviderDoc[];
   initialProjects: ProjectDoc[];
   userName: string;
@@ -134,9 +135,8 @@ type AgentBlock =
   | { kind: "text"; text: string; error?: boolean }
   | { kind: "tool"; tool: ToolEntry };
 
-type AgentTurn = { id: string; role: "agent"; blocks: AgentBlock[]; sending: boolean };
-type UserItem = { id: string; role: "user"; text: string };
-type RenderItem = UserItem | AgentTurn;
+type AgentTurn = { id: string; role: "agent"; messages: MessageEmbed[] };
+type RenderItem = { id: string; role: "user"; text: string } | AgentTurn;
 
 function pushContent(blocks: AgentBlock[], content: string, error: boolean) {
   const { thinking, answer } = splitThinking(content);
@@ -165,10 +165,7 @@ function attachResult(blocks: AgentBlock[], result: { callId: string | null; nam
   blocks.push({ kind: "tool", tool: { callId: result.callId, name: result.name, arguments: "", output: result.output, isError: result.isError } });
 }
 
-/**
- * Consecutive assistant/tool messages are one Agent turn: text and reasoning are merged, and every
- * tool call is paired with its result (by `callId`) into a single entry.
- */
+/** Group the history without parsing content from rows that are outside the viewport. */
 function groupMessages(messages: MessageEmbed[]): RenderItem[] {
   const items: RenderItem[] = [];
   let turn: AgentTurn | null = null;
@@ -180,32 +177,40 @@ function groupMessages(messages: MessageEmbed[]): RenderItem[] {
       continue;
     }
     if (!turn) {
-      turn = { id: message.id, role: "agent", blocks: [], sending: false };
+      turn = { id: message.id, role: "agent", messages: [] };
       items.push(turn);
     }
-    turn.sending = message.status === "SENDING";
+    turn.messages.push(message);
+  }
+  return items;
+}
+
+/** Merge text and reasoning in an Agent turn and pair tool calls with their results. */
+function agentBlocks(messages: MessageEmbed[]): AgentBlock[] {
+  const blocks: AgentBlock[] = [];
+  for (const message of messages) {
     const error = message.status === "ERROR";
     const parts = parseParts(message);
     const hasText = parts.some((part) => part.type === "text");
     const hasToolParts = parts.some((part) => part.type === "tool_call" || part.type === "tool_result");
     if (message.role === "tool" && !hasToolParts) {
-      attachResult(turn.blocks, { callId: null, name: "tool", output: message.content, isError: false });
+      attachResult(blocks, { callId: null, name: "tool", output: message.content, isError: false });
       continue;
     }
-    if (!hasText && message.role !== "tool" && message.content.trim()) pushContent(turn.blocks, message.content, error);
+    if (!hasText && message.role !== "tool" && message.content.trim()) pushContent(blocks, message.content, error);
     for (const part of parts) {
-      if (part.type === "text") pushContent(turn.blocks, part.text ?? "", error);
+      if (part.type === "text") pushContent(blocks, part.text ?? "", error);
       else if (part.type === "tool_call") {
-        turn.blocks.push({
+        blocks.push({
           kind: "tool",
           tool: { callId: part.callId ?? null, name: part.name ?? "tool", arguments: part.arguments ?? "", output: null, isError: false },
         });
       } else if (part.type === "tool_result") {
-        attachResult(turn.blocks, { callId: part.callId ?? null, name: part.name ?? "tool", output: part.output ?? "", isError: part.isError === true });
+        attachResult(blocks, { callId: part.callId ?? null, name: part.name ?? "tool", output: part.output ?? "", isError: part.isError === true });
       }
     }
   }
-  return items;
+  return blocks;
 }
 
 function AgentAvatar({ agent, className }: { agent: AgentDoc | undefined; className?: string }) {
@@ -326,7 +331,7 @@ function ConversationItem({
   onDelete,
   deleteDisabled,
 }: {
-  conversation: ConversationDoc;
+  conversation: ConversationSummary;
   active: boolean;
   onSelect: () => void;
   onDelete: () => void;
@@ -390,6 +395,8 @@ function MessageRow({
   userAvatarUrl: string | null;
 }) {
   const t = useTranslator();
+  const turnMessages = item.role === "agent" ? item.messages : null;
+  const blocks = useMemo(() => turnMessages ? agentBlocks(turnMessages) : [], [turnMessages]);
   if (item.role === "user") {
     return (
       <div className="flex min-w-0 flex-row-reverse items-start gap-3">
@@ -401,19 +408,20 @@ function MessageRow({
     );
   }
 
-  const last = item.blocks[item.blocks.length - 1];
-  const waiting = item.sending && (!last || last.kind === "tool");
-  if (item.blocks.length === 0 && !waiting) return null;
+  const sending = item.messages.at(-1)?.status === "SENDING";
+  const last = blocks.at(-1);
+  const waiting = sending && (!last || last.kind === "tool");
+  if (blocks.length === 0 && !waiting) return null;
 
   return (
     <div className="flex min-w-0 items-start gap-3">
       <AgentAvatar agent={agent} />
       <div className="flex w-full max-w-3xl min-w-0 flex-1 flex-col gap-3 overflow-hidden rounded-xl bg-muted px-4 py-3 text-sm leading-7 text-foreground">
-        {item.blocks.map((block, index) => {
+        {blocks.map((block, index) => {
           if (block.kind === "thinking") {
-            return <ThinkingBlock key={index} content={block.text} streaming={item.sending && index === item.blocks.length - 1} />;
+            return <ThinkingBlock key={index} content={block.text} streaming={sending && index === blocks.length - 1} />;
           }
-          if (block.kind === "tool") return <ToolCard key={index} tool={block.tool} running={item.sending} />;
+          if (block.kind === "tool") return <ToolCard key={index} tool={block.tool} running={sending} />;
           return (
             <div key={index} className={cn("min-w-0", block.error && "text-destructive")}>
               <MarkdownMessage content={block.text} />
@@ -424,6 +432,86 @@ function MessageRow({
         {waiting ? <LoaderCircle className="size-4 animate-spin" /> : null}
       </div>
     </div>
+  );
+}
+
+function ConversationHistory({ messages, agent, userName, userAvatarUrl }: {
+  messages: MessageEmbed[];
+  agent: AgentDoc | undefined;
+  userName: string;
+  userAvatarUrl: string | null;
+}) {
+  "use no memo";
+
+  const t = useTranslator();
+  const root = useRef<HTMLDivElement>(null);
+  const items = useMemo(() => groupMessages(messages), [messages]);
+  const getScrollElement = useCallback(() =>
+    root.current?.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]') ?? null, []);
+  const getItemKey = useCallback((index: number) => items[index].id, [items]);
+  // eslint-disable-next-line react-hooks/incompatible-library -- This component renders directly from the virtualizer without compiler memoization.
+  const history = useVirtualizer({
+    count: items.length,
+    getScrollElement,
+    getItemKey,
+    estimateSize: () => 120,
+    gap: 24,
+    paddingStart: 24,
+    paddingEnd: 24,
+    overscan: 6,
+    anchorTo: "end",
+    followOnAppend: "smooth",
+    scrollEndThreshold: 40,
+    useFlushSync: false,
+  });
+  const rows = history.getVirtualItems();
+  const height = history.getTotalSize();
+
+  useLayoutEffect(() => {
+    const area = root.current;
+    if (!area || area.hasAttribute("data-history-ready")) return;
+    if (items.length > 0) {
+      history.scrollToEnd({ behavior: "instant" });
+      // Measuring newly mounted rows can change the height before React has applied it.
+      if (rows.at(-1)?.index !== items.length - 1 || Math.abs(history.getTotalSize() - height) > 1) return;
+      const viewport = getScrollElement();
+      if (!viewport || viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop > 1) return;
+    }
+    // Reveal only once the final row is mounted and the viewport has jumped to the end.
+    area.setAttribute("data-history-ready", "");
+  });
+
+  return (
+    <ScrollArea
+      ref={root}
+      className="invisible min-h-0 flex-1 data-[history-ready]:visible [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]]:[overflow-anchor:none]"
+    >
+      {items.length === 0 ? (
+        <Empty className="py-24">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Sparkles />
+            </EmptyMedia>
+            <EmptyTitle>{t("今天想一起完成什么？")}</EmptyTitle>
+            <EmptyDescription>{t("提问、写作、头脑风暴，或者把一个复杂问题拆成下一步。")}</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <div className="relative mx-auto w-full min-w-0 max-w-3xl" style={{ height }}>
+          {rows.map((row) => (
+            <div
+              key={row.key}
+              ref={history.measureElement}
+              data-index={row.index}
+              className="absolute inset-x-0 top-0 min-w-0 px-4 sm:px-6"
+              style={{ transform: `translateY(${row.start}px)` }}
+            >
+              <MessageRow item={items[row.index]} agent={agent} userName={userName} userAvatarUrl={userAvatarUrl} />
+            </div>
+          ))}
+        </div>
+      )}
+    </ScrollArea>
   );
 }
 
@@ -483,7 +571,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
   const t = useTranslator();
   const [initialSelection] = useState(() => {
     const projectIds = new Set(initialProjects.map((project) => project._id));
-    let latest: ConversationDoc | undefined;
+    let latest: ConversationSummary | undefined;
     for (const conversation of initialConversations) {
       if (conversation.projectId && !projectIds.has(conversation.projectId)) continue;
       if (!latest || conversation.updatedAt > latest.updatedAt) latest = conversation;
@@ -505,8 +593,9 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
   const [deviceControlOpen, setDeviceControlOpen] = useState(false);
   const [deviceTurnActive, setDeviceTurnActive] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-  const [conversations, setConversations] = useState(initialConversations);
+  const [conversations, setConversations] = useState<(ConversationSummary | ConversationDoc)[]>(initialConversations);
   const [selectedId, setSelectedId] = useState(initialSelection.id);
+  const [historyLoadError, setHistoryLoadError] = useState<{ id: string; message: string } | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState<"project" | "standalone" | null>(null);
   const isSending = sending !== null;
@@ -517,7 +606,6 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
   const conversationCreations = useRef(new Map<string, Promise<void>>());
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [search, setSearch] = useState("");
-  const historyRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const defaultAgent = agents.find((agent) => agent.isDefault) ?? agents[0];
@@ -539,8 +627,11 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
         reasoningEffort: titleAgentSource.followDefaultReasoningEffort ? defaultAgent.reasoningEffort : titleAgentSource.reasoningEffort,
       }
     : titleAgentSource;
-  const selected = conversations.find((conversation) => conversation._id === selectedId) ?? null;
-  const sourceAgent = agents.find((item) => item._id === selected?.agentId) ?? defaultAgent;
+  const selectedEntry = conversations.find((conversation) => conversation._id === selectedId);
+  const selected = selectedEntry && "messages" in selectedEntry ? selectedEntry : null;
+  const pendingHistoryId = selected ? null : selectedEntry?._id;
+  const loadError = historyLoadError?.id === pendingHistoryId ? historyLoadError : null;
+  const sourceAgent = agents.find((item) => item._id === selectedEntry?.agentId) ?? defaultAgent;
   const agent = sourceAgent && defaultAgent && !sourceAgent.isDefault ? {
     ...sourceAgent,
     defaultModelId: sourceAgent.followDefaultModel ? defaultAgent.defaultModelId : sourceAgent.defaultModelId,
@@ -553,11 +644,11 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
     maxTokens: sourceAgent.followDefaultMaxTokens ? defaultAgent.maxTokens : sourceAgent.maxTokens,
     reasoningEffort: sourceAgent.followDefaultReasoningEffort ? defaultAgent.reasoningEffort : sourceAgent.reasoningEffort,
   } : sourceAgent;
-  const { provider, modelId: availableModel, model: availableModelConfig } = resolveConversationModel(providers, agent?.defaultModelId ?? null, selected);
-  const project = selected?.projectId ? projects.find((item) => item._id === selected.projectId) : undefined;
+  const { provider, modelId: availableModel, model: availableModelConfig } = resolveConversationModel(providers, agent?.defaultModelId ?? null, selectedEntry);
+  const project = selectedEntry?.projectId ? projects.find((item) => item._id === selectedEntry.projectId) : undefined;
   const activeProject = activeProjectId ? projects.find((item) => item._id === activeProjectId) : undefined;
   const statusOf = (item: ProjectDoc) => projectStatus(item, remote.connected, remote.devices);
-  const projectBlock = !selected?.projectId
+  const projectBlock = !selectedEntry?.projectId
     ? null
     : !project
       ? t("该项目已不存在。")
@@ -601,19 +692,33 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
     setSelectedId(firstConversationIn(null));
   }
 
-  useLayoutEffect(() => {
-    const history = historyRef.current;
-    const viewport = history?.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]');
-    if (!history || !viewport) return;
-
-    const isOpening = !history.hasAttribute("data-history-ready");
-    const bottom = viewport.scrollHeight - viewport.clientHeight;
-    if (bottom - viewport.scrollTop > 1) {
-      viewport.scrollTo({ top: bottom, behavior: isOpening ? "instant" : "smooth" });
+  useEffect(() => {
+    const id = pendingHistoryId;
+    if (!id || loadError) return;
+    const controller = new AbortController();
+    async function load(id: string) {
+      try {
+        const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, { signal: controller.signal });
+        const data = await response.json() as { conversation?: ConversationDoc; error?: string };
+        const conversation = data.conversation;
+        if (!response.ok || conversation?._id !== id || !Array.isArray(conversation.messages)) {
+          throw new Error(data.error || t("加载会话失败"));
+        }
+        if (!controller.signal.aborted) {
+          setConversations((current) => current.map((entry) =>
+            entry._id === id && !("messages" in entry) ? conversation : entry));
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setHistoryLoadError({ id, message: error instanceof Error ? error.message : t("加载会话失败") });
+        }
+      }
     }
-    // Keep the server-rendered history hidden until its initial scroll position is set.
-    if (isOpening) history.setAttribute("data-history-ready", "");
-  }, [selected?._id, selected?.messages.length, isSending]);
+    queueMicrotask(() => {
+      if (!controller.signal.aborted) void load(id);
+    });
+    return () => controller.abort();
+  }, [pendingHistoryId, loadError, t]);
 
   function updateConversation(next: ConversationDoc) {
     setConversations((current) => current.map((conversation) => (conversation._id === next._id ? next : conversation)));
@@ -928,8 +1033,6 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
     }
   }
 
-  const groupedMessages = selected ? groupMessages(selected.messages) : [];
-
   return (
     <div className="relative flex h-dvh min-h-0 w-full overflow-hidden bg-background">
       <aside
@@ -1034,7 +1137,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
             </Button>
             <AgentAvatar agent={agent} />
             <div className="min-w-0">
-              <h2 className="truncate text-sm font-medium">{selected?.title ?? "Messenger"}</h2>
+              <h2 className="truncate text-sm font-medium">{selectedEntry?.title ?? "Messenger"}</h2>
               <p className="truncate text-xs text-muted-foreground">
                 {agent?.name ?? "Agent"} · {availableModel ?? t("未选择模型")}
               </p>
@@ -1044,7 +1147,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
             <LanguageSwitcher />
             <Button variant="ghost" onClick={() => setDeviceControlOpen(true)}>{t("设备远程会话")}</Button>
             <Button variant="ghost" size="icon" disabled={!selected || isSending || savingModel} onClick={() => setConversationSettingsOpen(true)} aria-label={t("对话设置")}><SlidersHorizontal /></Button>
-            {selected?.projectId ? (
+            {selectedEntry?.projectId ? (
               <Badge variant={projectBlock ? "outline" : "secondary"} className="max-w-48">
                 <Folder />
                 <span className="truncate">{project ? `${project.name} · ${t(PROJECT_STATUS_LABEL[statusOf(project)])}` : t("项目已删除")}</span>
@@ -1073,6 +1176,25 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
               </Button>
             </EmptyContent>
           </Empty>
+        ) : pendingHistoryId ? (
+          <Empty className="flex-1">
+            {loadError ? (
+              <>
+                <EmptyHeader role="alert">
+                  <EmptyTitle>{t("加载会话失败")}</EmptyTitle>
+                  <EmptyDescription>{loadError.message}</EmptyDescription>
+                </EmptyHeader>
+                <EmptyContent>
+                  <Button variant="outline" onClick={() => setHistoryLoadError(null)}>{t("重试")}</Button>
+                </EmptyContent>
+              </>
+            ) : (
+              <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+                <LoaderCircle className="size-4 animate-spin" />
+                {t("加载中…")}
+              </div>
+            )}
+          </Empty>
         ) : !selected ? (
           <Empty>
             <EmptyHeader>
@@ -1093,29 +1215,13 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
           </Empty>
         ) : (
           <>
-            <ScrollArea
+            <ConversationHistory
               key={selected._id}
-              ref={historyRef}
-              className="invisible min-h-0 flex-1 data-[history-ready]:visible [&_[data-slot=scroll-area-viewport]>div]:!block"
-            >
-              <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
-                {groupedMessages.length === 0 ? (
-                  <Empty className="py-24">
-                    <EmptyHeader>
-                      <EmptyMedia variant="icon">
-                        <Sparkles />
-                      </EmptyMedia>
-                      <EmptyTitle>{t("今天想一起完成什么？")}</EmptyTitle>
-                      <EmptyDescription>{t("提问、写作、头脑风暴，或者把一个复杂问题拆成下一步。")}</EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                ) : (
-                  groupedMessages.map((message) => (
-                    <MessageRow key={message.id} item={message} agent={agent} userName={userName} userAvatarUrl={userAvatarUrl} />
-                  ))
-                )}
-              </div>
-            </ScrollArea>
+              messages={selected.messages}
+              agent={agent}
+              userName={userName}
+              userAvatarUrl={userAvatarUrl}
+            />
             <form onSubmit={sendMessage} className="shrink-0 px-4 pb-4 sm:px-6">
               <div className="mx-auto w-full min-w-0 max-w-3xl rounded-xl border bg-card p-2 shadow-xs focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50">
                 <Textarea

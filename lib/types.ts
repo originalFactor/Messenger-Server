@@ -454,6 +454,8 @@ export interface ConversationDoc {
   deleted: boolean;
 }
 
+export type ConversationSummary = Pick<ConversationDoc, "_id" | "title" | "agentId" | "providerId" | "overrideModelId" | "projectId" | "updatedAt">;
+
 export interface ModelEmbed {
   id: string;
   /** Optional explicit catalog target; null restores automatic matching. */

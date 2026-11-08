@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { Textarea } from "@/components/ui/textarea";
 import { useTranslator } from "@/components/i18n/locale-provider";
 import type { useRemoteDevice } from "@/components/messenger/remote";
-import type { ConversationDoc } from "@/lib/types";
+import type { ConversationSummary } from "@/lib/types";
 
 type Remote = ReturnType<typeof useRemoteDevice>;
 type Device = { id: string; name: string };
@@ -28,7 +28,7 @@ export function DeviceControl({ open, onOpenChange, onTurnActiveChange, remote, 
   onOpenChange: (open: boolean) => void;
   onTurnActiveChange: (active: boolean) => void;
   remote: Remote;
-  conversations: ConversationDoc[];
+  conversations: ConversationSummary[];
 }) {
   const t = useTranslator();
   const { controlReady, controlRequest, controlSignal } = remote;

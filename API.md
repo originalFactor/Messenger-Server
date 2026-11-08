@@ -991,6 +991,13 @@ Gemini Interactions 请求体（`model`、`input`、`system_instruction`、`tool
 - 响应 `200`：`{ "id": "agent-uuid", "version": 44 }`
 - 错误：`400`、`401`、`404 Agent not found.`、`409`（锁竞争）、`500 Unable to delete the agent.`
 
+### GET /api/conversations/{id}
+
+Messenger Web 打开会话时按需读取历史。需要用户会话，只返回当前账号拥有且未删除的会话。
+
+- 响应 `200` 为 `{ conversation: ConversationDoc }`，包括完整的消息数组，使用 `Cache-Control: private, no-store`。
+- 错误码为 `400`（ID 无效）、`401`（未登录）、`404`（不存在、已删除或属于其他账号）和 `500`。
+
 ### PUT /api/conversations/{id}
 
 新增或更新会话。会话内嵌完整的消息数组（上限 10 000 条）。
