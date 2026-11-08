@@ -93,11 +93,11 @@ async function postRelay(path: "tool-call" | "tool-cancel", payload: unknown, t?
 }
 
 /**
- * Registers this browser tab as a device on the account's relay (`/api/remote/events`) and lets it
+ * Registers this browser tab on demand on the account's relay (`/api/remote/events`) and lets it
  * run a project's workspace tools on the device that owns the project. Only the tool call crosses
  * devices; the LLM request and message persistence stay in the browser.
  */
-export function useRemoteDevice() {
+export function useRemoteDevice(enabled: boolean) {
   const t = useTranslator();
   const translatorRef = useRef(t);
   useEffect(() => { translatorRef.current = t; }, [t]);
@@ -110,6 +110,7 @@ export function useRemoteDevice() {
   const [controlReady, setControlReady] = useState(false);
 
   useEffect(() => {
+    if (!enabled) return;
     const deviceId = loadDeviceId();
     deviceIdRef.current = deviceId;
     const pending = pendingRef.current;
@@ -178,12 +179,13 @@ export function useRemoteDevice() {
 
     return () => {
       source.close();
+      deviceIdRef.current = null;
       disconnectControl();
       settleAll(translatorRef.current("与中转服务的连接已断开。"));
       setConnected(false);
       setDevices([]);
     };
-  }, []);
+  }, [enabled]);
 
   const callTool = useCallback((request: RemoteToolRequest) => new Promise<RemoteToolResult>((resolve) => {
     const fromDeviceId = deviceIdRef.current;

@@ -9,22 +9,26 @@ import { toast } from "sonner";
 import { Textarea } from "@/components/ui/textarea";
 import { useTranslator } from "@/components/i18n/locale-provider";
 import type { useRemoteDevice } from "@/components/messenger/remote";
+import type { ConversationDoc } from "@/lib/types";
 
 type Remote = ReturnType<typeof useRemoteDevice>;
 type Device = { id: string; name: string };
+type Session = { id: string; title: string; projectId?: string | null; updatedAt?: number };
 type Catalog = {
   agents: Device[];
   projects: Device[];
-  sessions: { id: string; title: string }[];
+  sessions: Session[];
 };
 type Message = { id: string; role: string; text: string; status: string };
 type Option = { id: string; name: string };
 const emptyCatalog: Catalog = { agents: [], projects: [], sessions: [] };
 
-export function DeviceControl({ open, onOpenChange, remote }: {
+export function DeviceControl({ open, onOpenChange, onTurnActiveChange, remote, conversations }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onTurnActiveChange: (active: boolean) => void;
   remote: Remote;
+  conversations: ConversationDoc[];
 }) {
   const t = useTranslator();
   const { controlReady, controlRequest, controlSignal } = remote;
@@ -109,8 +113,24 @@ export function DeviceControl({ open, onOpenChange, remote }: {
     try {
       const data = await controlRequest(id, { action: "catalog" }).result as unknown as Catalog;
       if (currentDevice.current !== id) return;
-      setCatalog(data);
+      const synced = new Map(conversations.map((conversation) => [conversation._id, conversation]));
+      const projectIds = new Set(data.projects.map((project) => project.id));
+      const sessions = data.sessions
+        .map((session) => {
+          const conversation = synced.get(session.id);
+          return {
+            ...session,
+            projectId: session.projectId === undefined && conversation?.projectId && projectIds.has(conversation.projectId)
+              ? conversation.projectId
+              : session.projectId,
+            updatedAt: session.updatedAt ?? conversation?.updatedAt ?? 0,
+          };
+        })
+        .filter((session) => session.projectId)
+        .sort((a, b) => b.updatedAt - a.updatedAt);
+      setCatalog({ ...data, sessions });
       setAgent(data.agents[0]?.id ?? "");
+      if (sessions[0]) await selectSession(sessions[0].id, id);
     } catch (error) {
       if (currentDevice.current === id) report(error);
     } finally {
@@ -118,20 +138,20 @@ export function DeviceControl({ open, onOpenChange, remote }: {
     }
   }
 
-  async function history(id: string, cursor?: string) {
-    const data = await controlRequest(device, { action: "history", sessionId: id, before: cursor }).result;
+  async function history(id: string, cursor?: string, target = device) {
+    const data = await controlRequest(target, { action: "history", sessionId: id, before: cursor }).result;
     const rows = data.messages as Message[];
     setMessages((previous) => cursor ? [...rows, ...previous] : rows);
     setBefore(data.before as string | null);
     setWritable(typeof data.writable === "boolean" ? data.writable : null);
   }
 
-  async function selectSession(id: string) {
+  async function selectSession(id: string, target = device) {
     setSession(id);
     setMessages([]);
     setBefore(null);
     setWritable(null);
-    if (id) await history(id);
+    if (id) await history(id, undefined, target);
   }
 
   async function loadSession(id: string) {
@@ -147,10 +167,11 @@ export function DeviceControl({ open, onOpenChange, remote }: {
   }
 
   async function create() {
+    if (!project) return;
     setLoading(true);
     setError("");
     try {
-      const data = await controlRequest(device, { action: "create", agentId: agent, projectId: project || null }).result;
+      const data = await controlRequest(device, { action: "create", agentId: agent, projectId: project }).result;
       const id = String(data.sessionId);
       setCatalog((previous) => ({ ...previous, sessions: [{ id, title: t("新对话") }, ...previous.sessions] }));
       await selectSession(id);
@@ -184,6 +205,7 @@ export function DeviceControl({ open, onOpenChange, remote }: {
       if (event.type === "TurnStarted") setDrafts((previous) => ({ ...previous, [draftKey]: "" }));
     });
     setTurn(request.id);
+    onTurnActiveChange(true);
     try {
       await request.result;
       setDrafts((previous) => ({ ...previous, [draftKey]: "" }));
@@ -200,6 +222,7 @@ export function DeviceControl({ open, onOpenChange, remote }: {
       setOptions([]);
       setTool("");
       setTurn("");
+      onTurnActiveChange(false);
     }
   }
 
@@ -230,7 +253,7 @@ export function DeviceControl({ open, onOpenChange, remote }: {
       <DialogContent className="flex h-[85dvh] max-h-[85dvh] flex-col sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{t("设备远程会话")}</DialogTitle>
-          <DialogDescription>{t("模型和工具在所选设备上运行。")}</DialogDescription>
+          <DialogDescription>{t("项目会话的模型和工具在所选设备上运行。")}</DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-2">
           <Select value={device} disabled={!!turn || loading} onValueChange={(id) => void chooseDevice(id)}>
@@ -252,16 +275,15 @@ export function DeviceControl({ open, onOpenChange, remote }: {
               {catalog.agents.map(({ id, name }) => <SelectItem key={id} value={id}>{name}</SelectItem>)}
             </DeviceOptions>
           </Select>
-          <Select value={project || "__none__"} disabled={!online || !!turn || loading} onValueChange={(id) => setProject(id === "__none__" ? "" : id)}>
-            <SelectTrigger className="w-full" aria-label={t("选择工作区")}><SelectValue /></SelectTrigger>
+          <Select value={project} disabled={!online || !!turn || loading} onValueChange={setProject}>
+            <SelectTrigger className="w-full" aria-label={t("选择工作区")}><SelectValue placeholder={t("选择工作区")} /></SelectTrigger>
             <DeviceOptions>
-              <SelectItem value="__none__">{t("无工作区")}</SelectItem>
               {catalog.projects.map(({ id, name }) => <SelectItem key={id} value={id}>{name}</SelectItem>)}
             </DeviceOptions>
           </Select>
         </div>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" disabled={!online || !agent || !!turn || loading} onClick={() => void create()}>{t("新对话")}</Button>
+          <Button size="sm" variant="outline" disabled={!online || !agent || !project || !!turn || loading} onClick={() => void create()}>{t("新对话")}</Button>
           <Button size="sm" variant="outline" disabled={!online || !session || !!turn || loading} onClick={() => void loadSession(session)}>{t("刷新历史")}</Button>
           {writable !== null ? <Button size="sm" variant="outline" disabled={!online || !!turn || loading}
             aria-pressed={writable} onClick={() => void changeMode()}>{writable ? t("可写模式") : t("只读模式")}</Button> : null}

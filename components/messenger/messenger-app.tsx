@@ -449,7 +449,7 @@ function projectStatus(project: ProjectDoc, relayConnected: boolean, onlineDevic
   return onlineDevices.includes(project.deviceId) ? "ready" : "offline";
 }
 
-function ProjectFolder({ project, count, status, onOpen }: { project: ProjectDoc; count: number; status: ProjectStatus; onOpen: () => void }) {
+function ProjectFolder({ project, count, status, onOpen }: { project: ProjectDoc; count: number; status: ProjectStatus | null; onOpen: () => void }) {
   const t = useTranslator();
   return (
     <button
@@ -461,10 +461,10 @@ function ProjectFolder({ project, count, status, onOpen }: { project: ProjectDoc
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">{project.name}</span>
         <span className="block truncate text-xs text-muted-foreground">
-          {count} {" "}{t("个会话 ·")}{" "}{t(PROJECT_STATUS_LABEL[status])}
+          {t("{0} 个会话", { "0": count })}{status ? ` · ${t(PROJECT_STATUS_LABEL[status])}` : null}
         </span>
       </span>
-      <span className={cn("size-2 shrink-0 rounded-full", status === "ready" ? "bg-primary" : "bg-muted-foreground/40")} />
+      {status ? <span className={cn("size-2 shrink-0 rounded-full", status === "ready" ? "bg-primary" : "bg-muted-foreground/40")} /> : null}
       <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
     </button>
   );
@@ -481,25 +481,37 @@ function relativeTime(timestamp: number, t: Translator): string {
 
 export function MessengerApp({ builtinModels, initialManagementOpen, initialAgents, initialConversations, initialProviders, initialProjects, userName, userAvatarUrl }: Props) {
   const t = useTranslator();
+  const [initialSelection] = useState(() => {
+    const projectIds = new Set(initialProjects.map((project) => project._id));
+    let latest: ConversationDoc | undefined;
+    for (const conversation of initialConversations) {
+      if (conversation.projectId && !projectIds.has(conversation.projectId)) continue;
+      if (!latest || conversation.updatedAt > latest.updatedAt) latest = conversation;
+    }
+    return { id: latest?._id ?? null, projectId: latest?.projectId || null };
+  });
   const [agents, setAgents] = useState(initialAgents);
   const [providers, setProviders] = useState(initialProviders);
   const [projects, setProjects] = useState(initialProjects);
   const [conversationSettingsOpen, setConversationSettingsOpen] = useState(false);
   const [managementOpen, setManagementOpen] = useState(initialManagementOpen);
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [activeProjectId, setActiveProjectId] = useState(initialSelection.projectId);
   const updateConfiguration = useCallback((configuration: { agents: AgentDoc[]; providers: ProviderDoc[]; projects: ProjectDoc[] }) => {
     setAgents(configuration.agents);
     setProviders([initialProviders[0], ...configuration.providers]);
     setProjects(configuration.projects);
     setActiveProjectId((current) => current && !configuration.projects.some((item) => item._id === current) ? null : current);
   }, [initialProviders]);
-  const remote = useRemoteDevice();
   const [deviceControlOpen, setDeviceControlOpen] = useState(false);
+  const [deviceTurnActive, setDeviceTurnActive] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const [conversations, setConversations] = useState(initialConversations);
-  const [selectedId, setSelectedId] = useState<string | null>(initialConversations.find((conversation) => !conversation.projectId)?._id ?? null);
+  const [selectedId, setSelectedId] = useState(initialSelection.id);
   const [draft, setDraft] = useState("");
-  const [isSending, setIsSending] = useState(false);
+  const [sending, setSending] = useState<"project" | "standalone" | null>(null);
+  const isSending = sending !== null;
+  const relayEnabled = Boolean(activeProjectId) || sending === "project" || deviceControlOpen || deviceTurnActive;
+  const remote = useRemoteDevice(relayEnabled);
   const [savingModel, setSavingModel] = useState(false);
   const conversationWrites = useRef(new Set<string>());
   const conversationCreations = useRef(new Map<string, Promise<void>>());
@@ -564,7 +576,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
   const filteredConversations = useMemo(
     () =>
       conversations
-        .filter((conversation) => (conversation.projectId ?? null) === activeProjectId)
+        .filter((conversation) => (conversation.projectId || null) === activeProjectId)
         .filter((conversation) => conversation.title.toLowerCase().includes(needle))
         .sort((a, b) => b.updatedAt - a.updatedAt),
     [conversations, activeProjectId, needle],
@@ -573,7 +585,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
 
   function firstConversationIn(projectId: string | null, excludeId?: string): string | null {
     return conversations
-      .filter((conversation) => (conversation.projectId ?? null) === projectId && conversation._id !== excludeId)
+      .filter((conversation) => (conversation.projectId || null) === projectId && conversation._id !== excludeId)
       .sort((a, b) => b.updatedAt - a.updatedAt)[0]?._id ?? null;
   }
 
@@ -755,11 +767,6 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
       toast.error(t("请先创建一个对话。"));
       return;
     }
-    // A read-only project conversation still chats (its write tools are simply not offered).
-    if (selected.writable === false && !selected.projectId) {
-      toast.error(t("此会话为只读模式。"));
-      return;
-    }
     if (projectBlock) {
       toast.error(projectBlock);
       return;
@@ -792,7 +799,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
 
     show([...history, current]);
     setDraft("");
-    setIsSending(true);
+    setSending(selected.projectId ? "project" : "standalone");
 
     try {
       await saveConversation({ ...base, messages: history, updatedAt: currentTimestamp() });
@@ -877,7 +884,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
       toast.error(message);
     } finally {
       abortRef.current = null;
-      setIsSending(false);
+      setSending(null);
     }
   }
 
@@ -965,7 +972,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
                       key={item._id}
                       project={item}
                       count={conversations.filter((conversation) => conversation.projectId === item._id).length}
-                      status={statusOf(item)}
+                      status={relayEnabled ? statusOf(item) : null}
                       onOpen={() => openProject(item._id)}
                     />
                   ))}
@@ -1130,7 +1137,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
                       {" "}{t("停止")}{" "}
                     </Button>
                   ) : (
-                    <Button type="submit" size="sm" disabled={savingModel || !draft.trim() || Boolean(projectBlock) || (selected.writable === false && !selected.projectId)}>
+                    <Button type="submit" size="sm" disabled={savingModel || !draft.trim() || Boolean(projectBlock)}>
                       <Send />
                       {" "}{t("发送")}{" "}
                     </Button>
@@ -1141,7 +1148,7 @@ export function MessengerApp({ builtinModels, initialManagementOpen, initialAgen
           </>
         )}
       </main>
-      <DeviceControl open={deviceControlOpen} onOpenChange={setDeviceControlOpen} remote={remote} />
+      <DeviceControl open={deviceControlOpen} onOpenChange={setDeviceControlOpen} onTurnActiveChange={setDeviceTurnActive} remote={remote} conversations={conversations} />
       {conversationSettingsOpen && selected ? (
         <ConversationSettings key={selected._id} conversation={selected} providers={providers} agentModelId={agent?.defaultModelId ?? null} onClose={() => setConversationSettingsOpen(false)} onSave={saveConversationSettings} />
       ) : null}

@@ -9,7 +9,7 @@ import { getTranslator } from "@/lib/i18n/server";
 import { redirect } from "next/navigation";
 import { requireUserSession } from "@/lib/auth";
 import { getModelPlaza } from "@/lib/model-plaza";
-import { getDeltaSince, getUserById } from "@/lib/storage";
+import { getDeltaSince, getUserById, listRecentWebConversations } from "@/lib/storage";
 import { MessengerApp } from "@/components/messenger/messenger-app";
 import type { ProviderDoc } from "@/lib/types";
 
@@ -22,6 +22,11 @@ export default async function MessengerPage({ searchParams }: { searchParams: Pr
 
   const [sync, builtinModels, user] = await Promise.all([getDeltaSince(session.sub, 0), getModelPlaza(), getUserById(session.sub)]);
   if (!user) redirect("/login");
+  const projects = sync.projects.filter((project) => !project.deleted);
+  // The merged sync endpoint pages by ascending version, so a truncated page can miss recent chats.
+  const conversations = sync.truncated
+    ? await listRecentWebConversations(session.sub, projects.map((project) => project._id))
+    : sync.conversations.filter((conversation) => !conversation.deleted);
   const { settings } = await searchParams;
   const builtinProvider: ProviderDoc = {
     _id: "builtin-messenger-cloud-ai",
@@ -50,9 +55,9 @@ export default async function MessengerPage({ searchParams }: { searchParams: Pr
       builtinModels={builtinModels}
       initialManagementOpen={settings === "1"}
       initialAgents={sync.agents.filter((agent) => !agent.deleted)}
-      initialConversations={sync.conversations.filter((conversation) => !conversation.deleted)}
+      initialConversations={conversations}
       initialProviders={[builtinProvider, ...sync.providers.filter((provider) => !provider.deleted)]}
-      initialProjects={sync.projects.filter((project) => !project.deleted)}
+      initialProjects={projects}
       userName={user?.displayName ?? user?.email ?? "You"}
       userAvatarUrl={user?.avatarUrl ? `/api/avatars/user?v=${user.avatarVersion ?? 0}` : null}
     />

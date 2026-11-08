@@ -862,6 +862,15 @@ export async function listConversationsSince(
   return (limit === undefined ? query : query.limit(limit)).toArray();
 }
 
+export async function listRecentWebConversations(userId: string, projectIds: string[]): Promise<ConversationDoc[]> {
+  const db = await getDb();
+  return db.collection<ConversationDoc>("conversations")
+    .find({ userId, deleted: { $ne: true }, projectId: { $in: [null, "", ...projectIds] } })
+    .sort({ updatedAt: -1, _id: 1 })
+    .limit(SYNC_MAX_LIMIT)
+    .toArray();
+}
+
 export async function upsertProvider(userId: string, provider: ProviderUpsertInput): Promise<number> {
   return withVersionedWrite(userId, async (version, session) => {
     await assertEntityOwnership<ProviderDoc>("providers", userId, provider.id, session);
