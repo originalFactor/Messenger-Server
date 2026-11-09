@@ -23,6 +23,10 @@ export async function register() {
   }
   const { installOutputCapture } = await import("./instrumentation-node");
   installOutputCapture();
+  if (process.env.NODE_ENV === "development") {
+    const { startDevDiscovery } = await import("./lib/dev-discovery");
+    startDevDiscovery();
+  }
 }
 
 /**

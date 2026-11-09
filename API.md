@@ -835,6 +835,17 @@ Messenger Web 的模型能力查询，需有效用户会话（普通用户可用
 
 ## 公开 API
 
+### 本地开发服务器发现（仅 development）
+
+原生客户端向 UDP `53319`（本机、模拟器宿主机或局域网广播）发送 UTF-8 文本
+`messenger-cloud-discover-v1`。开发服务器向请求来源回复
+`{"service":"messenger-cloud","version":1,"port":3000}`，其中 `port` 是 Next 实际监听的 HTTP 端口（支持 `pnpm dev --port <port>`）。
+
+客户端使用回复数据包的来源 IP 构建地址，再调用 `GET /api/dev/discovery` 验证。
+成功返回 `{"service":"messenger-cloud","version":1,"development":true}` 和
+`Cache-Control: no-store`，无需认证、数据库或 Cookie。生产环境此端点返回 404，且不启动 UDP 监听。
+局域网需允许 UDP 53319 和 HTTP 端口通过防火墙；发现结果仅填入客户端地址草稿，保存后才切换服务器。
+
 ### GET /api/plans
 
 官网定价区使用的公开套餐列表，未登录可访问。
