@@ -27,6 +27,7 @@ Messenger `server/` 是一个独立的 Next.js (App Router) SaaS 服务，提供
 - [改绑邮箱 API](#改绑邮箱-api)
 - [控制台 API（用户）](#控制台-api用户)
 - [管理 API（管理员）](#管理-api管理员)
+- [Integration Store](#integration-store)
 - [公开 API](#公开-api)
 - [AI API（OpenAI 兼容代理）](#ai-apiopenai-兼容代理)
 - [实体同步 API](#实体同步-api)
@@ -832,6 +833,13 @@ Messenger Web 的模型能力查询，需有效用户会话（普通用户可用
 - 未设基准时全部倍率按 pi-catalog 归一化口径（`deepseek/deepseek-flash` 输出价格 = 1.0），上游自报报价优先。解析实现为 `lib/model-rates.ts` 的 `resolveModelRates`，`/v1` 计费、模型广场、`/v1/models` 与控制台共用。
 
 ---
+
+## Integration Store
+
+`GET /api/integrations/catalog` 需要有效用户会话，返回 `{acp: [...], mcp: [...]}`。
+ACP 模板包含 `id/name/description/command/args/env/cwd/enabled`；MCP 模板使用客户端
+`McpServerConfig` 字段（`transportType` 为 `STDIO`，`isEnabled` 初始为 false），另有展示用 `description`。
+返回 `Cache-Control: private, no-store`；无会话返回 401。目录仅提供配置，导入时需确认，不会在服务端执行命令。
 
 ## 公开 API
 
