@@ -10,6 +10,7 @@ test("ACP store templates use stdio adapters and contain no local credentials", 
     assert.ok(Array.isArray(row.args));
     assert.deepEqual(row.env, {});
     assert.equal(row.cwd, null);
+    assert.equal(row.enabled, false);
     assert.ok(!["npm", "npx", "yarn", "bun"].includes(row.command));
   }
   assert.deepEqual(integrationCatalog.acp.find(row => row.id === "opencode").args, ["acp"]);
