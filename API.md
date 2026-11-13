@@ -229,7 +229,9 @@ SMTP 主机和凭据均配置时启用（否则 `503`）。无需登录，请求
 
 ### POST /api/auth/register
 
-注册新账号，自动签发用户会话，并在同一 MongoDB 事务中创建默认 Agent（名为「默认 Agent」、`systemPrompt: "You are a helpful assistant."`、`temperature: 0.7`、`topP: 1`、`isDefault: true`）。
+注册新账号，自动签发用户会话，并在同一 MongoDB 事务中创建默认 Agent（名为「默认 Agent」、`isDefault: true`）。`description` 和 `systemPrompt` 分别使用 `lib/default-agent.ts` 导出的 `DEFAULT_AGENT_DESCRIPTION` 与 `DEFAULT_AGENT_PROMPT`，与原生客户端 `Agent.kt` 的同名常量逐字一致：描述为「通用 AI 助手，帮助你解答问题、学习知识、撰写内容、编写代码，并在工具可用时协助完成任务。」；提示词为完整的 Messenger 通用助手预设，涵盖沟通、准确性与不确定性、任务完成、工具与 Skills。采样数值保留 `temperature: 0.7`、`topP: 1`，但 `temperatureEnabled: false`、`topPEnabled: false`，表示未配置采样参数。
+
+这些预设只用于新账号注册时首次创建默认 Agent，不迁移或覆盖已有 Agent，也不改变通用新建 Agent 表单的默认值。描述和提示词按原文存储，不经过 UI 翻译。
 
 - 鉴权：无
 - 请求体：`registrationSchema`

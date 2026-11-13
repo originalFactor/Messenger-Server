@@ -17,6 +17,7 @@
 import { preserveProviderModelFields } from "@/lib/provider-model-metadata";
 import { randomUUID } from "node:crypto";
 import { consumeRegistrationCode } from "@/lib/auth-tokens";
+import { DEFAULT_AGENT_DESCRIPTION, DEFAULT_AGENT_PROMPT } from "@/lib/default-agent";
 import { type ClientSession, type Db, type Filter, MongoBulkWriteError, MongoServerError } from "mongodb";
 import { renewAvatarLock, type AvatarLock } from "@/lib/avatar-locks";
 import { generateCardCode, normalizeCardCode } from "@/lib/apikeys";
@@ -199,7 +200,8 @@ async function saveUserTransaction(user: StoredUser, registrationCode?: string):
         name: "默认 Agent",
         avatarUrl: null,
         avatarVersion: null,
-        systemPrompt: "You are a helpful assistant.",
+        systemPrompt: DEFAULT_AGENT_PROMPT,
+        description: DEFAULT_AGENT_DESCRIPTION,
         defaultModelId: null,
         temperature: 0.7,
         topP: 1,
